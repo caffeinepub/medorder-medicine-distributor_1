@@ -29,6 +29,7 @@ import {
   RefreshCw,
   Search,
   Settings2,
+  ShoppingBag,
   ShoppingCart,
   Stethoscope,
   Store,
@@ -93,6 +94,8 @@ type OrderItem = {
   qty: number;
   unitPrice: number;
   total: number;
+  bonusQty?: number;
+  discountPercent?: number;
 };
 
 type OrderStatus = "pending" | "confirmed" | "delivered";
@@ -110,6 +113,10 @@ type Order = {
   notes: string;
   status: OrderStatus;
   totalAmount: number;
+  paymentReceived?: number;
+  returnItems?: Array<{ medicineId: string; returnedQty: number }>;
+  returnReason?: string;
+  pharmacyCode?: string;
 };
 
 type Screen =
@@ -1357,6 +1364,27 @@ function OrderTakingScreen({
   const [showCart, setShowCart] = useState(false);
   const [notes, setNotes] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [bonusDiscountMap, setBonusDiscountMap] = useState<
+    Record<string, { bonus: number; discount: number }>
+  >({});
+
+  function getBonusDiscount(medicineId: string) {
+    return bonusDiscountMap[medicineId] ?? { bonus: 0, discount: 0 };
+  }
+
+  function updateBonus(medicineId: string, bonus: number) {
+    setBonusDiscountMap((prev) => ({
+      ...prev,
+      [medicineId]: { ...getBonusDiscount(medicineId), bonus },
+    }));
+  }
+
+  function updateDiscount(medicineId: string, discount: number) {
+    setBonusDiscountMap((prev) => ({
+      ...prev,
+      [medicineId]: { ...getBonusDiscount(medicineId), discount },
+    }));
+  }
 
   const categories: Array<{
     key: Category | "all";
@@ -1409,16 +1437,22 @@ function OrderTakingScreen({
         return;
       }
 
-      // Build order lines using backend IDs
+      // Build order lines using backend IDs (with bonus/discount)
       const orderLines = state.cart.map((ci) => ({
         medicineId: ci.medicine.backendId,
         quantity: BigInt(ci.qty),
+        bonusQty: BigInt(bonusDiscountMap[ci.medicine.id]?.bonus ?? 0),
+        discountPercent: BigInt(
+          bonusDiscountMap[ci.medicine.id]?.discount ?? 0,
+        ),
       }));
 
       // Create order in backend
       const returnedId = await actor.createOrder(
         pharmacy.backendId,
         orderLines,
+        state.currentStaff?.name ?? "",
+        state.currentStaff?.id ?? "",
       );
 
       const orderId = `ORD-${returnedId}`;
@@ -1431,6 +1465,8 @@ function OrderTakingScreen({
         qty: ci.qty,
         unitPrice: ci.medicine.price,
         total: ci.medicine.price * ci.qty,
+        bonusQty: bonusDiscountMap[ci.medicine.id]?.bonus ?? 0,
+        discountPercent: bonusDiscountMap[ci.medicine.id]?.discount ?? 0,
       }));
 
       const order: Order = {
@@ -1685,51 +1721,106 @@ function OrderTakingScreen({
               </div>
 
               {/* Cart items */}
-              <div className="space-y-2.5 max-h-60 overflow-y-auto">
-                {state.cart.map((ci) => (
-                  <div
-                    key={ci.medicine.id}
-                    className="flex items-center justify-between py-2.5 border-b border-border last:border-0"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-foreground truncate">
-                        {ci.medicine.name}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {ci.medicine.strength} · {ci.medicine.company}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2 ml-3 shrink-0">
-                      <input
-                        type="number"
-                        min="0"
-                        value={ci.qty}
-                        onChange={(e) => {
-                          const val = Number(e.target.value);
-                          if (!e.target.value || val === 0) {
-                            dispatch({
-                              type: "REMOVE_FROM_CART",
-                              medicineId: ci.medicine.id,
-                            });
-                          } else {
-                            dispatch({
-                              type: "UPDATE_QTY",
-                              medicineId: ci.medicine.id,
-                              qty: val,
-                            });
-                          }
-                        }}
-                        className="w-14 text-center text-sm font-bold text-foreground border border-input rounded-md px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                        aria-label="Quantity"
-                      />
-                      <div className="text-right min-w-[60px]">
-                        <p className="text-sm font-bold text-primary">
-                          {formatCurrency(ci.medicine.price * ci.qty)}
-                        </p>
+              <div className="space-y-3 max-h-72 overflow-y-auto">
+                {state.cart.map((ci) => {
+                  const bd = getBonusDiscount(ci.medicine.id);
+                  return (
+                    <div
+                      key={ci.medicine.id}
+                      className="py-2.5 border-b border-border last:border-0"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-foreground truncate">
+                            {ci.medicine.name}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {ci.medicine.strength} · {ci.medicine.company}
+                          </p>
+                        </div>
+                        <div className="ml-3 shrink-0">
+                          <p className="text-sm font-bold text-primary text-right">
+                            {formatCurrency(ci.medicine.price * ci.qty)}
+                          </p>
+                        </div>
+                      </div>
+                      {/* Qty + Bonus + Discount row */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <label className="flex flex-col items-center gap-0.5">
+                          <span className="text-[10px] text-muted-foreground font-medium">
+                            Qty | مقدار
+                          </span>
+                          <input
+                            type="number"
+                            min="0"
+                            value={ci.qty}
+                            onChange={(e) => {
+                              const val = Number(e.target.value);
+                              if (!e.target.value || val === 0) {
+                                dispatch({
+                                  type: "REMOVE_FROM_CART",
+                                  medicineId: ci.medicine.id,
+                                });
+                              } else {
+                                dispatch({
+                                  type: "UPDATE_QTY",
+                                  medicineId: ci.medicine.id,
+                                  qty: val,
+                                });
+                              }
+                            }}
+                            className="w-14 text-center text-sm font-bold text-foreground border border-input rounded-md px-1 py-1 focus:outline-none focus:ring-1 focus:ring-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            aria-label="Quantity"
+                          />
+                        </label>
+                        <label className="flex flex-col items-center gap-0.5">
+                          <span className="text-[10px] text-emerald-600 font-medium">
+                            Bonus | بونس
+                          </span>
+                          <input
+                            type="number"
+                            min="0"
+                            value={bd.bonus === 0 ? "" : bd.bonus}
+                            placeholder="0"
+                            onChange={(e) => {
+                              const val = Number(e.target.value);
+                              updateBonus(
+                                ci.medicine.id,
+                                Number.isNaN(val) ? 0 : val,
+                              );
+                            }}
+                            className="w-14 text-center text-sm font-bold text-emerald-700 border border-emerald-300 bg-emerald-50 rounded-md px-1 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            aria-label="Bonus quantity"
+                          />
+                        </label>
+                        <label className="flex flex-col items-center gap-0.5">
+                          <span className="text-[10px] text-amber-600 font-medium">
+                            Disc% | ڈسکاؤنٹ
+                          </span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            value={bd.discount === 0 ? "" : bd.discount}
+                            placeholder="0"
+                            onChange={(e) => {
+                              const val = Math.min(
+                                100,
+                                Math.max(0, Number(e.target.value)),
+                              );
+                              updateDiscount(
+                                ci.medicine.id,
+                                Number.isNaN(val) ? 0 : val,
+                              );
+                            }}
+                            className="w-14 text-center text-sm font-bold text-amber-700 border border-amber-300 bg-amber-50 rounded-md px-1 py-1 focus:outline-none focus:ring-1 focus:ring-amber-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            aria-label="Discount percent"
+                          />
+                        </label>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               <Separator className="my-3" />
@@ -1900,7 +1991,16 @@ function OrderHistoryScreen({
                 </div>
                 <StatusBadge status={order.status} />
               </div>
-              <div className="mt-2.5 flex items-center justify-between text-xs text-muted-foreground">
+              <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <User size={11} />
+                <span>{order.staffName || order.staffId}</span>
+                {order.staffId && order.staffId !== order.staffName && (
+                  <span className="font-mono text-[10px]">
+                    ({order.staffId})
+                  </span>
+                )}
+              </div>
+              <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground">
                 <div className="flex items-center gap-1">
                   <Calendar size={11} />
                   <span>{formatDate(order.date)}</span>
@@ -2058,6 +2158,41 @@ function OrderDetailScreen({
               <p className="text-muted-foreground text-xs">Order ID</p>
               <p className="font-semibold">{order.id}</p>
             </div>
+            {order.paymentReceived !== undefined &&
+              order.paymentReceived > 0 && (
+                <>
+                  <div>
+                    <p className="text-muted-foreground text-xs">
+                      Payment Received | موصول
+                    </p>
+                    <p className="font-semibold text-emerald-600">
+                      {formatCurrency(order.paymentReceived)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground text-xs">
+                      Balance | باقی
+                    </p>
+                    <p
+                      className={`font-semibold ${(order.totalAmount - (order.paymentReceived ?? 0)) > 0 ? "text-red-500" : "text-emerald-600"}`}
+                    >
+                      {formatCurrency(
+                        Math.abs(
+                          order.totalAmount - (order.paymentReceived ?? 0),
+                        ),
+                      )}
+                    </p>
+                  </div>
+                </>
+              )}
+            {order.pharmacyCode && (
+              <div>
+                <p className="text-muted-foreground text-xs">
+                  Pharmacy Code | فارمیسی کوڈ
+                </p>
+                <p className="font-semibold font-mono">{order.pharmacyCode}</p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -2067,41 +2202,100 @@ function OrderDetailScreen({
             Order Items | اشیاء
           </h2>
 
-          {/* Table header */}
-          <div className="grid grid-cols-12 gap-1 text-xs text-muted-foreground font-semibold pb-2 border-b border-border">
-            <div className="col-span-5">Medicine</div>
-            <div className="col-span-2 text-center">Qty</div>
-            <div className="col-span-2 text-right">Price</div>
-            <div className="col-span-3 text-right">Total</div>
-          </div>
+          {(() => {
+            const hasBonus = order.items.some((i) => (i.bonusQty ?? 0) > 0);
+            const hasDiscount = order.items.some(
+              (i) => (i.discountPercent ?? 0) > 0,
+            );
+            const colCount = 4 + (hasBonus ? 1 : 0) + (hasDiscount ? 1 : 0);
+            const medCols = colCount <= 4 ? 5 : colCount <= 5 ? 4 : 3;
+            return (
+              <>
+                {/* Table header */}
+                <div
+                  className="grid gap-1 text-xs text-muted-foreground font-semibold pb-2 border-b border-border"
+                  style={{
+                    gridTemplateColumns: `${medCols}fr repeat(${colCount - 1}, 1fr)`,
+                  }}
+                >
+                  <div>Medicine</div>
+                  <div className="text-center">Qty</div>
+                  {hasBonus && (
+                    <div className="text-center text-emerald-600">Bonus</div>
+                  )}
+                  {hasDiscount && (
+                    <div className="text-center text-amber-600">Disc%</div>
+                  )}
+                  <div className="text-right">Price</div>
+                  <div className="text-right">Total</div>
+                </div>
+                {/* Table rows */}
+                <div className="divide-y divide-border">
+                  {order.items.map((item) => {
+                    const hasOrderReturnItems =
+                      (order.returnItems ?? []).length > 0;
+                    const isItemReturned = (order.returnItems ?? []).some(
+                      (r) => r.medicineId === item.medicineId,
+                    );
+                    return (
+                      <div
+                        key={item.medicineId}
+                        className={`grid gap-1 py-2.5 text-sm items-start ${hasOrderReturnItems ? (isItemReturned ? "bg-red-50/50 border-l-2 border-l-red-400 pl-1" : "bg-emerald-50/30 border-l-2 border-l-emerald-400 pl-1") : ""}`}
+                        style={{
+                          gridTemplateColumns: `${medCols}fr repeat(${colCount - 1}, 1fr)`,
+                        }}
+                      >
+                        <div>
+                          <p className="font-semibold text-foreground text-xs leading-tight">
+                            {item.medicineName}
+                            {isItemReturned && (
+                              <span className="ml-1 text-[9px] text-red-500">
+                                (↩ Return)
+                              </span>
+                            )}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground leading-tight">
+                            {item.strength}
+                          </p>
+                        </div>
+                        <div className="text-center text-xs font-semibold">
+                          {item.qty}
+                        </div>
+                        {hasBonus && (
+                          <div className="text-center text-xs font-semibold text-emerald-600">
+                            {item.bonusQty ?? 0}
+                          </div>
+                        )}
+                        {hasDiscount && (
+                          <div className="text-center text-xs font-semibold text-amber-600">
+                            {item.discountPercent ?? 0}%
+                          </div>
+                        )}
+                        <div className="text-right text-xs">
+                          {formatCurrency(item.unitPrice)}
+                        </div>
+                        <div className="text-right text-xs font-bold text-primary">
+                          {formatCurrency(item.total)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            );
+          })()}
 
-          {/* Table rows */}
-          <div className="divide-y divide-border">
-            {order.items.map((item) => (
-              <div
-                key={item.medicineId}
-                className="grid grid-cols-12 gap-1 py-2.5 text-sm items-start"
-              >
-                <div className="col-span-5">
-                  <p className="font-semibold text-foreground text-xs leading-tight">
-                    {item.medicineName}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground leading-tight">
-                    {item.strength}
-                  </p>
-                </div>
-                <div className="col-span-2 text-center text-xs font-semibold">
-                  {item.qty}
-                </div>
-                <div className="col-span-2 text-right text-xs">
-                  {formatCurrency(item.unitPrice)}
-                </div>
-                <div className="col-span-3 text-right text-xs font-bold text-primary">
-                  {formatCurrency(item.total)}
-                </div>
-              </div>
-            ))}
-          </div>
+          {/* Return reason */}
+          {order.returnReason && (
+            <div className="mt-3 bg-orange-50 border border-orange-200 rounded-xl p-3">
+              <p className="text-xs font-semibold text-orange-700">
+                Return Reason | واپسی کی وجہ:
+              </p>
+              <p className="text-sm text-orange-800 mt-1">
+                {order.returnReason}
+              </p>
+            </div>
+          )}
 
           {/* Grand total */}
           <Separator className="my-2" />
@@ -2902,6 +3096,472 @@ function ManageScreen({
   );
 }
 
+// ─── Print Helper ─────────────────────────────────────────────────────────────
+
+function buildPrintHtml(orders: OfficeOrderDetail[]): string {
+  const invoicesHtml = orders
+    .map((order) => {
+      const subtotal = order.items.reduce((s, i) => s + i.total, 0);
+      const advancedTax = Math.round(subtotal * 0.005);
+      const grandTotal = subtotal + advancedTax;
+      const hasBonus = order.items.some((i) => i.bonusQty > 0);
+      const hasDiscount = order.items.some((i) => i.discountPercent > 0);
+
+      const itemRows = order.items
+        .map((item, idx) => {
+          const isReturned = (order.returnItems ?? []).some(
+            (r) => r.medicineId === item.medicineId,
+          );
+          const rowBg =
+            order.returnItems?.length > 0
+              ? isReturned
+                ? "#fee2e2"
+                : "#f0fdf4"
+              : idx % 2 === 0
+                ? "#fff"
+                : "#f9fafb";
+          return `
+        <tr style="border-bottom:1px solid #f3f4f6;background:${rowBg};">
+          <td style="padding:7px 10px;font-size:12px;color:#111827;font-weight:500;">${item.medicineName}${isReturned ? ' <span style="color:#dc2626;font-size:10px;">(Returned)</span>' : ""}</td>
+          <td style="padding:7px 10px;font-size:12px;color:#6b7280;text-align:center;">${item.strength || "—"}</td>
+          <td style="padding:7px 10px;font-size:12px;color:#6b7280;text-align:center;">—</td>
+          <td style="padding:7px 10px;text-align:center;font-size:12px;font-weight:600;color:#374151;">${item.qty}</td>
+          ${hasBonus ? `<td style="padding:7px 10px;text-align:center;font-size:12px;font-weight:600;color:#059669;">${item.bonusQty > 0 ? item.bonusQty : "—"}</td>` : ""}
+          ${hasDiscount ? `<td style="padding:7px 10px;text-align:center;font-size:12px;font-weight:600;color:#d97706;">${item.discountPercent > 0 ? `${item.discountPercent}%` : "—"}</td>` : ""}
+          <td style="padding:7px 10px;text-align:right;font-size:12px;color:#374151;">Rs ${item.unitPrice.toLocaleString()}</td>
+          <td style="padding:7px 10px;text-align:right;font-size:12px;font-weight:bold;color:#1e40af;">Rs ${item.total.toLocaleString()}</td>
+        </tr>
+      `;
+        })
+        .join("");
+
+      const extraColCount = (hasBonus ? 1 : 0) + (hasDiscount ? 1 : 0);
+      const totalCols = 6 + extraColCount;
+
+      return `
+    <div style="border:1px solid #e5e7eb;border-radius:10px;padding:28px;margin-bottom:32px;page-break-after:always;font-family:'Segoe UI',Arial,sans-serif;max-width:800px;margin-left:auto;margin-right:auto;">
+      <!-- Header -->
+      <div style="text-align:center;border-bottom:3px solid #1e40af;padding-bottom:16px;margin-bottom:20px;">
+        <h1 style="font-size:28px;font-weight:900;color:#1e3a8a;margin:0;letter-spacing:2px;text-transform:uppercase;">MIAN MEDICINE DISTRIBUTOR</h1>
+        <p style="color:#6b7280;font-size:13px;margin:5px 0 0;">Medicine Distributor | دوائیوں کے تقسیم کار</p>
+        <p style="color:#9ca3af;font-size:11px;margin:2px 0 0;">Tax Invoice | ٹیکس انوائس</p>
+      </div>
+
+      <!-- Invoice Meta -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px;">
+        <div>
+          <p style="color:#6b7280;font-size:10px;margin:0 0 3px;text-transform:uppercase;letter-spacing:.05em;font-weight:600;">Pharmacy | فارمیسی</p>
+          <p style="font-weight:bold;font-size:14px;color:#111827;margin:0;">${order.pharmacyName}</p>
+          ${order.pharmacyArea ? `<p style="color:#6b7280;font-size:11px;margin:2px 0 0;">${order.pharmacyArea}</p>` : ""}
+          ${order.pharmacyCode ? `<p style="color:#374151;font-size:11px;margin:2px 0 0;font-family:monospace;">Code: ${order.pharmacyCode}</p>` : ""}
+        </div>
+        <div>
+          <p style="color:#6b7280;font-size:10px;margin:0 0 3px;text-transform:uppercase;letter-spacing:.05em;font-weight:600;">Booker | بکر</p>
+          <p style="font-weight:bold;font-size:14px;color:#111827;margin:0;">${order.staffName || "—"}</p>
+          ${order.staffCode ? `<p style="color:#6b7280;font-size:11px;margin:2px 0 0;font-family:monospace;">${order.staffCode}</p>` : ""}
+        </div>
+        <div style="text-align:right;">
+          <p style="color:#6b7280;font-size:10px;margin:0 0 3px;text-transform:uppercase;letter-spacing:.05em;font-weight:600;">Invoice # | انوائس</p>
+          <p style="font-weight:bold;font-size:16px;color:#1e40af;margin:0;font-family:monospace;">${order.orderId}</p>
+          <p style="color:#6b7280;font-size:12px;margin:4px 0 0;">${formatDate(order.date)}</p>
+        </div>
+      </div>
+
+      <!-- Items Table -->
+      <table style="width:100%;border-collapse:collapse;margin-bottom:0;">
+        <thead>
+          <tr style="background:#1e40af;color:white;">
+            <th style="padding:9px 10px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;">Medicine Name | دوائی</th>
+            <th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;">Strength</th>
+            <th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;">Batch #</th>
+            <th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;">Qty</th>
+            ${hasBonus ? '<th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;background:#065f46;">Bonus</th>' : ""}
+            ${hasDiscount ? '<th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;background:#92400e;">Disc%</th>' : ""}
+            <th style="padding:9px 10px;text-align:right;font-size:11px;font-weight:600;text-transform:uppercase;">Unit Price</th>
+            <th style="padding:9px 10px;text-align:right;font-size:11px;font-weight:600;text-transform:uppercase;">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemRows}
+        </tbody>
+        <tfoot>
+          <tr style="border-top:1px solid #d1d5db;background:#f9fafb;">
+            <td colspan="${totalCols - 1}" style="padding:8px 10px;text-align:right;font-weight:600;font-size:13px;color:#374151;">Sub Total | ذیلی کل</td>
+            <td style="padding:8px 10px;text-align:right;font-weight:bold;font-size:13px;color:#374151;">Rs ${subtotal.toLocaleString()}</td>
+          </tr>
+          <tr style="background:#fef3c7;border-top:1px solid #f59e0b;">
+            <td colspan="${totalCols - 1}" style="padding:8px 10px;text-align:right;font-weight:600;font-size:12px;color:#92400e;">Advanced Tax U/S 236-H @ 0.50%</td>
+            <td style="padding:8px 10px;text-align:right;font-weight:bold;font-size:12px;color:#92400e;">Rs ${advancedTax.toLocaleString()}</td>
+          </tr>
+          <tr style="border-top:2px solid #1e40af;background:#dbeafe;">
+            <td colspan="${totalCols - 1}" style="padding:10px 10px;text-align:right;font-weight:bold;font-size:14px;color:#1e40af;">Grand Total | کل رقم</td>
+            <td style="padding:10px 10px;text-align:right;font-weight:900;font-size:18px;color:#1e3a8a;">Rs ${grandTotal.toLocaleString()}</td>
+          </tr>
+          ${
+            order.paymentReceived > 0
+              ? `
+          <tr style="background:#f0fdf4;border-top:1px solid #86efac;">
+            <td colspan="${totalCols - 1}" style="padding:7px 10px;text-align:right;font-weight:600;font-size:12px;color:#065f46;">Payment Received | موصول</td>
+            <td style="padding:7px 10px;text-align:right;font-weight:bold;font-size:12px;color:#065f46;">Rs ${order.paymentReceived.toLocaleString()}</td>
+          </tr>
+          <tr style="background:${grandTotal - order.paymentReceived > 0 ? "#fef2f2" : "#f0fdf4"};border-top:1px solid ${grandTotal - order.paymentReceived > 0 ? "#fca5a5" : "#86efac"};">
+            <td colspan="${totalCols - 1}" style="padding:7px 10px;text-align:right;font-weight:600;font-size:12px;color:${grandTotal - order.paymentReceived > 0 ? "#dc2626" : "#065f46"};">Balance | باقی</td>
+            <td style="padding:7px 10px;text-align:right;font-weight:bold;font-size:12px;color:${grandTotal - order.paymentReceived > 0 ? "#dc2626" : "#065f46"};">Rs ${Math.abs(grandTotal - order.paymentReceived).toLocaleString()}</td>
+          </tr>
+          `
+              : ""
+          }
+        </tfoot>
+      </table>
+
+      ${
+        order.returnReason
+          ? `
+      <div style="margin-top:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:10px;">
+        <p style="font-size:11px;font-weight:700;color:#c2410c;margin:0 0 4px;text-transform:uppercase;">Return Reason | واپسی کی وجہ</p>
+        <p style="font-size:12px;color:#7c2d12;margin:0;">${order.returnReason}</p>
+      </div>
+      `
+          : ""
+      }
+
+      <div style="margin-top:16px;padding-top:12px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;">
+        <p style="font-size:10px;color:#9ca3af;margin:0;">Thank you for your business | آپ کے کاروبار کا شکریہ</p>
+        <p style="font-size:10px;color:#9ca3af;margin:0;">Printed: ${new Date().toLocaleDateString("en-PK")}</p>
+      </div>
+    </div>
+  `;
+    })
+    .join("");
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>MIAN MEDICINE DISTRIBUTOR - Invoices</title><style>@media print { body { margin: 0; } .invoice-card { page-break-after: always; } }</style></head><body style="padding:20px;background:#f3f4f6;">${invoicesHtml}</body></html>`;
+}
+
+// ─── Order Detail Modal ────────────────────────────────────────────────────────
+
+function OrderDetailModal({
+  order,
+  onClose,
+}: {
+  order: OfficeOrderDetail;
+  onClose: () => void;
+}) {
+  function handlePrint() {
+    const printWin = window.open("", "_blank");
+    if (!printWin) return;
+    const html = buildPrintHtml([order]);
+    printWin.document.write(html);
+    printWin.document.close();
+    printWin.print();
+  }
+
+  return (
+    <dialog
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 w-full h-full max-w-none max-h-none m-0 bg-black/55 open:flex"
+      open
+      aria-labelledby="order-modal-title"
+      onClose={onClose}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onClose();
+      }}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+      >
+        {/* Modal Header */}
+        <div
+          className="flex items-center justify-between px-6 py-4 text-white"
+          style={{
+            background:
+              "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+          }}
+        >
+          <div>
+            <h2
+              id="order-modal-title"
+              className="text-lg font-bold font-heading"
+            >
+              {order.orderId} — Invoice | انوائس
+            </h2>
+            <p className="text-white/70 text-sm">{order.pharmacyName}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 transition-colors flex items-center justify-center"
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Modal Body */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-5">
+          {/* Order meta */}
+          <div className="grid grid-cols-2 gap-4 bg-gray-50 rounded-xl p-4">
+            <div>
+              <p className="text-xs text-gray-500 uppercase tracking-wider mb-0.5">
+                Pharmacy
+              </p>
+              <p className="font-bold text-gray-900">{order.pharmacyName}</p>
+              {order.pharmacyArea && (
+                <p className="text-sm text-gray-500">{order.pharmacyArea}</p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs text-gray-500 uppercase tracking-wider mb-0.5">
+                Staff | بکر
+              </p>
+              <p className="font-bold text-gray-900">
+                {order.staffName || "—"}
+              </p>
+              {order.staffCode && (
+                <p className="text-sm text-gray-500 font-mono">
+                  {order.staffCode}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs text-gray-500 uppercase tracking-wider mb-0.5">
+                Date | تاریخ
+              </p>
+              <p className="font-semibold text-gray-900">
+                {formatDate(order.date)}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-500 uppercase tracking-wider mb-0.5">
+                Status | حیثیت
+              </p>
+              <StatusBadge status={order.status} />
+            </div>
+            {order.paymentReceived > 0 && (
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wider mb-0.5">
+                  Payment Received | موصول
+                </p>
+                <p className="font-bold text-emerald-700">
+                  {formatCurrency(order.paymentReceived)}
+                </p>
+              </div>
+            )}
+            {order.paymentReceived >= 0 && order.totalAmount > 0 && (
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wider mb-0.5">
+                  Balance | باقی
+                </p>
+                <p
+                  className={`font-bold ${(order.totalAmount - order.paymentReceived) > 0 ? "text-red-600" : "text-emerald-600"}`}
+                >
+                  {formatCurrency(
+                    Math.abs(order.totalAmount - order.paymentReceived),
+                  )}
+                  {order.totalAmount - order.paymentReceived > 0
+                    ? " (baqi)"
+                    : " (paid)"}
+                </p>
+              </div>
+            )}
+            {order.pharmacyCode && (
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wider mb-0.5">
+                  Pharmacy Code | فارمیسی کوڈ
+                </p>
+                <p className="font-bold text-gray-900 font-mono">
+                  {order.pharmacyCode}
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Items table */}
+          <div>
+            <h3 className="font-bold text-gray-900 mb-3">
+              Order Items | اشیاء
+            </h3>
+            {(() => {
+              const hasBonus = order.items.some((i) => i.bonusQty > 0);
+              const hasDiscount = order.items.some(
+                (i) => i.discountPercent > 0,
+              );
+              const totalCols = 5 + (hasBonus ? 1 : 0) + (hasDiscount ? 1 : 0);
+              return (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-blue-50 border-b border-blue-200">
+                      <th className="text-left px-3 py-2.5 text-xs font-semibold text-blue-700 uppercase">
+                        Medicine
+                      </th>
+                      <th className="text-left px-3 py-2.5 text-xs font-semibold text-blue-700 uppercase">
+                        Strength
+                      </th>
+                      <th className="text-center px-3 py-2.5 text-xs font-semibold text-blue-700 uppercase">
+                        Qty
+                      </th>
+                      {hasBonus && (
+                        <th className="text-center px-3 py-2.5 text-xs font-semibold text-emerald-700 uppercase">
+                          Bonus | بونس
+                        </th>
+                      )}
+                      {hasDiscount && (
+                        <th className="text-center px-3 py-2.5 text-xs font-semibold text-amber-700 uppercase">
+                          Disc% | ڈسکاؤنٹ
+                        </th>
+                      )}
+                      <th className="text-right px-3 py-2.5 text-xs font-semibold text-blue-700 uppercase">
+                        Price
+                      </th>
+                      <th className="text-right px-3 py-2.5 text-xs font-semibold text-blue-700 uppercase">
+                        Total
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {order.items.map((item, i) => {
+                      const hasReturnItems =
+                        (order.returnItems ?? []).length > 0;
+                      const isReturned = (order.returnItems ?? []).some(
+                        (r) => r.medicineId === item.medicineId,
+                      );
+                      const rowClass = hasReturnItems
+                        ? isReturned
+                          ? "bg-red-50 border-l-2 border-l-red-400"
+                          : "bg-emerald-50/40 border-l-2 border-l-emerald-400"
+                        : i % 2 === 0
+                          ? "bg-white"
+                          : "bg-gray-50/50";
+                      return (
+                        <tr
+                          key={`${item.medicineName}-${i}`}
+                          className={rowClass}
+                        >
+                          <td className="px-3 py-2.5 font-semibold text-gray-900">
+                            {item.medicineName}
+                            {isReturned && (
+                              <span className="ml-1 text-xs text-red-500">
+                                (Returned)
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-gray-500">
+                            {item.strength || "—"}
+                          </td>
+                          <td className="px-3 py-2.5 text-center font-bold text-gray-700">
+                            {item.qty}
+                          </td>
+                          {hasBonus && (
+                            <td className="px-3 py-2.5 text-center font-bold text-emerald-600">
+                              {item.bonusQty > 0 ? item.bonusQty : "—"}
+                            </td>
+                          )}
+                          {hasDiscount && (
+                            <td className="px-3 py-2.5 text-center font-bold text-amber-600">
+                              {item.discountPercent > 0
+                                ? `${item.discountPercent}%`
+                                : "—"}
+                            </td>
+                          )}
+                          <td className="px-3 py-2.5 text-right text-gray-600">
+                            {formatCurrency(item.unitPrice)}
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-bold text-blue-700">
+                            {formatCurrency(item.total)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-gray-200 bg-gray-50">
+                      <td
+                        colSpan={totalCols - 1}
+                        className="px-3 py-2 text-right font-semibold text-gray-600 text-sm"
+                      >
+                        Sub Total | ذیلی کل
+                      </td>
+                      <td className="px-3 py-2 text-right font-bold text-gray-700 text-sm">
+                        {formatCurrency(
+                          order.items.reduce((s, i) => s + i.total, 0),
+                        )}
+                      </td>
+                    </tr>
+                    <tr className="bg-yellow-50 border-t border-yellow-200">
+                      <td
+                        colSpan={totalCols - 1}
+                        className="px-3 py-2 text-right font-semibold text-yellow-800 text-xs"
+                      >
+                        Advanced Tax U/S 236-H @ 0.50%
+                      </td>
+                      <td className="px-3 py-2 text-right font-bold text-yellow-800 text-xs">
+                        {formatCurrency(
+                          Math.round(
+                            order.items.reduce((s, i) => s + i.total, 0) *
+                              0.005,
+                          ),
+                        )}
+                      </td>
+                    </tr>
+                    <tr className="border-t-2 border-blue-300 bg-blue-50">
+                      <td
+                        colSpan={totalCols - 1}
+                        className="px-3 py-3 text-right font-bold text-blue-800"
+                      >
+                        Grand Total | کل رقم
+                      </td>
+                      <td className="px-3 py-3 text-right font-bold text-xl text-blue-800">
+                        {formatCurrency(
+                          Math.round(
+                            order.items.reduce((s, i) => s + i.total, 0) *
+                              1.005,
+                          ),
+                        )}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              );
+            })()}
+            {order.returnReason && (
+              <div className="mt-3 bg-orange-50 border border-orange-200 rounded-lg p-3">
+                <p className="text-xs font-semibold text-orange-700">
+                  Return Reason | واپسی کی وجہ:
+                </p>
+                <p className="text-sm text-orange-800 mt-1">
+                  {order.returnReason}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Modal Footer */}
+        <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-5 py-2.5 rounded-xl border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors font-medium text-sm"
+          >
+            Close | بند کریں
+          </button>
+          <button
+            type="button"
+            onClick={handlePrint}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm transition-colors"
+          >
+            <Printer size={15} />
+            Print Invoice | انوائس پرنٹ
+          </button>
+        </div>
+      </div>
+    </dialog>
+  );
+}
+
 // ─── Office Dashboard ─────────────────────────────────────────────────────────
 
 type RawOrder = {
@@ -2919,6 +3579,8 @@ type OfficeOrder = {
   pharmacyName: string;
   pharmacyArea: string;
   staffId: string;
+  staffName: string;
+  staffCode: string;
   date: string;
   itemCount: number;
   totalAmount: number;
@@ -2927,38 +3589,172 @@ type OfficeOrder = {
 
 type OfficeOrderDetail = OfficeOrder & {
   items: Array<{
+    medicineId: string;
     medicineName: string;
     strength: string;
     qty: number;
     unitPrice: number;
     total: number;
+    bonusQty: number;
+    discountPercent: number;
   }>;
+  paymentReceived: number;
+  returnItems: Array<{ medicineId: string; returnedQty: number }>;
+  returnReason: string;
+  pharmacyCode: string;
 };
+
+// Helper to map raw order records to OfficeOrderDetail (outside component for stable ref)
+function mapRawOrdersToDetail(
+  rawOrders: RawOrder[],
+  pharmacyMap: Map<
+    string,
+    { id: bigint; name: string; location: string; contact: string }
+  >,
+  medicineMap: Map<
+    string,
+    {
+      id: bigint;
+      name: string;
+      price: bigint;
+      strength: string;
+      description: string;
+      company: string;
+      packSize: string;
+    }
+  >,
+): OfficeOrderDetail[] {
+  return rawOrders.map((rec) => {
+    const pharm = pharmacyMap.get(String(rec.pharmacyId));
+    const { area } = parseLocation(pharm?.location ?? "");
+    const date = new Date(Number(rec.timestamp / BigInt(1_000_000)))
+      .toISOString()
+      .split("T")[0];
+    const staffIdStr =
+      typeof rec.staffId === "object" && rec.staffId !== null
+        ? String(
+            (rec.staffId as { __principal__: string }).__principal__ ??
+              rec.staffId,
+          )
+        : String(rec.staffId);
+    const recWithStaff = rec as unknown as {
+      staffName?: string;
+      staffCode?: string;
+    } & RawOrder;
+    const staffName =
+      recWithStaff.staffName ||
+      staffIdStr.slice(0, 12) + (staffIdStr.length > 12 ? "…" : "");
+    const staffCode = recWithStaff.staffCode || "";
+    const items = rec.orderLines.map((line) => {
+      const med = medicineMap.get(String(line.medicineId));
+      const unitPrice = med ? Number(med.price) : 0;
+      const qty = Number(line.quantity);
+      const seed = MEDICINE_SEEDS.find((s) => s.name === med?.name);
+      return {
+        medicineId: String(line.medicineId),
+        medicineName: med?.name ?? `Medicine #${line.medicineId}`,
+        strength: med?.strength || seed?.strength || "",
+        qty,
+        unitPrice,
+        total: unitPrice * qty,
+        bonusQty: Number(
+          (line as unknown as { bonusQty?: bigint }).bonusQty ?? 0,
+        ),
+        discountPercent: Number(
+          (line as unknown as { discountPercent?: bigint }).discountPercent ??
+            0,
+        ),
+      };
+    });
+    const totalAmount = items.reduce((s, i) => s + i.total, 0);
+    const itemCount = items.length;
+    return {
+      backendId: rec.id,
+      orderId: `ORD-${rec.id}`,
+      pharmacyName: pharm?.name ?? `Pharmacy #${rec.pharmacyId}`,
+      pharmacyArea: area,
+      staffId: staffIdStr.slice(0, 12) + (staffIdStr.length > 12 ? "…" : ""),
+      staffName,
+      staffCode,
+      date,
+      itemCount,
+      totalAmount,
+      status: mapBackendStatus(rec.status),
+      items,
+      paymentReceived: Number((rec as any).paymentReceived ?? 0),
+      returnItems: ((rec as any).returnItems ?? []).map((ri: any) => ({
+        medicineId: String(ri.medicineId),
+        returnedQty: Number(ri.returnedQty),
+      })),
+      returnReason: (rec as any).returnReason ?? "",
+      pharmacyCode: (rec as any).pharmacyCode ?? "",
+    };
+  });
+}
 
 function OfficeDashboard() {
   const { actor, isFetching: isActorFetching } = useActor();
-  const [orders, setOrders] = useState<OfficeOrder[]>([]);
+  const [orders, setOrders] = useState<OfficeOrderDetail[]>([]);
+  const [historyOrders, setHistoryOrders] = useState<OfficeOrderDetail[]>([]);
   const [ordersWithLines, setOrdersWithLines] = useState<OfficeOrderDetail[]>(
     [],
   );
+  const [_historyOrdersWithLines, setHistoryOrdersWithLines] = useState<
+    OfficeOrderDetail[]
+  >([]);
   const [allMedicines, setAllMedicines] = useState<Medicine[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<OrderStatus | "all">("all");
   const [updatingId, setUpdatingId] = useState<bigint | null>(null);
   const [isConfirmingAll, setIsConfirmingAll] = useState(false);
-  const [activeView, setActiveView] = useState<"orders" | "inventory">(
-    "orders",
+  const [activeView, setActiveView] = useState<
+    "orders" | "history" | "inventory" | "purchasing"
+  >("orders");
+  const [purchases, setPurchases] = useState<
+    Array<{
+      id: bigint;
+      productName: string;
+      genericName: string;
+      batchNo: string;
+      quantity: bigint;
+      price: bigint;
+      packSize: string;
+      companyName: string;
+      timestamp: bigint;
+    }>
+  >([]);
+  const [isLoadingPurchases, setIsLoadingPurchases] = useState(false);
+  // Purchasing form state
+  const [purchaseProductName, setPurchaseProductName] = useState("");
+  const [purchaseGenericName, setPurchaseGenericName] = useState("");
+  const [purchaseBatchNo, setPurchaseBatchNo] = useState("");
+  const [purchaseQuantity, setPurchaseQuantity] = useState("");
+  const [purchasePrice, setPurchasePrice] = useState("");
+  const [purchasePackSize, setPurchasePackSize] = useState("");
+  const [purchaseCompanyName, setPurchaseCompanyName] = useState("");
+  const [isAddingPurchase, setIsAddingPurchase] = useState(false);
+  const [deletingPurchaseId, setDeletingPurchaseId] = useState<bigint | null>(
+    null,
   );
+  const [confirmDeletePurchaseId, setConfirmDeletePurchaseId] = useState<
+    bigint | null
+  >(null);
+  const [selectedOrder, setSelectedOrder] = useState<OfficeOrderDetail | null>(
+    null,
+  );
+  const [backendError, setBackendError] = useState<string | null>(null);
 
   const loadAllData = useCallback(async () => {
     if (!actor || isActorFetching) return;
     setIsLoading(true);
     try {
-      const [rawOrders, rawPharmacies, rawMedicines] = await Promise.all([
-        actor.getAllStaffOrders(),
-        actor.getPharmacies(),
-        actor.getMedicines(),
-      ]);
+      const [rawActiveOrders, rawHistoryOrders, rawPharmacies, rawMedicines] =
+        await Promise.all([
+          actor.getActiveOrders(),
+          actor.getHistoryOrders(),
+          actor.getPharmacies(),
+          actor.getMedicines(),
+        ]);
 
       const pharmacyMap = new Map(rawPharmacies.map((p) => [String(p.id), p]));
       const medicineMap = new Map(rawMedicines.map((m) => [String(m.id), m]));
@@ -2980,93 +3776,30 @@ function OfficeDashboard() {
       });
       setAllMedicines(mappedMedicines);
 
-      const mapped: OfficeOrder[] = (rawOrders as unknown as RawOrder[]).map(
-        (rec) => {
-          const pharm = pharmacyMap.get(String(rec.pharmacyId));
-          const { area } = parseLocation(pharm?.location ?? "");
-          const date = new Date(Number(rec.timestamp / BigInt(1_000_000)))
-            .toISOString()
-            .split("T")[0];
-          const itemCount = rec.orderLines.length;
-          const totalAmount = rec.orderLines.reduce((sum, line) => {
-            const med = medicineMap.get(String(line.medicineId));
-            return sum + (med ? Number(med.price) * Number(line.quantity) : 0);
-          }, 0);
-          const staffIdStr =
-            typeof rec.staffId === "object" && rec.staffId !== null
-              ? String(
-                  (rec.staffId as { __principal__: string }).__principal__ ??
-                    rec.staffId,
-                )
-              : String(rec.staffId);
-
-          return {
-            backendId: rec.id,
-            orderId: `ORD-${rec.id}`,
-            pharmacyName: pharm?.name ?? `Pharmacy #${rec.pharmacyId}`,
-            pharmacyArea: area,
-            staffId:
-              staffIdStr.slice(0, 12) + (staffIdStr.length > 12 ? "…" : ""),
-            date,
-            itemCount,
-            totalAmount,
-            status: mapBackendStatus(rec.status),
-          };
-        },
+      // Map active orders
+      const activeWithLines = mapRawOrdersToDetail(
+        rawActiveOrders as unknown as RawOrder[],
+        pharmacyMap,
+        medicineMap,
       );
+      activeWithLines.sort((a, b) => b.orderId.localeCompare(a.orderId));
+      setOrdersWithLines(activeWithLines);
+      setOrders(activeWithLines);
 
-      mapped.sort((a, b) => b.orderId.localeCompare(a.orderId));
-      setOrders(mapped);
+      // Map history orders
+      const historyWithLines = mapRawOrdersToDetail(
+        rawHistoryOrders as unknown as RawOrder[],
+        pharmacyMap,
+        medicineMap,
+      );
+      historyWithLines.sort((a, b) => b.orderId.localeCompare(a.orderId));
+      setHistoryOrdersWithLines(historyWithLines);
+      setHistoryOrders(historyWithLines);
 
-      // Compute ordersWithLines for printing
-      const withLines: OfficeOrderDetail[] = (
-        rawOrders as unknown as RawOrder[]
-      ).map((rec) => {
-        const pharm = pharmacyMap.get(String(rec.pharmacyId));
-        const { area } = parseLocation(pharm?.location ?? "");
-        const date = new Date(Number(rec.timestamp / BigInt(1_000_000)))
-          .toISOString()
-          .split("T")[0];
-        const staffIdStr =
-          typeof rec.staffId === "object" && rec.staffId !== null
-            ? String(
-                (rec.staffId as { __principal__: string }).__principal__ ??
-                  rec.staffId,
-              )
-            : String(rec.staffId);
-        const items = rec.orderLines.map((line) => {
-          const med = medicineMap.get(String(line.medicineId));
-          const unitPrice = med ? Number(med.price) : 0;
-          const qty = Number(line.quantity);
-          const seed = MEDICINE_SEEDS.find((s) => s.name === med?.name);
-          return {
-            medicineName: med?.name ?? `Medicine #${line.medicineId}`,
-            strength: med?.strength || seed?.strength || "",
-            qty,
-            unitPrice,
-            total: unitPrice * qty,
-          };
-        });
-        const totalAmount = items.reduce((s, i) => s + i.total, 0);
-        const itemCount = items.length;
-        return {
-          backendId: rec.id,
-          orderId: `ORD-${rec.id}`,
-          pharmacyName: pharm?.name ?? `Pharmacy #${rec.pharmacyId}`,
-          pharmacyArea: area,
-          staffId:
-            staffIdStr.slice(0, 12) + (staffIdStr.length > 12 ? "…" : ""),
-          date,
-          itemCount,
-          totalAmount,
-          status: mapBackendStatus(rec.status),
-          items,
-        };
-      });
-      withLines.sort((a, b) => b.orderId.localeCompare(a.orderId));
-      setOrdersWithLines(withLines);
+      setBackendError(null);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Unknown error";
+      setBackendError(msg);
       toast.error(`Backend error: ${msg}`);
     } finally {
       setIsLoading(false);
@@ -3135,15 +3868,109 @@ function OfficeDashboard() {
     }
   }
 
-  const filtered = useMemo(() => {
+  const loadPurchases = useCallback(async () => {
+    if (!actor) return;
+    setIsLoadingPurchases(true);
+    try {
+      const raw = await actor.getPurchases();
+      setPurchases(raw);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error loading purchases: ${msg}`);
+    } finally {
+      setIsLoadingPurchases(false);
+    }
+  }, [actor]);
+
+  useEffect(() => {
+    if (activeView === "purchasing" && actor) {
+      loadPurchases();
+    }
+  }, [activeView, actor, loadPurchases]);
+
+  async function handleAddPurchase() {
+    if (!actor) return;
+    if (
+      !purchaseProductName.trim() ||
+      !purchaseBatchNo.trim() ||
+      !purchaseQuantity.trim() ||
+      !purchasePrice.trim() ||
+      !purchaseCompanyName.trim()
+    ) {
+      toast.error(
+        "Please fill required fields (Product Name, Batch#, Qty, Price, Company)",
+      );
+      return;
+    }
+    const qty = Number(purchaseQuantity);
+    const price = Number(purchasePrice);
+    if (Number.isNaN(qty) || qty <= 0) {
+      toast.error("Please enter a valid quantity");
+      return;
+    }
+    if (Number.isNaN(price) || price <= 0) {
+      toast.error("Please enter a valid price");
+      return;
+    }
+    setIsAddingPurchase(true);
+    try {
+      await actor.addPurchase(
+        purchaseProductName.trim(),
+        purchaseGenericName.trim(),
+        purchaseBatchNo.trim(),
+        BigInt(Math.round(qty)),
+        BigInt(Math.round(price)),
+        purchasePackSize.trim(),
+        purchaseCompanyName.trim(),
+      );
+      toast.success(
+        `Purchase record added for "${purchaseProductName.trim()}"!`,
+      );
+      setPurchaseProductName("");
+      setPurchaseGenericName("");
+      setPurchaseBatchNo("");
+      setPurchaseQuantity("");
+      setPurchasePrice("");
+      setPurchasePackSize("");
+      setPurchaseCompanyName("");
+      await loadPurchases();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error adding purchase: ${msg}`);
+    } finally {
+      setIsAddingPurchase(false);
+    }
+  }
+
+  async function handleDeletePurchase(id: bigint) {
+    if (!actor) return;
+    setDeletingPurchaseId(id);
+    try {
+      await actor.deletePurchase(id);
+      toast.success("Purchase record deleted");
+      setConfirmDeletePurchaseId(null);
+      await loadPurchases();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error deleting purchase: ${msg}`);
+    } finally {
+      setDeletingPurchaseId(null);
+    }
+  }
+
+  const filtered = useMemo((): OfficeOrderDetail[] => {
     if (statusFilter === "all") return orders;
     return orders.filter((o) => o.status === statusFilter);
   }, [orders, statusFilter]);
 
-  const filteredWithLines = useMemo(() => {
+  const filteredWithLines = useMemo((): OfficeOrderDetail[] => {
     if (statusFilter === "all") return ordersWithLines;
     return ordersWithLines.filter((o) => o.status === statusFilter);
   }, [ordersWithLines, statusFilter]);
+
+  const filteredHistory = useMemo((): OfficeOrderDetail[] => {
+    return historyOrders;
+  }, [historyOrders]);
 
   const stats = useMemo(
     () => ({
@@ -3179,18 +4006,37 @@ function OfficeDashboard() {
 
   return (
     <div className="min-h-dvh bg-gray-50">
-      {/* Print styles */}
-      <style>{`
-        @media print {
-          body * { visibility: hidden !important; }
-          #print-area, #print-area * { visibility: visible !important; }
-          #print-area { position: absolute; left: 0; top: 0; width: 100%; }
-          .invoice-card { page-break-after: always; }
-          .invoice-card:last-child { page-break-after: avoid; }
-        }
-      `}</style>
-
       <Toaster richColors position="top-center" />
+
+      {/* Backend error banner */}
+      {backendError && (
+        <div className="flex items-center justify-between gap-3 bg-red-600 text-white px-6 py-2.5 text-sm">
+          <span className="flex-1 min-w-0 truncate">
+            Backend error — click Retry to reload
+          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setBackendError(null);
+                loadAllData();
+              }}
+              className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 transition-colors px-3 py-1 rounded-lg text-xs font-semibold"
+            >
+              <RefreshCw size={12} />
+              Retry
+            </button>
+            <button
+              type="button"
+              onClick={() => setBackendError(null)}
+              className="w-6 h-6 flex items-center justify-center bg-white/20 hover:bg-white/30 transition-colors rounded-full"
+              aria-label="Dismiss error"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <header
@@ -3239,25 +4085,39 @@ function OfficeDashboard() {
         </div>
       </header>
 
-      {/* View Tabs: Orders / Inventory */}
+      {/* View Tabs: Orders / History / Inventory / Purchasing */}
       <div className="max-w-7xl mx-auto px-6 pt-5">
-        <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-xl p-1 w-fit shadow-sm">
+        <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-xl p-1 w-fit shadow-sm flex-wrap">
           <button
             type="button"
             onClick={() => setActiveView("orders")}
-            className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
               activeView === "orders"
                 ? "bg-blue-600 text-white shadow-sm"
                 : "text-gray-600 hover:bg-gray-100"
             }`}
           >
             <Package size={15} />
-            Orders | آرڈر
+            Active Orders | فعال آرڈر
+            <span className="text-xs opacity-70">(48 hrs)</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveView("history")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              activeView === "history"
+                ? "bg-blue-600 text-white shadow-sm"
+                : "text-gray-600 hover:bg-gray-100"
+            }`}
+          >
+            <History size={15} />
+            History | تاریخ
+            <span className="text-xs opacity-70">(1 سال)</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveView("inventory")}
-            className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
               activeView === "inventory"
                 ? "bg-blue-600 text-white shadow-sm"
                 : "text-gray-600 hover:bg-gray-100"
@@ -3265,6 +4125,18 @@ function OfficeDashboard() {
           >
             <Warehouse size={15} />
             Inventory | انوینٹری
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveView("purchasing")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              activeView === "purchasing"
+                ? "bg-blue-600 text-white shadow-sm"
+                : "text-gray-600 hover:bg-gray-100"
+            }`}
+          >
+            <ShoppingBag size={15} />
+            Purchasing | خریداری
           </button>
         </div>
       </div>
@@ -3383,7 +4255,14 @@ function OfficeDashboard() {
                 {/* Print All */}
                 <button
                   type="button"
-                  onClick={() => window.print()}
+                  onClick={() => {
+                    const printWin = window.open("", "_blank");
+                    if (!printWin) return;
+                    const html = buildPrintHtml(filteredWithLines);
+                    printWin.document.write(html);
+                    printWin.document.close();
+                    printWin.print();
+                  }}
                   disabled={filtered.length === 0}
                   className="flex items-center gap-2 bg-gray-600 hover:bg-gray-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
                 >
@@ -3417,7 +4296,7 @@ function OfficeDashboard() {
                         Pharmacy | فارمیسی
                       </th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Staff ID
+                        Staff Name | نام
                       </th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                         Date | تاریخ
@@ -3437,13 +4316,215 @@ function OfficeDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {filtered.map((order, idx) => (
+                    {filtered.map((order, idx) => {
+                      return (
+                        <tr
+                          key={String(order.backendId)}
+                          className={`cursor-pointer hover:bg-blue-50/60 transition-colors ${idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"}`}
+                          onClick={() => setSelectedOrder(order)}
+                          onKeyDown={(e) =>
+                            e.key === "Enter" && setSelectedOrder(order)
+                          }
+                          tabIndex={0}
+                        >
+                          <td className="px-4 py-3 text-sm font-mono font-semibold text-blue-700">
+                            {order.orderId}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="text-sm font-semibold text-gray-900">
+                              {order.pharmacyName}
+                            </div>
+                            {order.pharmacyArea && (
+                              <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
+                                <MapPin size={10} />
+                                {order.pharmacyArea}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="text-sm font-semibold text-gray-900">
+                              {order.staffName || "—"}
+                            </div>
+                            {order.staffCode && (
+                              <div className="text-xs text-gray-400 font-mono">
+                                {order.staffCode}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-600">
+                            {formatDate(order.date)}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-center text-gray-700 font-medium">
+                            {order.itemCount}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-right font-bold text-gray-900">
+                            {formatCurrency(order.totalAmount)}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <StatusBadge status={order.status} />
+                            {(order.returnItems ?? []).length > 0 && (
+                              <div className="mt-1">
+                                <span className="inline-flex items-center gap-1 text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-semibold">
+                                  ↩ {order.returnItems!.length} returns
+                                </span>
+                              </div>
+                            )}
+                          </td>
+                          <td
+                            className="px-4 py-3"
+                            onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => e.stopPropagation()}
+                          >
+                            <div className="flex items-center justify-center gap-1.5">
+                              {order.status === "pending" && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleUpdateStatus(order, "confirmed")
+                                  }
+                                  disabled={updatingId === order.backendId}
+                                  className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                                >
+                                  {updatingId === order.backendId ? (
+                                    <Loader2
+                                      size={10}
+                                      className="animate-spin"
+                                    />
+                                  ) : (
+                                    <CheckCircle2 size={11} />
+                                  )}
+                                  Confirm
+                                </button>
+                              )}
+                              {order.status === "confirmed" && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleUpdateStatus(order, "delivered")
+                                  }
+                                  disabled={updatingId === order.backendId}
+                                  className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                                >
+                                  {updatingId === order.backendId ? (
+                                    <Loader2
+                                      size={10}
+                                      className="animate-spin"
+                                    />
+                                  ) : (
+                                    <Truck size={11} />
+                                  )}
+                                  Mark Delivered
+                                </button>
+                              )}
+                              {order.status === "delivered" && (
+                                <span className="text-xs text-emerald-600 font-medium flex items-center gap-1">
+                                  <CheckCircle2 size={12} />
+                                  Delivered
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </>
+        )}
+
+        {activeView === "history" && (
+          <>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900 font-heading">
+                  History | تاریخ
+                </h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  Delivered orders older than 48 hours · up to 1 year
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1.5 rounded-lg font-medium">
+                  {historyOrders.length} orders
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const printWin = window.open("", "_blank");
+                    if (!printWin) return;
+                    const html = buildPrintHtml(filteredHistory);
+                    printWin.document.write(html);
+                    printWin.document.close();
+                    printWin.print();
+                  }}
+                  disabled={filteredHistory.length === 0}
+                  className="flex items-center gap-2 bg-gray-600 hover:bg-gray-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                >
+                  <Printer size={14} />
+                  Print History | تاریخ پرنٹ
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              {isLoading ? (
+                <div className="flex items-center justify-center py-20">
+                  <Loader2 className="animate-spin text-blue-500" size={32} />
+                </div>
+              ) : filteredHistory.length === 0 ? (
+                <div className="text-center py-20 text-gray-400">
+                  <History size={40} className="mx-auto mb-3 opacity-50" />
+                  <p className="font-medium">
+                    No history orders | کوئی تاریخ نہیں
+                  </p>
+                  <p className="text-xs mt-1">
+                    Delivered orders older than 48 hours will appear here
+                  </p>
+                </div>
+              ) : (
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200">
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Invoice # | انوائس
+                      </th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Pharmacy | فارمیسی
+                      </th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Staff Name | نام
+                      </th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Date | تاریخ
+                      </th>
+                      <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Items
+                      </th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Amount | رقم
+                      </th>
+                      <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Status | حیثیت
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {filteredHistory.map((order, idx) => (
                       <tr
                         key={String(order.backendId)}
-                        className={idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"}
+                        className={`cursor-pointer hover:bg-blue-50/60 transition-colors ${idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"}`}
+                        onClick={() => setSelectedOrder(order)}
+                        onKeyDown={(e) =>
+                          e.key === "Enter" && setSelectedOrder(order)
+                        }
+                        tabIndex={0}
                       >
-                        <td className="px-4 py-3 text-sm font-mono font-semibold text-blue-700">
-                          {order.orderId}
+                        <td className="px-4 py-3">
+                          <span className="text-sm font-mono font-bold text-blue-700">
+                            {order.orderId}
+                          </span>
                         </td>
                         <td className="px-4 py-3">
                           <div className="text-sm font-semibold text-gray-900">
@@ -3456,8 +4537,15 @@ function OfficeDashboard() {
                             </div>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-xs text-gray-500 font-mono">
-                          {order.staffId}
+                        <td className="px-4 py-3">
+                          <div className="text-sm font-semibold text-gray-900">
+                            {order.staffName || "—"}
+                          </div>
+                          {order.staffCode && (
+                            <div className="text-xs text-gray-400 font-mono">
+                              {order.staffCode}
+                            </div>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-600">
                           {formatDate(order.date)}
@@ -3470,50 +4558,6 @@ function OfficeDashboard() {
                         </td>
                         <td className="px-4 py-3 text-center">
                           <StatusBadge status={order.status} />
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center justify-center gap-1.5">
-                            {order.status === "pending" && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleUpdateStatus(order, "confirmed")
-                                }
-                                disabled={updatingId === order.backendId}
-                                className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors disabled:opacity-50"
-                              >
-                                {updatingId === order.backendId ? (
-                                  <Loader2 size={10} className="animate-spin" />
-                                ) : (
-                                  <CheckCircle2 size={11} />
-                                )}
-                                Confirm
-                              </button>
-                            )}
-                            {order.status === "confirmed" && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleUpdateStatus(order, "delivered")
-                                }
-                                disabled={updatingId === order.backendId}
-                                className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors disabled:opacity-50"
-                              >
-                                {updatingId === order.backendId ? (
-                                  <Loader2 size={10} className="animate-spin" />
-                                ) : (
-                                  <Truck size={11} />
-                                )}
-                                Mark Delivered
-                              </button>
-                            )}
-                            {order.status === "delivered" && (
-                              <span className="text-xs text-emerald-600 font-medium flex items-center gap-1">
-                                <CheckCircle2 size={12} />
-                                Delivered
-                              </span>
-                            )}
-                          </div>
                         </td>
                       </tr>
                     ))}
@@ -3644,6 +4688,312 @@ function OfficeDashboard() {
           </div>
         )}
 
+        {activeView === "purchasing" && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900 font-heading">
+                  Purchasing | خریداری
+                </h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  New product purchase records · نئی خریداری ریکارڈ
+                </p>
+              </div>
+              <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1.5 rounded-lg font-medium">
+                {purchases.length} records
+              </span>
+            </div>
+
+            {/* Add Purchase Form */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+              <h3 className="font-bold text-gray-900 font-heading mb-4 flex items-center gap-2">
+                <Plus size={16} className="text-blue-600" />
+                Add New Purchase Record | نئی خریداری شامل کریں
+              </h3>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                <div>
+                  <label
+                    htmlFor="pur-product-name"
+                    className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                  >
+                    Product Name | پروڈکٹ نام *
+                  </label>
+                  <input
+                    id="pur-product-name"
+                    type="text"
+                    value={purchaseProductName}
+                    onChange={(e) => setPurchaseProductName(e.target.value)}
+                    placeholder="e.g. Panadol"
+                    disabled={isAddingPurchase}
+                    className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="pur-generic-name"
+                    className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                  >
+                    Generic Name | عام نام
+                  </label>
+                  <input
+                    id="pur-generic-name"
+                    type="text"
+                    value={purchaseGenericName}
+                    onChange={(e) => setPurchaseGenericName(e.target.value)}
+                    placeholder="e.g. Paracetamol"
+                    disabled={isAddingPurchase}
+                    className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="pur-batch-no"
+                    className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                  >
+                    Batch # | بیچ نمبر *
+                  </label>
+                  <input
+                    id="pur-batch-no"
+                    type="text"
+                    value={purchaseBatchNo}
+                    onChange={(e) => setPurchaseBatchNo(e.target.value)}
+                    placeholder="e.g. BN-2024-001"
+                    disabled={isAddingPurchase}
+                    className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="pur-quantity"
+                    className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                  >
+                    Quantity | مقدار *
+                  </label>
+                  <input
+                    id="pur-quantity"
+                    type="number"
+                    min="1"
+                    value={purchaseQuantity}
+                    onChange={(e) => setPurchaseQuantity(e.target.value)}
+                    placeholder="e.g. 500"
+                    disabled={isAddingPurchase}
+                    className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="pur-price"
+                    className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                  >
+                    Price (Rs) | قیمت *
+                  </label>
+                  <input
+                    id="pur-price"
+                    type="number"
+                    min="1"
+                    value={purchasePrice}
+                    onChange={(e) => setPurchasePrice(e.target.value)}
+                    placeholder="e.g. 15000"
+                    disabled={isAddingPurchase}
+                    className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="pur-pack-size"
+                    className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                  >
+                    Pack Size | پیک سائز
+                  </label>
+                  <input
+                    id="pur-pack-size"
+                    type="text"
+                    value={purchasePackSize}
+                    onChange={(e) => setPurchasePackSize(e.target.value)}
+                    placeholder="e.g. Pack of 10"
+                    disabled={isAddingPurchase}
+                    className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label
+                    htmlFor="pur-company-name"
+                    className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                  >
+                    Company Name | کمپنی نام *
+                  </label>
+                  <input
+                    id="pur-company-name"
+                    type="text"
+                    value={purchaseCompanyName}
+                    onChange={(e) => setPurchaseCompanyName(e.target.value)}
+                    placeholder="e.g. GlaxoSmithKline"
+                    disabled={isAddingPurchase}
+                    className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    onClick={handleAddPurchase}
+                    disabled={isAddingPurchase}
+                    className="w-full h-10 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold text-sm rounded-lg transition-colors"
+                  >
+                    {isAddingPurchase ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <Plus size={14} />
+                    )}
+                    {isAddingPurchase ? "Adding..." : "Add Record | شامل کریں"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Purchases Table */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              {isLoadingPurchases ? (
+                <div className="flex items-center justify-center py-20">
+                  <Loader2 className="animate-spin text-blue-500" size={32} />
+                </div>
+              ) : purchases.length === 0 ? (
+                <div className="text-center py-20 text-gray-400">
+                  <ShoppingBag size={40} className="mx-auto mb-3 opacity-50" />
+                  <p className="font-medium">
+                    No purchase records yet | کوئی خریداری ریکارڈ نہیں
+                  </p>
+                  <p className="text-xs mt-1">
+                    Use the form above to add your first purchase record
+                  </p>
+                </div>
+              ) : (
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200">
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Product Name | پروڈکٹ
+                      </th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Generic Name | عام نام
+                      </th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Batch # | بیچ
+                      </th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Company | کمپنی
+                      </th>
+                      <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Qty | مقدار
+                      </th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Price (Rs) | قیمت
+                      </th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Pack Size | پیک
+                      </th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Date | تاریخ
+                      </th>
+                      <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Action
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {purchases.map((purchase, idx) => {
+                      const date = new Date(
+                        Number(purchase.timestamp / BigInt(1_000_000)),
+                      )
+                        .toISOString()
+                        .split("T")[0];
+                      return (
+                        <tr
+                          key={String(purchase.id)}
+                          className={
+                            idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"
+                          }
+                        >
+                          <td className="px-4 py-3">
+                            <div className="font-semibold text-sm text-gray-900">
+                              {purchase.productName}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-600">
+                            {purchase.genericName || "—"}
+                          </td>
+                          <td className="px-4 py-3 text-sm font-mono text-gray-700">
+                            {purchase.batchNo}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-700">
+                            {purchase.companyName}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-center font-bold text-gray-900">
+                            {String(purchase.quantity)}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-right font-bold text-blue-700">
+                            {formatCurrency(Number(purchase.price))}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-600">
+                            {purchase.packSize || "—"}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-500">
+                            {formatDate(date)}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            {confirmDeletePurchaseId === purchase.id ? (
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleDeletePurchase(purchase.id)
+                                  }
+                                  disabled={deletingPurchaseId === purchase.id}
+                                  className="flex items-center gap-1 bg-red-500 hover:bg-red-600 text-white text-xs px-2 py-1 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                                >
+                                  {deletingPurchaseId === purchase.id ? (
+                                    <Loader2
+                                      size={10}
+                                      className="animate-spin"
+                                    />
+                                  ) : null}
+                                  Yes
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setConfirmDeletePurchaseId(null)
+                                  }
+                                  className="text-xs px-2 py-1 rounded-lg border border-gray-300 font-semibold hover:bg-gray-50 transition-colors"
+                                  disabled={deletingPurchaseId === purchase.id}
+                                >
+                                  No
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setConfirmDeletePurchaseId(purchase.id)
+                                }
+                                className="flex items-center gap-1 text-red-500 hover:text-red-700 hover:bg-red-50 text-xs px-2 py-1 rounded-lg transition-colors mx-auto"
+                                disabled={deletingPurchaseId === purchase.id}
+                                aria-label={`Delete purchase ${purchase.productName}`}
+                              >
+                                <Trash2 size={12} />
+                                Delete
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Footer */}
         <div className="text-center py-3 text-xs text-gray-400">
           © {new Date().getFullYear()}. Built with ♥ using{" "}
@@ -3658,323 +5008,13 @@ function OfficeDashboard() {
         </div>
       </div>
 
-      {/* ── Print Area (hidden on screen, visible when printing) ── */}
-      <div id="print-area" style={{ display: "none" }}>
-        <div style={{ padding: "20px" }}>
-          {filteredWithLines.map((order) => (
-            <div
-              key={String(order.backendId)}
-              className="invoice-card"
-              style={{
-                border: "1px solid #e5e7eb",
-                borderRadius: "8px",
-                padding: "24px",
-                marginBottom: "24px",
-                fontFamily: "sans-serif",
-              }}
-            >
-              {/* Invoice Header */}
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  marginBottom: "20px",
-                  borderBottom: "2px solid #2563eb",
-                  paddingBottom: "16px",
-                }}
-              >
-                <div>
-                  <h1
-                    style={{
-                      fontSize: "22px",
-                      fontWeight: "bold",
-                      color: "#1e40af",
-                      margin: 0,
-                    }}
-                  >
-                    MedOrder Invoice
-                  </h1>
-                  <p
-                    style={{
-                      color: "#6b7280",
-                      fontSize: "13px",
-                      margin: "4px 0 0",
-                    }}
-                  >
-                    Medicine Distributor Order
-                  </p>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <p
-                    style={{
-                      fontWeight: "bold",
-                      fontSize: "16px",
-                      color: "#1e40af",
-                      margin: 0,
-                    }}
-                  >
-                    {order.orderId}
-                  </p>
-                  <p
-                    style={{
-                      color: "#6b7280",
-                      fontSize: "13px",
-                      margin: "4px 0 0",
-                    }}
-                  >
-                    {formatDate(order.date)}
-                  </p>
-                </div>
-              </div>
-
-              {/* Order Info */}
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: "12px",
-                  marginBottom: "20px",
-                  backgroundColor: "#f9fafb",
-                  borderRadius: "6px",
-                  padding: "12px",
-                }}
-              >
-                <div>
-                  <p
-                    style={{
-                      color: "#6b7280",
-                      fontSize: "11px",
-                      margin: "0 0 2px",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.05em",
-                    }}
-                  >
-                    Pharmacy
-                  </p>
-                  <p
-                    style={{
-                      fontWeight: "bold",
-                      fontSize: "14px",
-                      color: "#111827",
-                      margin: 0,
-                    }}
-                  >
-                    {order.pharmacyName}
-                  </p>
-                  {order.pharmacyArea && (
-                    <p
-                      style={{
-                        color: "#6b7280",
-                        fontSize: "12px",
-                        margin: "2px 0 0",
-                      }}
-                    >
-                      {order.pharmacyArea}
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <p
-                    style={{
-                      color: "#6b7280",
-                      fontSize: "11px",
-                      margin: "0 0 2px",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.05em",
-                    }}
-                  >
-                    Staff ID
-                  </p>
-                  <p
-                    style={{
-                      fontWeight: "bold",
-                      fontSize: "14px",
-                      color: "#111827",
-                      margin: 0,
-                    }}
-                  >
-                    {order.staffId}
-                  </p>
-                </div>
-              </div>
-
-              {/* Items Table */}
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr
-                    style={{
-                      backgroundColor: "#eff6ff",
-                      borderBottom: "1px solid #bfdbfe",
-                    }}
-                  >
-                    <th
-                      style={{
-                        padding: "8px 12px",
-                        textAlign: "left",
-                        fontSize: "12px",
-                        color: "#1e40af",
-                        fontWeight: "600",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                      }}
-                    >
-                      Medicine Name
-                    </th>
-                    <th
-                      style={{
-                        padding: "8px 12px",
-                        textAlign: "left",
-                        fontSize: "12px",
-                        color: "#1e40af",
-                        fontWeight: "600",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                      }}
-                    >
-                      Strength
-                    </th>
-                    <th
-                      style={{
-                        padding: "8px 12px",
-                        textAlign: "center",
-                        fontSize: "12px",
-                        color: "#1e40af",
-                        fontWeight: "600",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                      }}
-                    >
-                      Qty
-                    </th>
-                    <th
-                      style={{
-                        padding: "8px 12px",
-                        textAlign: "right",
-                        fontSize: "12px",
-                        color: "#1e40af",
-                        fontWeight: "600",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                      }}
-                    >
-                      Unit Price
-                    </th>
-                    <th
-                      style={{
-                        padding: "8px 12px",
-                        textAlign: "right",
-                        fontSize: "12px",
-                        color: "#1e40af",
-                        fontWeight: "600",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                      }}
-                    >
-                      Total
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {order.items.map((item, i) => (
-                    <tr
-                      key={`${order.orderId}-item-${i}`}
-                      style={{
-                        borderBottom: "1px solid #f3f4f6",
-                        backgroundColor: i % 2 === 0 ? "#fff" : "#f9fafb",
-                      }}
-                    >
-                      <td
-                        style={{
-                          padding: "8px 12px",
-                          fontSize: "13px",
-                          color: "#111827",
-                          fontWeight: "500",
-                        }}
-                      >
-                        {item.medicineName}
-                      </td>
-                      <td
-                        style={{
-                          padding: "8px 12px",
-                          fontSize: "13px",
-                          color: "#6b7280",
-                        }}
-                      >
-                        {item.strength || "—"}
-                      </td>
-                      <td
-                        style={{
-                          padding: "8px 12px",
-                          textAlign: "center",
-                          fontSize: "13px",
-                          fontWeight: "600",
-                          color: "#374151",
-                        }}
-                      >
-                        {item.qty}
-                      </td>
-                      <td
-                        style={{
-                          padding: "8px 12px",
-                          textAlign: "right",
-                          fontSize: "13px",
-                          color: "#374151",
-                        }}
-                      >
-                        {formatCurrency(item.unitPrice)}
-                      </td>
-                      <td
-                        style={{
-                          padding: "8px 12px",
-                          textAlign: "right",
-                          fontSize: "13px",
-                          fontWeight: "bold",
-                          color: "#1e40af",
-                        }}
-                      >
-                        {formatCurrency(item.total)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr
-                    style={{
-                      borderTop: "2px solid #2563eb",
-                      backgroundColor: "#eff6ff",
-                    }}
-                  >
-                    <td
-                      colSpan={4}
-                      style={{
-                        padding: "10px 12px",
-                        textAlign: "right",
-                        fontWeight: "bold",
-                        fontSize: "14px",
-                        color: "#1e40af",
-                      }}
-                    >
-                      Grand Total | کل رقم
-                    </td>
-                    <td
-                      style={{
-                        padding: "10px 12px",
-                        textAlign: "right",
-                        fontWeight: "bold",
-                        fontSize: "16px",
-                        color: "#1e40af",
-                      }}
-                    >
-                      {formatCurrency(order.totalAmount)}
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* Order Detail Modal */}
+      {selectedOrder && (
+        <OrderDetailModal
+          order={selectedOrder}
+          onClose={() => setSelectedOrder(null)}
+        />
+      )}
     </div>
   );
 }
@@ -3990,6 +5030,20 @@ type DeliveryOrder = {
   itemCount: number;
   totalAmount: number;
   status: OrderStatus;
+  items: Array<{
+    medicineId: string;
+    medicineName: string;
+    strength: string;
+    qty: number;
+    unitPrice: number;
+    total: number;
+    bonusQty: number;
+    discountPercent: number;
+  }>;
+  paymentReceived: number;
+  returnItems: Array<{ medicineId: string; returnedQty: number }>;
+  returnReason: string;
+  pharmacyCode: string;
 };
 
 function DeliveryDashboard() {
@@ -4000,13 +5054,27 @@ function DeliveryDashboard() {
   >([]);
   const [isLoading, setIsLoading] = useState(true);
   const [markingId, setMarkingId] = useState<bigint | null>(null);
+  const [backendError, setBackendError] = useState<string | null>(null);
+  const [returnModalOrder, setReturnModalOrder] =
+    useState<DeliveryOrder | null>(null);
+  const [returnToggles, setReturnToggles] = useState<Record<string, boolean>>(
+    {},
+  );
+  const [returnReason, setReturnReason] = useState("");
+  const [paymentAmount, setPaymentAmount] = useState<Record<string, string>>(
+    {},
+  );
+  const [pharmacyCodeInput, setPharmacyCodeInput] = useState<
+    Record<string, string>
+  >({});
+  const [isSavingReturn, setIsSavingReturn] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!actor || isActorFetching) return;
     setIsLoading(true);
     try {
       const [rawOrders, rawPharmacies, rawMedicines] = await Promise.all([
-        actor.getAllStaffOrders(),
+        actor.getActiveOrders(),
         actor.getPharmacies(),
         actor.getMedicines(),
       ]);
@@ -4018,11 +5086,23 @@ function DeliveryDashboard() {
         (rec) => {
           const pharm = pharmacyMap.get(String(rec.pharmacyId));
           const { address, area } = parseLocation(pharm?.location ?? "");
-          const itemCount = rec.orderLines.length;
-          const totalAmount = rec.orderLines.reduce((sum, line) => {
+          const items = rec.orderLines.map((line: any) => {
             const med = medicineMap.get(String(line.medicineId));
-            return sum + (med ? Number(med.price) * Number(line.quantity) : 0);
-          }, 0);
+            const unitPrice = med ? Number(med.price) : 0;
+            const qty = Number(line.quantity);
+            return {
+              medicineId: String(line.medicineId),
+              medicineName: med?.name ?? `Medicine #${line.medicineId}`,
+              strength: (med as any)?.strength || "",
+              qty,
+              unitPrice,
+              total: unitPrice * qty,
+              bonusQty: Number(line.bonusQty ?? 0),
+              discountPercent: Number(line.discountPercent ?? 0),
+            };
+          });
+          const itemCount = items.length;
+          const totalAmount = items.reduce((sum, i) => sum + i.total, 0);
 
           return {
             backendId: rec.id,
@@ -4033,6 +5113,14 @@ function DeliveryDashboard() {
             itemCount,
             totalAmount,
             status: mapBackendStatus(rec.status),
+            items,
+            paymentReceived: Number((rec as any).paymentReceived ?? 0),
+            returnItems: ((rec as any).returnItems ?? []).map((ri: any) => ({
+              medicineId: String(ri.medicineId),
+              returnedQty: Number(ri.returnedQty),
+            })),
+            returnReason: (rec as any).returnReason ?? "",
+            pharmacyCode: (rec as any).pharmacyCode ?? "",
           };
         },
       );
@@ -4040,8 +5128,10 @@ function DeliveryDashboard() {
       const confirmed = mapped.filter((o) => o.status === "confirmed");
       confirmed.sort((a, b) => b.orderId.localeCompare(a.orderId));
       setPendingOrders(confirmed);
+      setBackendError(null);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Unknown error";
+      setBackendError(msg);
       toast.error(`Backend error: ${msg}`);
     } finally {
       setIsLoading(false);
@@ -4056,6 +5146,24 @@ function DeliveryDashboard() {
     if (!actor) return;
     setMarkingId(order.backendId);
     try {
+      // Save payment and pharmacy code if entered before marking delivered
+      const payment = Number(
+        paymentAmount[order.orderId] ?? order.paymentReceived ?? 0,
+      );
+      const pharmCode =
+        pharmacyCodeInput[order.orderId] ?? order.pharmacyCode ?? "";
+      if (payment > 0 || pharmCode) {
+        await (actor as any).updateOrderPaymentAndReturn(
+          order.backendId,
+          BigInt(Math.round(payment)),
+          order.returnItems.map((ri) => ({
+            medicineId: BigInt(ri.medicineId),
+            returnedQty: BigInt(ri.returnedQty),
+          })),
+          order.returnReason,
+          pharmCode,
+        );
+      }
       await actor.updateOrderStatus(
         order.backendId,
         mapLocalStatusToBackend("delivered"),
@@ -4076,9 +5184,71 @@ function DeliveryDashboard() {
     }
   }
 
+  async function handleSaveReturn() {
+    if (!actor || !returnModalOrder) return;
+    setIsSavingReturn(true);
+    try {
+      const returnItems = returnModalOrder.items
+        .filter((item) => returnToggles[item.medicineId])
+        .map((item) => ({
+          medicineId: BigInt(item.medicineId),
+          returnedQty: BigInt(item.qty),
+        }));
+      const payment = Number(paymentAmount[returnModalOrder.orderId] ?? 0);
+      const pharmCode = pharmacyCodeInput[returnModalOrder.orderId] ?? "";
+      await (actor as any).updateOrderPaymentAndReturn(
+        returnModalOrder.backendId,
+        BigInt(Math.round(payment)),
+        returnItems,
+        returnReason,
+        pharmCode,
+      );
+      toast.success("Return aur payment save ho gaya!");
+      setReturnModalOrder(null);
+      setReturnToggles({});
+      setReturnReason("");
+      await loadData();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error: ${msg}`);
+    } finally {
+      setIsSavingReturn(false);
+    }
+  }
+
   return (
     <div className="min-h-dvh bg-gray-50">
       <Toaster richColors position="top-center" />
+
+      {/* Backend error banner */}
+      {backendError && (
+        <div className="flex items-center justify-between gap-3 bg-red-600 text-white px-4 py-2.5 text-sm">
+          <span className="flex-1 min-w-0 truncate">
+            Backend error — tap Retry to reload
+          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setBackendError(null);
+                loadData();
+              }}
+              className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 transition-colors px-3 py-1 rounded-lg text-xs font-semibold"
+            >
+              <RefreshCw size={12} />
+              Retry
+            </button>
+            <button
+              type="button"
+              onClick={() => setBackendError(null)}
+              className="w-6 h-6 flex items-center justify-center bg-white/20 hover:bg-white/30 transition-colors rounded-full"
+              aria-label="Dismiss error"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <header
@@ -4187,11 +5357,143 @@ function DeliveryDashboard() {
                       </span>
                     </div>
                   </div>
+
+                  {/* Payment & Return Section */}
+                  <div className="mt-3 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label
+                          htmlFor={`pharm-code-${order.orderId}`}
+                          className="text-xs text-gray-500 font-medium block mb-1"
+                        >
+                          Pharmacy Code | فارمیسی کوڈ
+                        </label>
+                        <input
+                          id={`pharm-code-${order.orderId}`}
+                          type="text"
+                          value={
+                            pharmacyCodeInput[order.orderId] ??
+                            order.pharmacyCode ??
+                            ""
+                          }
+                          onChange={(e) =>
+                            setPharmacyCodeInput((prev) => ({
+                              ...prev,
+                              [order.orderId]: e.target.value,
+                            }))
+                          }
+                          placeholder="Code..."
+                          className="w-full h-9 text-sm border border-gray-300 rounded-lg px-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label
+                          htmlFor={`payment-${order.orderId}`}
+                          className="text-xs text-gray-500 font-medium block mb-1"
+                        >
+                          Received | موصول (Rs)
+                        </label>
+                        <input
+                          id={`payment-${order.orderId}`}
+                          type="number"
+                          min="0"
+                          value={
+                            paymentAmount[order.orderId] ??
+                            (order.paymentReceived > 0
+                              ? String(order.paymentReceived)
+                              : "")
+                          }
+                          onChange={(e) =>
+                            setPaymentAmount((prev) => ({
+                              ...prev,
+                              [order.orderId]: e.target.value,
+                            }))
+                          }
+                          placeholder="0"
+                          className="w-full h-9 text-sm border border-gray-300 rounded-lg px-2 focus:outline-none focus:ring-1 focus:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        />
+                      </div>
+                    </div>
+                    {/* Balance display */}
+                    {(() => {
+                      const received = Number(
+                        paymentAmount[order.orderId] ??
+                          order.paymentReceived ??
+                          0,
+                      );
+                      const balance = order.totalAmount - received;
+                      if (received === 0) return null;
+                      return (
+                        <div
+                          className={`flex items-center justify-between text-sm px-3 py-1.5 rounded-lg ${balance > 0 ? "bg-red-50 text-red-700" : balance < 0 ? "bg-emerald-50 text-emerald-700" : "bg-gray-50 text-gray-600"}`}
+                        >
+                          <span className="font-medium">Balance | باقی:</span>
+                          <span className="font-bold">
+                            {formatCurrency(Math.abs(balance))}{" "}
+                            {balance > 0
+                              ? "(baqi)"
+                              : balance < 0
+                                ? "(extra)"
+                                : "(full paid)"}
+                          </span>
+                        </div>
+                      );
+                    })()}
+                    {/* Return items display if any */}
+                    {order.returnItems && order.returnItems.length > 0 && (
+                      <div className="bg-orange-50 border border-orange-200 rounded-lg p-2">
+                        <p className="text-xs font-semibold text-orange-700 mb-1">
+                          Returned Items | واپس کی گئی:
+                        </p>
+                        {order.items.map((item) => {
+                          const isReturned = order.returnItems.some(
+                            (r) => r.medicineId === item.medicineId,
+                          );
+                          return (
+                            <div
+                              key={item.medicineId}
+                              className={`text-xs py-0.5 font-medium ${isReturned ? "text-red-600" : "text-emerald-600"}`}
+                            >
+                              {isReturned ? "↩ " : "✓ "}
+                              {item.medicineName} x{item.qty}
+                            </div>
+                          );
+                        })}
+                        {order.returnReason && (
+                          <p className="text-xs text-orange-600 mt-1 italic">
+                            Reason: {order.returnReason}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Return button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReturnModalOrder(order);
+                      const toggles: Record<string, boolean> = {};
+                      for (const item of order.items) {
+                        const isReturned = order.returnItems?.some(
+                          (r) => r.medicineId === item.medicineId,
+                        );
+                        if (isReturned) toggles[item.medicineId] = true;
+                      }
+                      setReturnToggles(toggles);
+                      setReturnReason(order.returnReason ?? "");
+                    }}
+                    className="mt-2 w-full flex items-center justify-center gap-2 border-2 border-orange-400 text-orange-600 hover:bg-orange-50 font-semibold py-2.5 rounded-xl transition-colors text-sm"
+                  >
+                    <X size={15} />
+                    Return Items | واپسی
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => handleMarkDelivered(order)}
                     disabled={markingId === order.backendId}
-                    className="mt-3 w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-60 text-sm"
+                    className="mt-2 w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-60 text-sm"
                   >
                     {markingId === order.backendId ? (
                       <Loader2 size={16} className="animate-spin" />
@@ -4262,6 +5564,106 @@ function DeliveryDashboard() {
           </a>
         </div>
       </div>
+
+      {/* Return Modal */}
+      {returnModalOrder && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
+          onClick={() => setReturnModalOrder(null)}
+          onKeyDown={(e) => e.key === "Escape" && setReturnModalOrder(null)}
+          aria-label="Close modal backdrop"
+        >
+          <div
+            className="bg-white w-full max-w-sm rounded-t-2xl shadow-2xl max-h-[85vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-4 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white">
+              <div>
+                <h3 className="font-bold text-gray-900">
+                  Return Items | واپسی
+                </h3>
+                <p className="text-xs text-gray-500">
+                  {returnModalOrder.pharmacyName}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReturnModalOrder(null)}
+                className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="px-4 py-4 space-y-3">
+              <p className="text-xs text-gray-500">
+                Jo medicine wapis ho rahi hai us ka toggle on karein | Toggle ON
+                for returned items:
+              </p>
+              {returnModalOrder.items.map((item) => {
+                const isReturn = returnToggles[item.medicineId] ?? false;
+                return (
+                  <div
+                    key={item.medicineId}
+                    className={`flex items-center justify-between p-3 rounded-xl border-2 transition-colors ${isReturn ? "border-red-300 bg-red-50" : "border-emerald-300 bg-emerald-50"}`}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p
+                        className={`font-semibold text-sm ${isReturn ? "text-red-700" : "text-emerald-700"}`}
+                      >
+                        {item.medicineName}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {item.strength} · Qty: {item.qty}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setReturnToggles((prev) => ({
+                          ...prev,
+                          [item.medicineId]: !isReturn,
+                        }))
+                      }
+                      className={`ml-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${isReturn ? "bg-red-500 text-white" : "bg-emerald-500 text-white"}`}
+                    >
+                      {isReturn ? "Return ↩" : "Kept ✓"}
+                    </button>
+                  </div>
+                );
+              })}
+              <div>
+                <label
+                  htmlFor="return-reason-textarea"
+                  className="text-xs font-medium text-gray-600 block mb-1"
+                >
+                  Return Reason | واپسی کی وجہ
+                </label>
+                <textarea
+                  id="return-reason-textarea"
+                  value={returnReason}
+                  onChange={(e) => setReturnReason(e.target.value)}
+                  placeholder="Wajah likhein... (e.g. Expiry, Damaged, Wrong item)"
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm resize-none h-20 focus:outline-none focus:ring-2 focus:ring-orange-400"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleSaveReturn}
+                disabled={isSavingReturn}
+                className="w-full flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-60"
+              >
+                {isSavingReturn ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <CheckCircle2 size={16} />
+                )}
+                Save Return | محفوظ کریں
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -4276,6 +5678,7 @@ function MobileApp() {
   const [isLoadingMedicines, setIsLoadingMedicines] = useState(false);
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
   const [sideMenuOpen, setSideMenuOpen] = useState(false);
+  const [backendError, setBackendError] = useState<string | null>(null);
 
   const { actor, isFetching: isActorFetching } = useActor();
 
@@ -4290,8 +5693,14 @@ function MobileApp() {
     ) => {
       setIsLoadingOrders(true);
       try {
-        const records = await actorInstance.getAllStaffOrders();
-        const orders: Order[] = records.map((rec) => {
+        // Load both active (48hr) and history (1yr) orders in parallel
+        const [activeRecords, historyRecords] = await Promise.all([
+          actorInstance.getActiveOrders(),
+          actorInstance.getHistoryOrders(),
+        ]);
+        const allRecords = [...activeRecords, ...historyRecords];
+
+        const orders: Order[] = allRecords.map((rec) => {
           const pharmacy = pharmacyList.find(
             (p) => p.backendId === rec.pharmacyId,
           );
@@ -4313,10 +5722,22 @@ function MobileApp() {
               qty,
               unitPrice,
               total: unitPrice * qty,
+              bonusQty: Number(
+                (line as unknown as { bonusQty?: bigint }).bonusQty ?? 0,
+              ),
+              discountPercent: Number(
+                (line as unknown as { discountPercent?: bigint })
+                  .discountPercent ?? 0,
+              ),
             };
           });
 
           const totalAmount = items.reduce((s, i) => s + i.total, 0);
+          // Use staffName/staffCode from backend record if available
+          const recExt = rec as unknown as {
+            staffName?: string;
+            staffCode?: string;
+          } & typeof rec;
 
           return {
             id: `ORD-${rec.id}`,
@@ -4324,21 +5745,30 @@ function MobileApp() {
             pharmacyId: pharmacy?.id ?? String(rec.pharmacyId),
             pharmacyName: pharmacy?.name ?? `Pharmacy #${rec.pharmacyId}`,
             pharmacyArea: pharmacy?.area ?? "",
-            staffId,
-            staffName,
+            staffId: recExt.staffCode || staffId,
+            staffName: recExt.staffName || staffName,
             date,
             items,
             notes: "",
             status: mapBackendStatus(rec.status),
             totalAmount,
+            paymentReceived: Number((rec as any).paymentReceived ?? 0),
+            returnItems: ((rec as any).returnItems ?? []).map((ri: any) => ({
+              medicineId: String(ri.medicineId),
+              returnedQty: Number(ri.returnedQty),
+            })),
+            returnReason: (rec as any).returnReason ?? "",
+            pharmacyCode: (rec as any).pharmacyCode ?? "",
           };
         });
 
         // Sort newest first
         orders.sort((a, b) => b.id.localeCompare(a.id));
         dispatch({ type: "SET_ORDERS", orders });
+        setBackendError(null);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Unknown error";
+        setBackendError(msg);
         toast.error(`Backend error: ${msg}`);
       } finally {
         setIsLoadingOrders(false);
@@ -4455,6 +5885,7 @@ function MobileApp() {
 
         setPharmacies(pharmacyList);
         setMedicines(medicineList);
+        setBackendError(null);
 
         // Load orders
         await loadOrders(
@@ -4466,6 +5897,7 @@ function MobileApp() {
         );
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Unknown error";
+        setBackendError(msg);
         toast.error(`Failed to load data: ${msg}`);
       } finally {
         setIsLoadingPharmacies(false);
@@ -4590,6 +6022,35 @@ function MobileApp() {
   return (
     <div className="app-container">
       <Toaster richColors position="top-center" />
+      {/* Backend error banner */}
+      {backendError && (
+        <div className="sticky top-0 z-50 flex items-center justify-between gap-3 bg-red-600 text-white px-4 py-2.5 text-sm shadow-lg">
+          <span className="flex-1 min-w-0 truncate">
+            Backend error — tap Retry to reload
+          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setBackendError(null);
+                handleRefreshOrders();
+              }}
+              className="flex items-center gap-1 bg-white/20 hover:bg-white/30 transition-colors px-3 py-1 rounded-lg text-xs font-semibold"
+            >
+              <RefreshCw size={12} />
+              Retry
+            </button>
+            <button
+              type="button"
+              onClick={() => setBackendError(null)}
+              className="w-6 h-6 flex items-center justify-center bg-white/20 hover:bg-white/30 transition-colors rounded-full"
+              aria-label="Dismiss error"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        </div>
+      )}
       <main className="screen-enter">{renderScreen()}</main>
       {/* Footer - only on dashboard */}
       {state.screen.name === "dashboard" && (

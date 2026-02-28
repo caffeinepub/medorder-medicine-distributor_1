@@ -1,13 +1,13 @@
-import Map "mo:core/Map";
 import Array "mo:core/Array";
-import Runtime "mo:core/Runtime";
-import Text "mo:core/Text";
+import Map "mo:core/Map";
+import Order "mo:core/Order";
 import Time "mo:core/Time";
 import Principal "mo:core/Principal";
-import Order "mo:core/Order";
 
+import Migration "migration";
 
-
+// Apply persistent storage migration
+(with migration = Migration.run)
 actor {
   type Staff = {
     name : Text;
@@ -34,6 +34,8 @@ actor {
   type MedicineItem = {
     medicineId : Nat;
     quantity : Nat;
+    bonusQty : Nat;
+    discountPercent : Nat;
   };
 
   type OrderStatus = {
@@ -42,12 +44,36 @@ actor {
     #delivered;
   };
 
+  type ReturnItem = {
+    medicineId : Nat;
+    returnedQty : Nat;
+  };
+
   type OrderRecord = {
     id : Nat;
     staffId : Principal;
+    staffName : Text;
+    staffCode : Text;
     pharmacyId : Nat;
     status : OrderStatus;
     orderLines : [MedicineItem];
+    notes : Text;
+    timestamp : Time.Time;
+    paymentReceived : Nat;
+    returnItems : [ReturnItem];
+    returnReason : Text;
+    pharmacyCode : Text;
+  };
+
+  type PurchaseRecord = {
+    id : Nat;
+    productName : Text;
+    genericName : Text;
+    batchNo : Text;
+    quantity : Nat;
+    price : Nat;
+    packSize : Text;
+    companyName : Text;
     timestamp : Time.Time;
   };
 
@@ -95,6 +121,28 @@ actor {
         case (other) { other };
       };
     };
+
+    public func compareDescendingById(a : OrderRecord, b : OrderRecord) : Order.Order {
+      if (a.id > b.id) {
+        #less;
+      } else if (a.id < b.id) {
+        #greater;
+      } else {
+        #equal;
+      };
+    };
+  };
+
+  module PurchaseRecord {
+    public func compareByIdDescending(a : PurchaseRecord, b : PurchaseRecord) : Order.Order {
+      if (a.id > b.id) {
+        #less;
+      } else if (a.id < b.id) {
+        #greater;
+      } else {
+        #equal;
+      };
+    };
   };
 
   // Persistent storage
@@ -102,13 +150,20 @@ actor {
   let pharmacies = Map.empty<Nat, Pharmacy>();
   let medicines = Map.empty<Nat, Medicine>();
   let orders = Map.empty<Nat, OrderRecord>();
+  let purchases = Map.empty<Nat, PurchaseRecord>();
 
   var nextPharmacyId = 0;
   var nextMedicineId = 0;
   var nextOrderId = 0;
+  var nextPurchaseId = 0;
 
-  public shared ({ caller }) func registerStaff(name : Text, password : Text) : async () {
-    if (staff.containsKey(caller)) { Runtime.trap("Staff with this Principal already exists!") };
+  // Time constants (in nanoseconds)
+  let fortyEightHoursInNanoseconds : Int = 48 * 60 * 60 * 1_000_000_000;
+  let oneYearInNanoseconds : Int = 365 * 24 * 60 * 60 * 1_000_000_000;
+
+  // Staff Management
+  public shared ({ caller }) func registerStaff(name : Text, password : Text) : async Bool {
+    if (staff.containsKey(caller)) { return true };
 
     let staffRecord : Staff = {
       name;
@@ -116,8 +171,10 @@ actor {
     };
 
     staff.add(caller, staffRecord);
+    true;
   };
 
+  // Pharmacy Management
   public shared ({ caller }) func addPharmacy(name : Text, contact : Text, location : Text) : async Nat {
     let id = nextPharmacyId;
     nextPharmacyId += 1;
@@ -133,13 +190,17 @@ actor {
     id;
   };
 
-  public shared ({ caller }) func deletePharmacy(id : Nat) : async () {
-    if (not pharmacies.containsKey(id)) {
-      Runtime.trap("Pharmacy does not exist!");
-    };
+  public shared ({ caller }) func deletePharmacy(id : Nat) : async Bool {
+    let result = pharmacies.containsKey(id);
     pharmacies.remove(id);
+    result;
   };
 
+  public query ({ caller }) func getPharmacies() : async [Pharmacy] {
+    pharmacies.values().toArray().sort();
+  };
+
+  // Medicine Management
   public shared ({ caller }) func addMedicine(
     name : Text,
     price : Nat,
@@ -165,26 +226,26 @@ actor {
     id;
   };
 
-  public shared ({ caller }) func deleteMedicine(id : Nat) : async () {
-    if (not medicines.containsKey(id)) {
-      Runtime.trap("Medicine does not exist!");
-    };
+  public shared ({ caller }) func deleteMedicine(id : Nat) : async Bool {
+    let result = medicines.containsKey(id);
     medicines.remove(id);
-  };
-
-  public query ({ caller }) func getPharmacies() : async [Pharmacy] {
-    pharmacies.values().toArray().sort();
+    result;
   };
 
   public query ({ caller }) func getMedicines() : async [Medicine] {
     medicines.values().toArray().sort();
   };
 
+  // Order Management
   public shared ({ caller }) func createOrder(
     pharmacyId : Nat,
     orderLines : [MedicineItem],
+    staffName : Text,
+    staffCode : Text,
   ) : async Nat {
-    if (not staff.containsKey(caller)) { Runtime.trap("Staff member does not exist!") };
+    if (not staff.containsKey(caller)) {
+      ignore registerStaff(staffName, staffCode);
+    };
 
     let id = nextOrderId;
     nextOrderId += 1;
@@ -192,39 +253,86 @@ actor {
     let newOrder : OrderRecord = {
       id;
       staffId = caller;
+      staffName;
+      staffCode;
       pharmacyId;
       orderLines;
+      notes = "";
       status = #pending;
       timestamp = Time.now();
+      paymentReceived = 0;
+      returnItems = [];
+      returnReason = "";
+      pharmacyCode = "";
     };
 
     orders.add(id, newOrder);
     id;
   };
 
-  public shared ({ caller }) func updateOrderStatus(orderId : Nat, newStatus : OrderStatus) : async () {
+  public shared ({ caller }) func updateOrderStatus(orderId : Nat, newStatus : OrderStatus) : async Bool {
     switch (orders.get(orderId)) {
-      case (null) { Runtime.trap("Order does not exist!") };
+      case (null) { false };
       case (?order) {
         let updatedOrder : OrderRecord = {
-          id = order.id;
-          staffId = order.staffId;
-          pharmacyId = order.pharmacyId;
-          orderLines = order.orderLines;
-          status = newStatus;
-          timestamp = order.timestamp;
+          order with status = newStatus
         };
         orders.add(orderId, updatedOrder);
+        true;
       };
     };
   };
 
+  // New update function for payment and returns
+  public shared ({ caller }) func updateOrderPaymentAndReturn(
+    orderId : Nat,
+    paymentReceived : Nat,
+    returnItems : [ReturnItem],
+    returnReason : Text,
+    pharmacyCode : Text,
+  ) : async Bool {
+    switch (orders.get(orderId)) {
+      case (null) { false };
+      case (?order) {
+        let updatedOrder : OrderRecord = {
+          order with
+          paymentReceived;
+          returnItems;
+          returnReason;
+          pharmacyCode;
+        };
+        orders.add(orderId, updatedOrder);
+        true;
+      };
+    };
+  };
+
+  // Query Functions for Orders
   public query ({ caller }) func getAllStaffOrders() : async [OrderRecord] {
     orders.values().toArray();
   };
 
-  public query ({ caller }) func getAllOrdersByStatus() : async [OrderRecord] {
-    orders.values().toArray().sort(OrderRecord.compareByStatusThenId);
+  public query ({ caller }) func getActiveOrders() : async [OrderRecord] {
+    let currentTime = Time.now();
+    orders.values().toArray().filter(
+      func(order) {
+        switch (order.status) {
+          case (#delivered) { order.timestamp >= currentTime - fortyEightHoursInNanoseconds };
+          case (_) { true };
+        };
+      }
+    ).sort(OrderRecord.compareDescendingById);
+  };
+
+  public query ({ caller }) func getHistoryOrders() : async [OrderRecord] {
+    let currentTime = Time.now();
+    orders.values().toArray().filter(
+      func(order) {
+        order.status == #delivered and
+        order.timestamp < (currentTime - fortyEightHoursInNanoseconds) and
+        order.timestamp >= (currentTime - oneYearInNanoseconds)
+      }
+    ).sort(OrderRecord.compareDescendingById);
   };
 
   public query ({ caller }) func getStaffOrders(staffId : Principal) : async [OrderRecord] {
@@ -233,10 +341,47 @@ actor {
     );
   };
 
-  public query ({ caller }) func getOrder(orderId : Nat) : async OrderRecord {
-    switch (orders.get(orderId)) {
-      case (null) { Runtime.trap("Order does not exist!") };
-      case (?order) { order };
+  public query ({ caller }) func getOrder(orderId : Nat) : async ?OrderRecord {
+    orders.get(orderId);
+  };
+
+  // Purchase Management
+  public shared ({ caller }) func addPurchase(
+    productName : Text,
+    genericName : Text,
+    batchNo : Text,
+    quantity : Nat,
+    price : Nat,
+    packSize : Text,
+    companyName : Text,
+  ) : async Nat {
+    let id = nextPurchaseId;
+    nextPurchaseId += 1;
+
+    let purchase : PurchaseRecord = {
+      id;
+      productName;
+      genericName;
+      batchNo;
+      quantity;
+      price;
+      packSize;
+      companyName;
+      timestamp = Time.now();
     };
+
+    purchases.add(id, purchase);
+    id;
+  };
+
+  public shared ({ caller }) func deletePurchase(id : Nat) : async Bool {
+    let result = purchases.containsKey(id);
+    purchases.remove(id);
+    result;
+  };
+
+  public query ({ caller }) func getPurchases() : async [PurchaseRecord] {
+    let purchaseArray = purchases.values().toArray();
+    purchaseArray.sort(PurchaseRecord.compareByIdDescending);
   };
 };

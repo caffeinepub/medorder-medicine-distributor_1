@@ -19,14 +19,26 @@ export interface Medicine {
   'strength' : string,
   'price' : bigint,
 }
-export interface MedicineItem { 'quantity' : bigint, 'medicineId' : bigint }
+export interface MedicineItem {
+  'discountPercent' : bigint,
+  'bonusQty' : bigint,
+  'quantity' : bigint,
+  'medicineId' : bigint,
+}
 export interface OrderRecord {
   'id' : bigint,
   'status' : OrderStatus,
+  'staffCode' : string,
+  'staffName' : string,
   'staffId' : Principal,
+  'returnReason' : string,
+  'pharmacyCode' : string,
+  'notes' : string,
   'timestamp' : Time,
   'orderLines' : Array<MedicineItem>,
+  'paymentReceived' : bigint,
   'pharmacyId' : bigint,
+  'returnItems' : Array<ReturnItem>,
 }
 export type OrderStatus = { 'pending' : null } |
   { 'delivered' : null } |
@@ -37,6 +49,18 @@ export interface Pharmacy {
   'name' : string,
   'location' : string,
 }
+export interface PurchaseRecord {
+  'id' : bigint,
+  'packSize' : string,
+  'productName' : string,
+  'genericName' : string,
+  'timestamp' : Time,
+  'companyName' : string,
+  'quantity' : bigint,
+  'batchNo' : string,
+  'price' : bigint,
+}
+export interface ReturnItem { 'medicineId' : bigint, 'returnedQty' : bigint }
 export type Time = bigint;
 export interface _SERVICE {
   'addMedicine' : ActorMethod<
@@ -44,17 +68,31 @@ export interface _SERVICE {
     bigint
   >,
   'addPharmacy' : ActorMethod<[string, string, string], bigint>,
-  'createOrder' : ActorMethod<[bigint, Array<MedicineItem>], bigint>,
-  'deleteMedicine' : ActorMethod<[bigint], undefined>,
-  'deletePharmacy' : ActorMethod<[bigint], undefined>,
-  'getAllOrdersByStatus' : ActorMethod<[], Array<OrderRecord>>,
+  'addPurchase' : ActorMethod<
+    [string, string, string, bigint, bigint, string, string],
+    bigint
+  >,
+  'createOrder' : ActorMethod<
+    [bigint, Array<MedicineItem>, string, string],
+    bigint
+  >,
+  'deleteMedicine' : ActorMethod<[bigint], boolean>,
+  'deletePharmacy' : ActorMethod<[bigint], boolean>,
+  'deletePurchase' : ActorMethod<[bigint], boolean>,
+  'getActiveOrders' : ActorMethod<[], Array<OrderRecord>>,
   'getAllStaffOrders' : ActorMethod<[], Array<OrderRecord>>,
+  'getHistoryOrders' : ActorMethod<[], Array<OrderRecord>>,
   'getMedicines' : ActorMethod<[], Array<Medicine>>,
-  'getOrder' : ActorMethod<[bigint], OrderRecord>,
+  'getOrder' : ActorMethod<[bigint], [] | [OrderRecord]>,
   'getPharmacies' : ActorMethod<[], Array<Pharmacy>>,
+  'getPurchases' : ActorMethod<[], Array<PurchaseRecord>>,
   'getStaffOrders' : ActorMethod<[Principal], Array<OrderRecord>>,
-  'registerStaff' : ActorMethod<[string, string], undefined>,
-  'updateOrderStatus' : ActorMethod<[bigint, OrderStatus], undefined>,
+  'registerStaff' : ActorMethod<[string, string], boolean>,
+  'updateOrderPaymentAndReturn' : ActorMethod<
+    [bigint, bigint, Array<ReturnItem>, string, string],
+    boolean
+  >,
+  'updateOrderStatus' : ActorMethod<[bigint, OrderStatus], boolean>,
 }
 export declare const idlService: IDL.ServiceClass;
 export declare const idlInitArgs: IDL.Type[];

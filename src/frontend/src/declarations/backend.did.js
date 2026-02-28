@@ -9,6 +9,8 @@
 import { IDL } from '@icp-sdk/core/candid';
 
 export const MedicineItem = IDL.Record({
+  'discountPercent' : IDL.Nat,
+  'bonusQty' : IDL.Nat,
   'quantity' : IDL.Nat,
   'medicineId' : IDL.Nat,
 });
@@ -18,13 +20,24 @@ export const OrderStatus = IDL.Variant({
   'confirmed' : IDL.Null,
 });
 export const Time = IDL.Int;
+export const ReturnItem = IDL.Record({
+  'medicineId' : IDL.Nat,
+  'returnedQty' : IDL.Nat,
+});
 export const OrderRecord = IDL.Record({
   'id' : IDL.Nat,
   'status' : OrderStatus,
+  'staffCode' : IDL.Text,
+  'staffName' : IDL.Text,
   'staffId' : IDL.Principal,
+  'returnReason' : IDL.Text,
+  'pharmacyCode' : IDL.Text,
+  'notes' : IDL.Text,
   'timestamp' : Time,
   'orderLines' : IDL.Vec(MedicineItem),
+  'paymentReceived' : IDL.Nat,
   'pharmacyId' : IDL.Nat,
+  'returnItems' : IDL.Vec(ReturnItem),
 });
 export const Medicine = IDL.Record({
   'id' : IDL.Nat,
@@ -41,6 +54,17 @@ export const Pharmacy = IDL.Record({
   'name' : IDL.Text,
   'location' : IDL.Text,
 });
+export const PurchaseRecord = IDL.Record({
+  'id' : IDL.Nat,
+  'packSize' : IDL.Text,
+  'productName' : IDL.Text,
+  'genericName' : IDL.Text,
+  'timestamp' : Time,
+  'companyName' : IDL.Text,
+  'quantity' : IDL.Nat,
+  'batchNo' : IDL.Text,
+  'price' : IDL.Nat,
+});
 
 export const idlService = IDL.Service({
   'addMedicine' : IDL.Func(
@@ -49,27 +73,46 @@ export const idlService = IDL.Service({
       [],
     ),
   'addPharmacy' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [IDL.Nat], []),
-  'createOrder' : IDL.Func([IDL.Nat, IDL.Vec(MedicineItem)], [IDL.Nat], []),
-  'deleteMedicine' : IDL.Func([IDL.Nat], [], []),
-  'deletePharmacy' : IDL.Func([IDL.Nat], [], []),
-  'getAllOrdersByStatus' : IDL.Func([], [IDL.Vec(OrderRecord)], ['query']),
+  'addPurchase' : IDL.Func(
+      [IDL.Text, IDL.Text, IDL.Text, IDL.Nat, IDL.Nat, IDL.Text, IDL.Text],
+      [IDL.Nat],
+      [],
+    ),
+  'createOrder' : IDL.Func(
+      [IDL.Nat, IDL.Vec(MedicineItem), IDL.Text, IDL.Text],
+      [IDL.Nat],
+      [],
+    ),
+  'deleteMedicine' : IDL.Func([IDL.Nat], [IDL.Bool], []),
+  'deletePharmacy' : IDL.Func([IDL.Nat], [IDL.Bool], []),
+  'deletePurchase' : IDL.Func([IDL.Nat], [IDL.Bool], []),
+  'getActiveOrders' : IDL.Func([], [IDL.Vec(OrderRecord)], ['query']),
   'getAllStaffOrders' : IDL.Func([], [IDL.Vec(OrderRecord)], ['query']),
+  'getHistoryOrders' : IDL.Func([], [IDL.Vec(OrderRecord)], ['query']),
   'getMedicines' : IDL.Func([], [IDL.Vec(Medicine)], ['query']),
-  'getOrder' : IDL.Func([IDL.Nat], [OrderRecord], ['query']),
+  'getOrder' : IDL.Func([IDL.Nat], [IDL.Opt(OrderRecord)], ['query']),
   'getPharmacies' : IDL.Func([], [IDL.Vec(Pharmacy)], ['query']),
+  'getPurchases' : IDL.Func([], [IDL.Vec(PurchaseRecord)], ['query']),
   'getStaffOrders' : IDL.Func(
       [IDL.Principal],
       [IDL.Vec(OrderRecord)],
       ['query'],
     ),
-  'registerStaff' : IDL.Func([IDL.Text, IDL.Text], [], []),
-  'updateOrderStatus' : IDL.Func([IDL.Nat, OrderStatus], [], []),
+  'registerStaff' : IDL.Func([IDL.Text, IDL.Text], [IDL.Bool], []),
+  'updateOrderPaymentAndReturn' : IDL.Func(
+      [IDL.Nat, IDL.Nat, IDL.Vec(ReturnItem), IDL.Text, IDL.Text],
+      [IDL.Bool],
+      [],
+    ),
+  'updateOrderStatus' : IDL.Func([IDL.Nat, OrderStatus], [IDL.Bool], []),
 });
 
 export const idlInitArgs = [];
 
 export const idlFactory = ({ IDL }) => {
   const MedicineItem = IDL.Record({
+    'discountPercent' : IDL.Nat,
+    'bonusQty' : IDL.Nat,
     'quantity' : IDL.Nat,
     'medicineId' : IDL.Nat,
   });
@@ -79,13 +122,24 @@ export const idlFactory = ({ IDL }) => {
     'confirmed' : IDL.Null,
   });
   const Time = IDL.Int;
+  const ReturnItem = IDL.Record({
+    'medicineId' : IDL.Nat,
+    'returnedQty' : IDL.Nat,
+  });
   const OrderRecord = IDL.Record({
     'id' : IDL.Nat,
     'status' : OrderStatus,
+    'staffCode' : IDL.Text,
+    'staffName' : IDL.Text,
     'staffId' : IDL.Principal,
+    'returnReason' : IDL.Text,
+    'pharmacyCode' : IDL.Text,
+    'notes' : IDL.Text,
     'timestamp' : Time,
     'orderLines' : IDL.Vec(MedicineItem),
+    'paymentReceived' : IDL.Nat,
     'pharmacyId' : IDL.Nat,
+    'returnItems' : IDL.Vec(ReturnItem),
   });
   const Medicine = IDL.Record({
     'id' : IDL.Nat,
@@ -102,6 +156,17 @@ export const idlFactory = ({ IDL }) => {
     'name' : IDL.Text,
     'location' : IDL.Text,
   });
+  const PurchaseRecord = IDL.Record({
+    'id' : IDL.Nat,
+    'packSize' : IDL.Text,
+    'productName' : IDL.Text,
+    'genericName' : IDL.Text,
+    'timestamp' : Time,
+    'companyName' : IDL.Text,
+    'quantity' : IDL.Nat,
+    'batchNo' : IDL.Text,
+    'price' : IDL.Nat,
+  });
   
   return IDL.Service({
     'addMedicine' : IDL.Func(
@@ -110,21 +175,38 @@ export const idlFactory = ({ IDL }) => {
         [],
       ),
     'addPharmacy' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [IDL.Nat], []),
-    'createOrder' : IDL.Func([IDL.Nat, IDL.Vec(MedicineItem)], [IDL.Nat], []),
-    'deleteMedicine' : IDL.Func([IDL.Nat], [], []),
-    'deletePharmacy' : IDL.Func([IDL.Nat], [], []),
-    'getAllOrdersByStatus' : IDL.Func([], [IDL.Vec(OrderRecord)], ['query']),
+    'addPurchase' : IDL.Func(
+        [IDL.Text, IDL.Text, IDL.Text, IDL.Nat, IDL.Nat, IDL.Text, IDL.Text],
+        [IDL.Nat],
+        [],
+      ),
+    'createOrder' : IDL.Func(
+        [IDL.Nat, IDL.Vec(MedicineItem), IDL.Text, IDL.Text],
+        [IDL.Nat],
+        [],
+      ),
+    'deleteMedicine' : IDL.Func([IDL.Nat], [IDL.Bool], []),
+    'deletePharmacy' : IDL.Func([IDL.Nat], [IDL.Bool], []),
+    'deletePurchase' : IDL.Func([IDL.Nat], [IDL.Bool], []),
+    'getActiveOrders' : IDL.Func([], [IDL.Vec(OrderRecord)], ['query']),
     'getAllStaffOrders' : IDL.Func([], [IDL.Vec(OrderRecord)], ['query']),
+    'getHistoryOrders' : IDL.Func([], [IDL.Vec(OrderRecord)], ['query']),
     'getMedicines' : IDL.Func([], [IDL.Vec(Medicine)], ['query']),
-    'getOrder' : IDL.Func([IDL.Nat], [OrderRecord], ['query']),
+    'getOrder' : IDL.Func([IDL.Nat], [IDL.Opt(OrderRecord)], ['query']),
     'getPharmacies' : IDL.Func([], [IDL.Vec(Pharmacy)], ['query']),
+    'getPurchases' : IDL.Func([], [IDL.Vec(PurchaseRecord)], ['query']),
     'getStaffOrders' : IDL.Func(
         [IDL.Principal],
         [IDL.Vec(OrderRecord)],
         ['query'],
       ),
-    'registerStaff' : IDL.Func([IDL.Text, IDL.Text], [], []),
-    'updateOrderStatus' : IDL.Func([IDL.Nat, OrderStatus], [], []),
+    'registerStaff' : IDL.Func([IDL.Text, IDL.Text], [IDL.Bool], []),
+    'updateOrderPaymentAndReturn' : IDL.Func(
+        [IDL.Nat, IDL.Nat, IDL.Vec(ReturnItem), IDL.Text, IDL.Text],
+        [IDL.Bool],
+        [],
+      ),
+    'updateOrderStatus' : IDL.Func([IDL.Nat, OrderStatus], [IDL.Bool], []),
   });
 };
 
