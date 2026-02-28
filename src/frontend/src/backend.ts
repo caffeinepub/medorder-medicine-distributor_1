@@ -91,8 +91,11 @@ export class ExternalBlob {
 }
 export interface Medicine {
     id: bigint;
+    packSize: string;
     name: string;
     description: string;
+    company: string;
+    strength: string;
     price: bigint;
 }
 export interface Pharmacy {
@@ -120,9 +123,11 @@ export enum OrderStatus {
     confirmed = "confirmed"
 }
 export interface backendInterface {
-    addMedicine(name: string, price: bigint, description: string): Promise<bigint>;
+    addMedicine(name: string, price: bigint, description: string, company: string, strength: string, packSize: string): Promise<bigint>;
     addPharmacy(name: string, contact: string, location: string): Promise<bigint>;
     createOrder(pharmacyId: bigint, orderLines: Array<MedicineItem>): Promise<bigint>;
+    deleteMedicine(id: bigint): Promise<void>;
+    deletePharmacy(id: bigint): Promise<void>;
     getAllOrdersByStatus(): Promise<Array<OrderRecord>>;
     getAllStaffOrders(): Promise<Array<OrderRecord>>;
     getMedicines(): Promise<Array<Medicine>>;
@@ -135,17 +140,17 @@ export interface backendInterface {
 import type { MedicineItem as _MedicineItem, OrderRecord as _OrderRecord, OrderStatus as _OrderStatus, Time as _Time } from "./declarations/backend.did.d.ts";
 export class Backend implements backendInterface {
     constructor(private actor: ActorSubclass<_SERVICE>, private _uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, private _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, private processError?: (error: unknown) => never){}
-    async addMedicine(arg0: string, arg1: bigint, arg2: string): Promise<bigint> {
+    async addMedicine(arg0: string, arg1: bigint, arg2: string, arg3: string, arg4: string, arg5: string): Promise<bigint> {
         if (this.processError) {
             try {
-                const result = await this.actor.addMedicine(arg0, arg1, arg2);
+                const result = await this.actor.addMedicine(arg0, arg1, arg2, arg3, arg4, arg5);
                 return result;
             } catch (e) {
                 this.processError(e);
                 throw new Error("unreachable");
             }
         } else {
-            const result = await this.actor.addMedicine(arg0, arg1, arg2);
+            const result = await this.actor.addMedicine(arg0, arg1, arg2, arg3, arg4, arg5);
             return result;
         }
     }
@@ -174,6 +179,34 @@ export class Backend implements backendInterface {
             }
         } else {
             const result = await this.actor.createOrder(arg0, arg1);
+            return result;
+        }
+    }
+    async deleteMedicine(arg0: bigint): Promise<void> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.deleteMedicine(arg0);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.deleteMedicine(arg0);
+            return result;
+        }
+    }
+    async deletePharmacy(arg0: bigint): Promise<void> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.deletePharmacy(arg0);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.deletePharmacy(arg0);
             return result;
         }
     }

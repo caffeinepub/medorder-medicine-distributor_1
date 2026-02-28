@@ -12,8 +12,11 @@ import type { Principal } from '@icp-sdk/core/principal';
 
 export interface Medicine {
   'id' : bigint,
+  'packSize' : string,
   'name' : string,
   'description' : string,
+  'company' : string,
+  'strength' : string,
   'price' : bigint,
 }
 export interface MedicineItem { 'quantity' : bigint, 'medicineId' : bigint }
@@ -36,9 +39,14 @@ export interface Pharmacy {
 }
 export type Time = bigint;
 export interface _SERVICE {
-  'addMedicine' : ActorMethod<[string, bigint, string], bigint>,
+  'addMedicine' : ActorMethod<
+    [string, bigint, string, string, string, string],
+    bigint
+  >,
   'addPharmacy' : ActorMethod<[string, string, string], bigint>,
   'createOrder' : ActorMethod<[bigint, Array<MedicineItem>], bigint>,
+  'deleteMedicine' : ActorMethod<[bigint], undefined>,
+  'deletePharmacy' : ActorMethod<[bigint], undefined>,
   'getAllOrdersByStatus' : ActorMethod<[], Array<OrderRecord>>,
   'getAllStaffOrders' : ActorMethod<[], Array<OrderRecord>>,
   'getMedicines' : ActorMethod<[], Array<Medicine>>,

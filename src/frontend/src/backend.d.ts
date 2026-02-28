@@ -9,8 +9,11 @@ export interface None {
 export type Option<T> = Some<T> | None;
 export interface Medicine {
     id: bigint;
+    packSize: string;
     name: string;
     description: string;
+    company: string;
+    strength: string;
     price: bigint;
 }
 export interface Pharmacy {
@@ -38,9 +41,11 @@ export enum OrderStatus {
     confirmed = "confirmed"
 }
 export interface backendInterface {
-    addMedicine(name: string, price: bigint, description: string): Promise<bigint>;
+    addMedicine(name: string, price: bigint, description: string, company: string, strength: string, packSize: string): Promise<bigint>;
     addPharmacy(name: string, contact: string, location: string): Promise<bigint>;
     createOrder(pharmacyId: bigint, orderLines: Array<MedicineItem>): Promise<bigint>;
+    deleteMedicine(id: bigint): Promise<void>;
+    deletePharmacy(id: bigint): Promise<void>;
     getAllOrdersByStatus(): Promise<Array<OrderRecord>>;
     getAllStaffOrders(): Promise<Array<OrderRecord>>;
     getMedicines(): Promise<Array<Medicine>>;

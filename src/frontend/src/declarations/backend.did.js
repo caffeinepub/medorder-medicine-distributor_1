@@ -28,8 +28,11 @@ export const OrderRecord = IDL.Record({
 });
 export const Medicine = IDL.Record({
   'id' : IDL.Nat,
+  'packSize' : IDL.Text,
   'name' : IDL.Text,
   'description' : IDL.Text,
+  'company' : IDL.Text,
+  'strength' : IDL.Text,
   'price' : IDL.Nat,
 });
 export const Pharmacy = IDL.Record({
@@ -40,9 +43,15 @@ export const Pharmacy = IDL.Record({
 });
 
 export const idlService = IDL.Service({
-  'addMedicine' : IDL.Func([IDL.Text, IDL.Nat, IDL.Text], [IDL.Nat], []),
+  'addMedicine' : IDL.Func(
+      [IDL.Text, IDL.Nat, IDL.Text, IDL.Text, IDL.Text, IDL.Text],
+      [IDL.Nat],
+      [],
+    ),
   'addPharmacy' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [IDL.Nat], []),
   'createOrder' : IDL.Func([IDL.Nat, IDL.Vec(MedicineItem)], [IDL.Nat], []),
+  'deleteMedicine' : IDL.Func([IDL.Nat], [], []),
+  'deletePharmacy' : IDL.Func([IDL.Nat], [], []),
   'getAllOrdersByStatus' : IDL.Func([], [IDL.Vec(OrderRecord)], ['query']),
   'getAllStaffOrders' : IDL.Func([], [IDL.Vec(OrderRecord)], ['query']),
   'getMedicines' : IDL.Func([], [IDL.Vec(Medicine)], ['query']),
@@ -80,8 +89,11 @@ export const idlFactory = ({ IDL }) => {
   });
   const Medicine = IDL.Record({
     'id' : IDL.Nat,
+    'packSize' : IDL.Text,
     'name' : IDL.Text,
     'description' : IDL.Text,
+    'company' : IDL.Text,
+    'strength' : IDL.Text,
     'price' : IDL.Nat,
   });
   const Pharmacy = IDL.Record({
@@ -92,9 +104,15 @@ export const idlFactory = ({ IDL }) => {
   });
   
   return IDL.Service({
-    'addMedicine' : IDL.Func([IDL.Text, IDL.Nat, IDL.Text], [IDL.Nat], []),
+    'addMedicine' : IDL.Func(
+        [IDL.Text, IDL.Nat, IDL.Text, IDL.Text, IDL.Text, IDL.Text],
+        [IDL.Nat],
+        [],
+      ),
     'addPharmacy' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [IDL.Nat], []),
     'createOrder' : IDL.Func([IDL.Nat, IDL.Vec(MedicineItem)], [IDL.Nat], []),
+    'deleteMedicine' : IDL.Func([IDL.Nat], [], []),
+    'deletePharmacy' : IDL.Func([IDL.Nat], [], []),
     'getAllOrdersByStatus' : IDL.Func([], [IDL.Vec(OrderRecord)], ['query']),
     'getAllStaffOrders' : IDL.Func([], [IDL.Vec(OrderRecord)], ['query']),
     'getMedicines' : IDL.Func([], [IDL.Vec(Medicine)], ['query']),

@@ -6,31 +6,37 @@ import { Toaster } from "@/components/ui/sonner";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Beaker,
+  Building2,
   Calendar,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
+  ChevronUp,
   Clock,
   Droplets,
   FlaskConical,
   History,
   Layers,
-  LayoutDashboard,
   Loader2,
   LogOut,
   MapPin,
-  Minus,
+  Menu,
   Package,
   Phone,
   PillIcon,
   Plus,
+  Printer,
   RefreshCw,
   Search,
+  Settings2,
   ShoppingCart,
   Stethoscope,
   Store,
   Syringe,
+  Trash2,
   Truck,
   User,
+  Warehouse,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
@@ -112,7 +118,8 @@ type Screen =
   | { name: "pharmacies" }
   | { name: "order-taking"; pharmacyId: string }
   | { name: "order-history" }
-  | { name: "order-detail"; orderId: string };
+  | { name: "order-detail"; orderId: string }
+  | { name: "manage" };
 
 type AppState = {
   currentStaff: Staff | null;
@@ -678,67 +685,130 @@ function CategoryIcon({
   return <>{icons[cat]}</>;
 }
 
-// ─── Bottom Nav ───────────────────────────────────────────────────────────────
+// ─── Side Drawer ──────────────────────────────────────────────────────────────
 
-function BottomNav({
-  screen,
+function SideDrawer({
+  open,
+  onClose,
   navigate,
+  dispatch,
 }: {
-  screen: Screen;
+  open: boolean;
+  onClose: () => void;
   navigate: (s: Screen) => void;
+  dispatch: React.Dispatch<Action>;
 }) {
-  const tabs = [
+  const navItems = [
     {
-      name: "dashboard" as const,
-      label: "Dashboard",
-      urdu: "ڈیش بورڈ",
-      icon: <LayoutDashboard size={22} />,
-    },
-    {
-      name: "pharmacies" as const,
+      icon: <Store size={18} />,
       label: "Pharmacies",
       urdu: "فارمیسیاں",
-      icon: <Store size={22} />,
+      screen: { name: "pharmacies" } as Screen,
     },
     {
-      name: "order-history" as const,
-      label: "History",
-      urdu: "تاریخ",
-      icon: <History size={22} />,
+      icon: <History size={18} />,
+      label: "Order History",
+      urdu: "آرڈر تاریخ",
+      screen: { name: "order-history" } as Screen,
+    },
+    {
+      icon: <Settings2 size={18} />,
+      label: "Manage",
+      urdu: "منظم",
+      screen: { name: "manage" } as Screen,
     },
   ];
 
-  const activeName = screen.name;
-
   return (
-    <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] bg-white border-t border-border z-30">
-      <div className="flex">
-        {tabs.map((tab) => {
-          const isActive = activeName === tab.name;
-          return (
+    <>
+      {/* Backdrop */}
+      <div
+        className={`fixed inset-0 z-40 bg-black/50 transition-opacity duration-300 ${
+          open
+            ? "opacity-100 pointer-events-auto"
+            : "opacity-0 pointer-events-none"
+        }`}
+        onClick={onClose}
+        onKeyDown={(e) => e.key === "Escape" && onClose()}
+        role="button"
+        tabIndex={-1}
+        aria-label="Close menu"
+      />
+
+      {/* Drawer panel */}
+      <div
+        className={`fixed top-0 left-0 h-full z-50 bg-white shadow-2xl flex flex-col transition-transform duration-300 ease-in-out ${
+          open ? "translate-x-0" : "-translate-x-full"
+        }`}
+        style={{ width: "75%", maxWidth: "300px" }}
+      >
+        {/* Drawer header */}
+        <div
+          className="flex items-center justify-between px-4 pt-10 pb-4 text-white"
+          style={{
+            background:
+              "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+          }}
+        >
+          <div className="flex items-center gap-2.5">
+            <Package size={22} />
+            <span className="font-bold text-lg font-heading">MedOrder</span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center hover:bg-white/30 transition-colors"
+            aria-label="Close menu"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Nav items */}
+        <div className="flex-1 py-3 overflow-y-auto">
+          <p className="px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
+            Navigation
+          </p>
+          {navItems.map((item) => (
             <button
               type="button"
-              key={tab.name}
-              onClick={() => navigate({ name: tab.name })}
-              className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 transition-colors ${
-                isActive
-                  ? "text-primary"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-              aria-label={tab.label}
+              key={item.label}
+              onClick={() => {
+                navigate(item.screen);
+                onClose();
+              }}
+              className="w-full flex items-center gap-3 py-3 px-4 hover:bg-muted transition-colors text-foreground text-left"
             >
-              {tab.icon}
-              <span className="text-[10px] font-medium leading-tight">
-                {tab.label}
-              </span>
-              <span className="text-[9px] opacity-70 leading-tight">
-                {tab.urdu}
-              </span>
+              <span className="text-muted-foreground">{item.icon}</span>
+              <div>
+                <div className="text-sm font-medium">{item.label}</div>
+                <div className="text-[11px] text-muted-foreground">
+                  {item.urdu}
+                </div>
+              </div>
             </button>
-          );
-        })}
+          ))}
+        </div>
+
+        {/* Logout at bottom */}
+        <div className="border-t border-border p-4 pb-8">
+          <button
+            type="button"
+            onClick={() => {
+              dispatch({ type: "LOGOUT" });
+              onClose();
+            }}
+            className="w-full flex items-center gap-3 py-3 px-4 hover:bg-red-50 transition-colors text-red-500 rounded-xl"
+          >
+            <LogOut size={18} />
+            <div>
+              <div className="text-sm font-medium">Logout</div>
+              <div className="text-[11px] text-red-400">لاگ آؤٹ</div>
+            </div>
+          </button>
+        </div>
       </div>
-    </nav>
+    </>
   );
 }
 
@@ -899,12 +969,14 @@ function DashboardScreen({
   pharmacies,
   isLoadingData,
   onRefreshOrders,
+  onOpenMenu,
 }: {
   state: AppState;
   dispatch: React.Dispatch<Action>;
   pharmacies: Pharmacy[];
   isLoadingData: boolean;
   onRefreshOrders: () => void;
+  onOpenMenu: () => void;
 }) {
   const todayStr = new Date().toISOString().split("T")[0];
   const todayOrders = state.orders.filter((o) => o.date === todayStr);
@@ -915,30 +987,30 @@ function DashboardScreen({
   const recentOrders = state.orders.slice(0, 3);
 
   return (
-    <div className="pb-20">
+    <div className="pb-6">
       {/* Header */}
       <div
         className="header-gradient px-4 pt-10 pb-6 text-white"
         style={{ boxShadow: "0 2px 16px oklch(0.38 0.19 255 / 0.25)" }}
       >
-        <div className="flex items-center justify-between mb-1">
-          <div>
+        <div className="flex items-center gap-3 mb-1">
+          <button
+            type="button"
+            onClick={onOpenMenu}
+            className="w-9 h-9 rounded-xl bg-white/15 hover:bg-white/25 transition-colors flex items-center justify-center shrink-0"
+            aria-label="Open menu"
+          >
+            <Menu size={18} />
+          </button>
+          <div className="flex-1 min-w-0">
             <p className="text-white/70 text-sm">Welcome back,</p>
-            <h1 className="text-xl font-bold font-heading">
+            <h1 className="text-xl font-bold font-heading truncate">
               {state.currentStaff?.name}
             </h1>
             <p className="text-white/60 text-xs mt-0.5">
               ID: {state.currentStaff?.id}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => dispatch({ type: "LOGOUT" })}
-            className="flex items-center gap-1.5 bg-white/15 hover:bg-white/25 transition-colors px-3 py-2 rounded-xl text-sm"
-          >
-            <LogOut size={15} />
-            Logout
-          </button>
         </div>
       </div>
 
@@ -1118,15 +1190,29 @@ function PharmacyListScreen({
   }, [pharmacies, search, areaFilter]);
 
   return (
-    <div className="pb-20">
+    <div className="pb-6">
       {/* Header */}
       <div className="header-gradient px-4 pt-10 pb-5 text-white">
-        <h1 className="text-xl font-bold font-heading">
-          Pharmacies | فارمیسیاں
-        </h1>
-        <p className="text-white/70 text-sm mt-0.5">
-          Select a pharmacy to take order
-        </p>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() =>
+              dispatch({ type: "NAVIGATE", screen: { name: "dashboard" } })
+            }
+            className="w-8 h-8 rounded-full bg-white/15 flex items-center justify-center shrink-0"
+            aria-label="Back to dashboard"
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <div>
+            <h1 className="text-xl font-bold font-heading">
+              Pharmacies | فارمیسیاں
+            </h1>
+            <p className="text-white/70 text-sm mt-0.5">
+              Select a pharmacy to take order
+            </p>
+          </div>
+        </div>
       </div>
 
       <div className="px-4 pt-4 space-y-3">
@@ -1461,6 +1547,11 @@ function OrderTakingScreen({
         ) : (
           filteredMeds.map((med) => {
             const qty = getQty(med.id);
+            const stockRaw = localStorage.getItem(
+              `medorder_stock_${med.backendId}`,
+            );
+            const stockQty =
+              stockRaw !== null && stockRaw !== "" ? Number(stockRaw) : null;
             return (
               <div
                 key={med.id}
@@ -1475,6 +1566,17 @@ function OrderTakingScreen({
                       <span className="text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full">
                         {med.strength}
                       </span>
+                      {stockQty !== null && (
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                            stockQty > 0
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-amber-100 text-amber-700"
+                          }`}
+                        >
+                          Stock: {stockQty}
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-muted-foreground mt-0.5">
                       {med.company}
@@ -1490,52 +1592,37 @@ function OrderTakingScreen({
                   </div>
                   {/* Qty controls */}
                   <div className="flex items-center gap-2 ml-3 shrink-0">
-                    {qty > 0 ? (
-                      <>
-                        <button
-                          type="button"
-                          className="qty-btn qty-btn-minus"
-                          onClick={() =>
+                    <input
+                      type="number"
+                      min="0"
+                      value={qty === 0 ? "" : qty}
+                      placeholder="0"
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        if (!e.target.value || val === 0) {
+                          if (qty > 0)
                             dispatch({
-                              type: "UPDATE_QTY",
+                              type: "REMOVE_FROM_CART",
                               medicineId: med.id,
-                              qty: qty - 1,
-                            })
-                          }
-                          aria-label="Decrease quantity"
-                        >
-                          <Minus size={14} />
-                        </button>
-                        <span className="w-7 text-center text-sm font-bold text-foreground">
-                          {qty}
-                        </span>
-                        <button
-                          type="button"
-                          className="qty-btn qty-btn-plus"
-                          onClick={() =>
-                            dispatch({
-                              type: "UPDATE_QTY",
-                              medicineId: med.id,
-                              qty: qty + 1,
-                            })
-                          }
-                          aria-label="Increase quantity"
-                        >
-                          <Plus size={14} />
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        type="button"
-                        className="qty-btn qty-btn-plus"
-                        onClick={() =>
-                          dispatch({ type: "ADD_TO_CART", medicine: med })
+                            });
+                        } else if (qty === 0) {
+                          dispatch({ type: "ADD_TO_CART", medicine: med });
+                          dispatch({
+                            type: "UPDATE_QTY",
+                            medicineId: med.id,
+                            qty: val,
+                          });
+                        } else {
+                          dispatch({
+                            type: "UPDATE_QTY",
+                            medicineId: med.id,
+                            qty: val,
+                          });
                         }
-                        aria-label="Add to cart"
-                      >
-                        <Plus size={14} />
-                      </button>
-                    )}
+                      }}
+                      className="w-14 text-center text-sm font-bold text-foreground border border-input rounded-md px-1 py-1 focus:outline-none focus:ring-1 focus:ring-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      aria-label="Quantity"
+                    />
                   </div>
                 </div>
               </div>
@@ -1613,35 +1700,28 @@ function OrderTakingScreen({
                       </p>
                     </div>
                     <div className="flex items-center gap-2 ml-3 shrink-0">
-                      <button
-                        type="button"
-                        className="qty-btn qty-btn-minus"
-                        onClick={() =>
-                          dispatch({
-                            type: "UPDATE_QTY",
-                            medicineId: ci.medicine.id,
-                            qty: ci.qty - 1,
-                          })
-                        }
-                      >
-                        <Minus size={12} />
-                      </button>
-                      <span className="w-6 text-center text-sm font-bold">
-                        {ci.qty}
-                      </span>
-                      <button
-                        type="button"
-                        className="qty-btn qty-btn-plus"
-                        onClick={() =>
-                          dispatch({
-                            type: "UPDATE_QTY",
-                            medicineId: ci.medicine.id,
-                            qty: ci.qty + 1,
-                          })
-                        }
-                      >
-                        <Plus size={12} />
-                      </button>
+                      <input
+                        type="number"
+                        min="0"
+                        value={ci.qty}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          if (!e.target.value || val === 0) {
+                            dispatch({
+                              type: "REMOVE_FROM_CART",
+                              medicineId: ci.medicine.id,
+                            });
+                          } else {
+                            dispatch({
+                              type: "UPDATE_QTY",
+                              medicineId: ci.medicine.id,
+                              qty: val,
+                            });
+                          }
+                        }}
+                        className="w-14 text-center text-sm font-bold text-foreground border border-input rounded-md px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        aria-label="Quantity"
+                      />
                       <div className="text-right min-w-[60px]">
                         <p className="text-sm font-bold text-primary">
                           {formatCurrency(ci.medicine.price * ci.qty)}
@@ -1737,11 +1817,21 @@ function OrderHistoryScreen({
     ];
 
   return (
-    <div className="pb-20">
+    <div className="pb-6">
       {/* Header */}
       <div className="header-gradient px-4 pt-10 pb-5 text-white">
-        <div className="flex items-center justify-between">
-          <div>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() =>
+              dispatch({ type: "NAVIGATE", screen: { name: "dashboard" } })
+            }
+            className="w-8 h-8 rounded-full bg-white/15 flex items-center justify-center shrink-0"
+            aria-label="Back to dashboard"
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <div className="flex-1 min-w-0">
             <h1 className="text-xl font-bold font-heading">
               Order History | آرڈر تاریخ
             </h1>
@@ -1752,7 +1842,7 @@ function OrderHistoryScreen({
           <button
             type="button"
             onClick={onRefresh}
-            className="flex items-center gap-1.5 bg-white/15 hover:bg-white/25 transition-colors px-3 py-2 rounded-xl text-sm"
+            className="flex items-center gap-1.5 bg-white/15 hover:bg-white/25 transition-colors px-3 py-2 rounded-xl text-sm shrink-0"
             aria-label="Refresh orders"
           >
             <RefreshCw size={14} />
@@ -2044,15 +2134,2148 @@ function OrderDetailScreen({
   );
 }
 
-// ─── App Root ─────────────────────────────────────────────────────────────────
+// ─── Manage Screen ────────────────────────────────────────────────────────────
 
-export default function App() {
+function ManageScreen({
+  pharmacies,
+  medicines,
+  actor,
+  onDataReloaded,
+  dispatch,
+}: {
+  pharmacies: Pharmacy[];
+  medicines: Medicine[];
+  actor: backendInterface | null;
+  onDataReloaded: (newPharmacies: Pharmacy[], newMedicines: Medicine[]) => void;
+  dispatch: React.Dispatch<Action>;
+}) {
+  const [activeTab, setActiveTab] = useState<"pharmacies" | "medicines">(
+    "pharmacies",
+  );
+
+  // ── Pharmacy form state ──
+  const [showPharmacyForm, setShowPharmacyForm] = useState(false);
+  const [pharmName, setPharmName] = useState("");
+  const [pharmContact, setPharmContact] = useState("");
+  const [pharmAddress, setPharmAddress] = useState("");
+  const [pharmArea, setPharmArea] = useState("");
+  const [isAddingPharm, setIsAddingPharm] = useState(false);
+  const [deletingPharmId, setDeletingPharmId] = useState<string | null>(null);
+  const [confirmDeletePharmId, setConfirmDeletePharmId] = useState<
+    string | null
+  >(null);
+
+  // ── Medicine form state ──
+  const [showMedForm, setShowMedForm] = useState(false);
+  const [medName, setMedName] = useState("");
+  const [medPrice, setMedPrice] = useState("");
+  const [medCategory, setMedCategory] = useState<Category>("tablets");
+  const [medCompany, setMedCompany] = useState("");
+  const [medStrength, setMedStrength] = useState("");
+  const [medPackSize, setMedPackSize] = useState("");
+  const [isAddingMed, setIsAddingMed] = useState(false);
+  const [deletingMedId, setDeletingMedId] = useState<string | null>(null);
+  const [confirmDeleteMedId, setConfirmDeleteMedId] = useState<string | null>(
+    null,
+  );
+
+  // ── Helpers: reload pharmacies from backend ──
+  async function reloadPharmacies(): Promise<Pharmacy[]> {
+    if (!actor) return pharmacies;
+    const raw = await actor.getPharmacies();
+    return raw.map((p) => {
+      const { address, area } = parseLocation(p.location);
+      return {
+        id: String(p.id),
+        backendId: p.id,
+        name: p.name,
+        address,
+        area,
+        contactNo: p.contact,
+        lastOrderDate: null,
+        isVisited: false,
+      };
+    });
+  }
+
+  // ── Helpers: reload medicines from backend ──
+  async function reloadMedicines(): Promise<Medicine[]> {
+    if (!actor) return medicines;
+    const raw = await actor.getMedicines();
+    return raw.map((m) => {
+      const seed = MEDICINE_SEEDS.find((s) => s.name === m.name);
+      return {
+        id: String(m.id),
+        backendId: m.id,
+        name: m.name,
+        company: m.company || seed?.company || "Unknown",
+        category: seed?.category ?? inferCategory(m.name),
+        strength: m.strength || seed?.strength || "",
+        unit: seed?.unit ?? "unit",
+        price: Number(m.price),
+        packSize: m.packSize || seed?.packSize || "",
+      };
+    });
+  }
+
+  // ── Add Pharmacy ──
+  async function handleAddPharmacy() {
+    if (!actor) return;
+    if (
+      !pharmName.trim() ||
+      !pharmContact.trim() ||
+      !pharmAddress.trim() ||
+      !pharmArea.trim()
+    ) {
+      toast.error("Please fill all required fields");
+      return;
+    }
+    setIsAddingPharm(true);
+    try {
+      const location = `${pharmAddress.trim()} | ${pharmArea.trim()}`;
+      await actor.addPharmacy(pharmName.trim(), pharmContact.trim(), location);
+      const [newPharmacies, newMedicines] = await Promise.all([
+        reloadPharmacies(),
+        Promise.resolve(medicines),
+      ]);
+      onDataReloaded(newPharmacies, newMedicines);
+      setPharmName("");
+      setPharmContact("");
+      setPharmAddress("");
+      setPharmArea("");
+      setShowPharmacyForm(false);
+      toast.success(`Pharmacy "${pharmName.trim()}" add ho gayi!`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error: ${msg}`);
+    } finally {
+      setIsAddingPharm(false);
+    }
+  }
+
+  // ── Delete Pharmacy ──
+  async function handleDeletePharmacy(pharmacy: Pharmacy) {
+    if (!actor) return;
+    setDeletingPharmId(pharmacy.id);
+    try {
+      await actor.deletePharmacy(pharmacy.backendId);
+      const newPharmacies = await reloadPharmacies();
+      onDataReloaded(newPharmacies, medicines);
+      setConfirmDeletePharmId(null);
+      toast.success(`Pharmacy "${pharmacy.name}" delete ho gayi!`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error: ${msg}`);
+    } finally {
+      setDeletingPharmId(null);
+    }
+  }
+
+  // ── Add Medicine ──
+  async function handleAddMedicine() {
+    if (!actor) return;
+    if (!medName.trim() || !medPrice.trim()) {
+      toast.error("Please enter name and price");
+      return;
+    }
+    const priceNum = Number(medPrice);
+    if (Number.isNaN(priceNum) || priceNum <= 0) {
+      toast.error("Please enter a valid price");
+      return;
+    }
+    setIsAddingMed(true);
+    try {
+      await actor.addMedicine(
+        medName.trim(),
+        BigInt(Math.round(priceNum)),
+        "",
+        medCompany.trim(),
+        medStrength.trim(),
+        medPackSize.trim(),
+      );
+      const newMedicines = await reloadMedicines();
+      onDataReloaded(pharmacies, newMedicines);
+      setMedName("");
+      setMedPrice("");
+      setMedCategory("tablets");
+      setMedCompany("");
+      setMedStrength("");
+      setMedPackSize("");
+      setShowMedForm(false);
+      toast.success(`Medicine "${medName.trim()}" add ho gayi!`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error: ${msg}`);
+    } finally {
+      setIsAddingMed(false);
+    }
+  }
+
+  // ── Delete Medicine ──
+  async function handleDeleteMedicine(medicine: Medicine) {
+    if (!actor) return;
+    setDeletingMedId(medicine.id);
+    try {
+      await actor.deleteMedicine(medicine.backendId);
+      const newMedicines = await reloadMedicines();
+      onDataReloaded(pharmacies, newMedicines);
+      setConfirmDeleteMedId(null);
+      toast.success(`Medicine "${medicine.name}" delete ho gayi!`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error: ${msg}`);
+    } finally {
+      setDeletingMedId(null);
+    }
+  }
+
+  const categoryOptions: Array<{
+    value: Category;
+    label: string;
+    urdu: string;
+  }> = [
+    { value: "tablets", label: "Tablets", urdu: "گولیاں" },
+    { value: "syrups", label: "Syrups", urdu: "شربت" },
+    { value: "injections", label: "Injections", urdu: "انجکشن" },
+    { value: "capsules", label: "Capsules", urdu: "کیپسول" },
+    { value: "drops", label: "Drops", urdu: "قطرے" },
+    { value: "creams", label: "Creams", urdu: "کریم" },
+  ];
+
+  return (
+    <div className="pb-6">
+      {/* Header */}
+      <div className="header-gradient px-4 pt-10 pb-5 text-white">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() =>
+              dispatch({ type: "NAVIGATE", screen: { name: "dashboard" } })
+            }
+            className="w-8 h-8 rounded-full bg-white/15 flex items-center justify-center shrink-0"
+            aria-label="Back to dashboard"
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <div>
+            <h1 className="text-xl font-bold font-heading">Manage | منظم</h1>
+            <p className="text-white/70 text-sm mt-0.5">
+              Pharmacies aur medicines manage karein
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex bg-white border-b border-border">
+        <button
+          type="button"
+          onClick={() => setActiveTab("pharmacies")}
+          className={`flex-1 py-3 text-sm font-semibold transition-colors ${
+            activeTab === "pharmacies"
+              ? "text-primary border-b-2 border-primary"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <div className="flex items-center justify-center gap-1.5">
+            <Store size={15} />
+            <span>Pharmacies | فارمیسیاں</span>
+          </div>
+          <div className="text-xs font-normal opacity-70 mt-0.5">
+            {pharmacies.length} total
+          </div>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("medicines")}
+          className={`flex-1 py-3 text-sm font-semibold transition-colors ${
+            activeTab === "medicines"
+              ? "text-primary border-b-2 border-primary"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <div className="flex items-center justify-center gap-1.5">
+            <PillIcon size={15} />
+            <span>Medicines | دوائیں</span>
+          </div>
+          <div className="text-xs font-normal opacity-70 mt-0.5">
+            {medicines.length} total
+          </div>
+        </button>
+      </div>
+
+      {/* ── Pharmacies Tab ── */}
+      {activeTab === "pharmacies" && (
+        <div className="px-4 pt-4 space-y-3">
+          {/* Add Pharmacy toggle button */}
+          <button
+            type="button"
+            onClick={() => setShowPharmacyForm((v) => !v)}
+            className="w-full flex items-center justify-between bg-primary text-primary-foreground rounded-xl px-4 py-3 font-semibold text-sm shadow-sm"
+            style={{
+              background:
+                "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+            }}
+          >
+            <div className="flex items-center gap-2">
+              <Plus size={16} />
+              <span>Add Pharmacy | فارمیسی شامل کریں</span>
+            </div>
+            {showPharmacyForm ? (
+              <ChevronUp size={16} />
+            ) : (
+              <ChevronDown size={16} />
+            )}
+          </button>
+
+          {/* Add Pharmacy Form */}
+          {showPharmacyForm && (
+            <div className="bg-white rounded-xl border border-border shadow-xs p-4 space-y-3">
+              <h3 className="font-bold text-foreground font-heading text-sm">
+                New Pharmacy | نئی فارمیسی
+              </h3>
+              <div className="space-y-2.5">
+                <div>
+                  <label
+                    htmlFor="pharm-name"
+                    className="text-xs font-medium text-muted-foreground mb-1 block"
+                  >
+                    Pharmacy Name | نام *
+                  </label>
+                  <Input
+                    id="pharm-name"
+                    value={pharmName}
+                    onChange={(e) => setPharmName(e.target.value)}
+                    placeholder="e.g. Al-Shifa Pharmacy"
+                    className="h-10 text-sm"
+                    disabled={isAddingPharm}
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="pharm-contact"
+                    className="text-xs font-medium text-muted-foreground mb-1 block"
+                  >
+                    Contact Number | رابطہ *
+                  </label>
+                  <Input
+                    id="pharm-contact"
+                    value={pharmContact}
+                    onChange={(e) => setPharmContact(e.target.value)}
+                    placeholder="e.g. 0300-1234567"
+                    className="h-10 text-sm"
+                    disabled={isAddingPharm}
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="pharm-address"
+                    className="text-xs font-medium text-muted-foreground mb-1 block"
+                  >
+                    Address | پتہ *
+                  </label>
+                  <Input
+                    id="pharm-address"
+                    value={pharmAddress}
+                    onChange={(e) => setPharmAddress(e.target.value)}
+                    placeholder="e.g. Main Boulevard, Block 5"
+                    className="h-10 text-sm"
+                    disabled={isAddingPharm}
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="pharm-area"
+                    className="text-xs font-medium text-muted-foreground mb-1 block"
+                  >
+                    Area | علاقہ *
+                  </label>
+                  <Input
+                    id="pharm-area"
+                    value={pharmArea}
+                    onChange={(e) => setPharmArea(e.target.value)}
+                    placeholder="e.g. Gulberg, DHA, Johar Town"
+                    className="h-10 text-sm"
+                    disabled={isAddingPharm}
+                  />
+                </div>
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button
+                  onClick={handleAddPharmacy}
+                  className="flex-1 h-10 text-sm font-semibold"
+                  disabled={isAddingPharm}
+                  style={{
+                    background:
+                      "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+                  }}
+                >
+                  {isAddingPharm ? (
+                    <>
+                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                      Adding...
+                    </>
+                  ) : (
+                    <>
+                      <Plus size={14} className="mr-1.5" />
+                      Add Pharmacy | شامل کریں
+                    </>
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowPharmacyForm(false);
+                    setPharmName("");
+                    setPharmContact("");
+                    setPharmAddress("");
+                    setPharmArea("");
+                  }}
+                  className="h-10 px-3 text-sm"
+                  disabled={isAddingPharm}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Pharmacy List */}
+          <p className="text-xs text-muted-foreground">
+            {pharmacies.length} pharmacies registered
+          </p>
+          <div className="space-y-2.5">
+            {pharmacies.length === 0 ? (
+              <div className="text-center py-10 text-muted-foreground text-sm">
+                No pharmacies added yet
+              </div>
+            ) : (
+              pharmacies.map((pharmacy) => (
+                <div
+                  key={pharmacy.id}
+                  className="bg-white rounded-xl border border-border shadow-xs p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-sm text-foreground font-heading truncate">
+                        {pharmacy.name}
+                      </p>
+                      <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
+                        <MapPin size={10} />
+                        <span className="truncate">{pharmacy.address}</span>
+                      </div>
+                      <div className="flex items-center gap-1 mt-0.5 text-xs text-muted-foreground">
+                        <Phone size={10} />
+                        <span>{pharmacy.contactNo}</span>
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      <span className="text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full">
+                        {pharmacy.area}
+                      </span>
+                      {confirmDeletePharmId === pharmacy.id ? (
+                        <div className="flex items-center gap-1 mt-1">
+                          <button
+                            type="button"
+                            onClick={() => handleDeletePharmacy(pharmacy)}
+                            disabled={deletingPharmId === pharmacy.id}
+                            className="flex items-center gap-1 bg-red-500 hover:bg-red-600 text-white text-xs px-2 py-1 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                          >
+                            {deletingPharmId === pharmacy.id ? (
+                              <Loader2 size={10} className="animate-spin" />
+                            ) : null}
+                            Yes
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeletePharmId(null)}
+                            className="text-xs px-2 py-1 rounded-lg border border-border font-semibold hover:bg-muted transition-colors"
+                            disabled={deletingPharmId === pharmacy.id}
+                          >
+                            No
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeletePharmId(pharmacy.id)}
+                          className="flex items-center gap-1 text-red-500 hover:text-red-700 hover:bg-red-50 text-xs px-2 py-1 rounded-lg transition-colors mt-1"
+                          disabled={deletingPharmId === pharmacy.id}
+                          aria-label={`Delete ${pharmacy.name}`}
+                        >
+                          <Trash2 size={12} />
+                          Delete
+                        </button>
+                      )}
+                      {confirmDeletePharmId === pharmacy.id && (
+                        <span className="text-[10px] text-red-500 font-medium">
+                          Confirm delete?
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Medicines Tab ── */}
+      {activeTab === "medicines" && (
+        <div className="px-4 pt-4 space-y-3">
+          {/* Add Medicine toggle button */}
+          <button
+            type="button"
+            onClick={() => setShowMedForm((v) => !v)}
+            className="w-full flex items-center justify-between rounded-xl px-4 py-3 font-semibold text-sm shadow-sm text-white"
+            style={{
+              background:
+                "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+            }}
+          >
+            <div className="flex items-center gap-2">
+              <Plus size={16} />
+              <span>Add Medicine | دوائی شامل کریں</span>
+            </div>
+            {showMedForm ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </button>
+
+          {/* Add Medicine Form */}
+          {showMedForm && (
+            <div className="bg-white rounded-xl border border-border shadow-xs p-4 space-y-3">
+              <h3 className="font-bold text-foreground font-heading text-sm">
+                New Medicine | نئی دوائی
+              </h3>
+              <div className="space-y-2.5">
+                <div>
+                  <label
+                    htmlFor="med-name"
+                    className="text-xs font-medium text-muted-foreground mb-1 block"
+                  >
+                    Medicine Name | نام *
+                  </label>
+                  <Input
+                    id="med-name"
+                    value={medName}
+                    onChange={(e) => setMedName(e.target.value)}
+                    placeholder="e.g. Panadol, Augmentin"
+                    className="h-10 text-sm"
+                    disabled={isAddingMed}
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="med-price"
+                    className="text-xs font-medium text-muted-foreground mb-1 block"
+                  >
+                    Price (Rs) | قیمت *
+                  </label>
+                  <Input
+                    id="med-price"
+                    value={medPrice}
+                    onChange={(e) => setMedPrice(e.target.value)}
+                    placeholder="e.g. 50"
+                    type="number"
+                    min="1"
+                    className="h-10 text-sm"
+                    disabled={isAddingMed}
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="med-category"
+                    className="text-xs font-medium text-muted-foreground mb-1 block"
+                  >
+                    Category | قسم
+                  </label>
+                  <select
+                    id="med-category"
+                    value={medCategory}
+                    onChange={(e) => setMedCategory(e.target.value as Category)}
+                    className="w-full h-10 text-sm border border-input rounded-md px-3 bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    disabled={isAddingMed}
+                  >
+                    {categoryOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label} | {opt.urdu}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label
+                    htmlFor="med-company"
+                    className="text-xs font-medium text-muted-foreground mb-1 block"
+                  >
+                    Company Name | کمپنی کا نام
+                  </label>
+                  <Input
+                    id="med-company"
+                    value={medCompany}
+                    onChange={(e) => setMedCompany(e.target.value)}
+                    placeholder="e.g. GlaxoSmithKline, Abbott"
+                    className="h-10 text-sm"
+                    disabled={isAddingMed}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label
+                      htmlFor="med-strength"
+                      className="text-xs font-medium text-muted-foreground mb-1 block"
+                    >
+                      Strength | طاقت
+                    </label>
+                    <Input
+                      id="med-strength"
+                      value={medStrength}
+                      onChange={(e) => setMedStrength(e.target.value)}
+                      placeholder="e.g. 500mg"
+                      className="h-10 text-sm"
+                      disabled={isAddingMed}
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="med-packsize"
+                      className="text-xs font-medium text-muted-foreground mb-1 block"
+                    >
+                      Pack Size | پیک سائز
+                    </label>
+                    <Input
+                      id="med-packsize"
+                      value={medPackSize}
+                      onChange={(e) => setMedPackSize(e.target.value)}
+                      placeholder="e.g. Pack of 10"
+                      className="h-10 text-sm"
+                      disabled={isAddingMed}
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button
+                  onClick={handleAddMedicine}
+                  className="flex-1 h-10 text-sm font-semibold"
+                  disabled={isAddingMed}
+                  style={{
+                    background:
+                      "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+                  }}
+                >
+                  {isAddingMed ? (
+                    <>
+                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                      Adding...
+                    </>
+                  ) : (
+                    <>
+                      <Plus size={14} className="mr-1.5" />
+                      Add Medicine | شامل کریں
+                    </>
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowMedForm(false);
+                    setMedName("");
+                    setMedPrice("");
+                    setMedCategory("tablets");
+                    setMedCompany("");
+                    setMedStrength("");
+                    setMedPackSize("");
+                  }}
+                  className="h-10 px-3 text-sm"
+                  disabled={isAddingMed}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Medicine List */}
+          <p className="text-xs text-muted-foreground">
+            {medicines.length} medicines registered
+          </p>
+          <div className="space-y-2.5">
+            {medicines.length === 0 ? (
+              <div className="text-center py-10 text-muted-foreground text-sm">
+                No medicines added yet
+              </div>
+            ) : (
+              medicines.map((medicine) => (
+                <div
+                  key={medicine.id}
+                  className="bg-white rounded-xl border border-border shadow-xs p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-semibold text-sm text-foreground font-heading">
+                          {medicine.name}
+                        </p>
+                        <span className="text-xs bg-secondary text-secondary-foreground px-1.5 py-0.5 rounded-full capitalize">
+                          {medicine.category}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                        <span className="font-semibold text-primary">
+                          Rs {medicine.price}
+                        </span>
+                        {medicine.strength && (
+                          <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded font-medium">
+                            {medicine.strength}
+                          </span>
+                        )}
+                      </div>
+                      {((medicine.company && medicine.company !== "Unknown") ||
+                        medicine.packSize) && (
+                        <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground flex-wrap">
+                          {medicine.company &&
+                            medicine.company !== "Unknown" && (
+                              <span className="flex items-center gap-1">
+                                <Layers size={9} />
+                                {medicine.company}
+                              </span>
+                            )}
+                          {medicine.packSize && (
+                            <span className="flex items-center gap-1">
+                              <Package size={9} />
+                              {medicine.packSize}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      {confirmDeleteMedId === medicine.id ? (
+                        <>
+                          <span className="text-[10px] text-red-500 font-medium">
+                            Confirm delete?
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteMedicine(medicine)}
+                              disabled={deletingMedId === medicine.id}
+                              className="flex items-center gap-1 bg-red-500 hover:bg-red-600 text-white text-xs px-2 py-1 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                            >
+                              {deletingMedId === medicine.id ? (
+                                <Loader2 size={10} className="animate-spin" />
+                              ) : null}
+                              Yes
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteMedId(null)}
+                              className="text-xs px-2 py-1 rounded-lg border border-border font-semibold hover:bg-muted transition-colors"
+                              disabled={deletingMedId === medicine.id}
+                            >
+                              No
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteMedId(medicine.id)}
+                          className="flex items-center gap-1 text-red-500 hover:text-red-700 hover:bg-red-50 text-xs px-2 py-1 rounded-lg transition-colors"
+                          disabled={deletingMedId === medicine.id}
+                          aria-label={`Delete ${medicine.name}`}
+                        >
+                          <Trash2 size={12} />
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Office Dashboard ─────────────────────────────────────────────────────────
+
+type RawOrder = {
+  id: bigint;
+  status: BackendOrderStatus;
+  staffId: { __principal__: string } | string;
+  timestamp: bigint;
+  orderLines: Array<{ medicineId: bigint; quantity: bigint }>;
+  pharmacyId: bigint;
+};
+
+type OfficeOrder = {
+  backendId: bigint;
+  orderId: string;
+  pharmacyName: string;
+  pharmacyArea: string;
+  staffId: string;
+  date: string;
+  itemCount: number;
+  totalAmount: number;
+  status: OrderStatus;
+};
+
+type OfficeOrderDetail = OfficeOrder & {
+  items: Array<{
+    medicineName: string;
+    strength: string;
+    qty: number;
+    unitPrice: number;
+    total: number;
+  }>;
+};
+
+function OfficeDashboard() {
+  const { actor, isFetching: isActorFetching } = useActor();
+  const [orders, setOrders] = useState<OfficeOrder[]>([]);
+  const [ordersWithLines, setOrdersWithLines] = useState<OfficeOrderDetail[]>(
+    [],
+  );
+  const [allMedicines, setAllMedicines] = useState<Medicine[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<OrderStatus | "all">("all");
+  const [updatingId, setUpdatingId] = useState<bigint | null>(null);
+  const [isConfirmingAll, setIsConfirmingAll] = useState(false);
+  const [activeView, setActiveView] = useState<"orders" | "inventory">(
+    "orders",
+  );
+
+  const loadAllData = useCallback(async () => {
+    if (!actor || isActorFetching) return;
+    setIsLoading(true);
+    try {
+      const [rawOrders, rawPharmacies, rawMedicines] = await Promise.all([
+        actor.getAllStaffOrders(),
+        actor.getPharmacies(),
+        actor.getMedicines(),
+      ]);
+
+      const pharmacyMap = new Map(rawPharmacies.map((p) => [String(p.id), p]));
+      const medicineMap = new Map(rawMedicines.map((m) => [String(m.id), m]));
+
+      // Map medicines for inventory view
+      const mappedMedicines: Medicine[] = rawMedicines.map((m) => {
+        const seed = MEDICINE_SEEDS.find((s) => s.name === m.name);
+        return {
+          id: String(m.id),
+          backendId: m.id,
+          name: m.name,
+          company: m.company || seed?.company || "Unknown",
+          category: seed?.category ?? inferCategory(m.name),
+          strength: m.strength || seed?.strength || "",
+          unit: seed?.unit ?? "unit",
+          price: Number(m.price),
+          packSize: m.packSize || seed?.packSize || "",
+        };
+      });
+      setAllMedicines(mappedMedicines);
+
+      const mapped: OfficeOrder[] = (rawOrders as unknown as RawOrder[]).map(
+        (rec) => {
+          const pharm = pharmacyMap.get(String(rec.pharmacyId));
+          const { area } = parseLocation(pharm?.location ?? "");
+          const date = new Date(Number(rec.timestamp / BigInt(1_000_000)))
+            .toISOString()
+            .split("T")[0];
+          const itemCount = rec.orderLines.length;
+          const totalAmount = rec.orderLines.reduce((sum, line) => {
+            const med = medicineMap.get(String(line.medicineId));
+            return sum + (med ? Number(med.price) * Number(line.quantity) : 0);
+          }, 0);
+          const staffIdStr =
+            typeof rec.staffId === "object" && rec.staffId !== null
+              ? String(
+                  (rec.staffId as { __principal__: string }).__principal__ ??
+                    rec.staffId,
+                )
+              : String(rec.staffId);
+
+          return {
+            backendId: rec.id,
+            orderId: `ORD-${rec.id}`,
+            pharmacyName: pharm?.name ?? `Pharmacy #${rec.pharmacyId}`,
+            pharmacyArea: area,
+            staffId:
+              staffIdStr.slice(0, 12) + (staffIdStr.length > 12 ? "…" : ""),
+            date,
+            itemCount,
+            totalAmount,
+            status: mapBackendStatus(rec.status),
+          };
+        },
+      );
+
+      mapped.sort((a, b) => b.orderId.localeCompare(a.orderId));
+      setOrders(mapped);
+
+      // Compute ordersWithLines for printing
+      const withLines: OfficeOrderDetail[] = (
+        rawOrders as unknown as RawOrder[]
+      ).map((rec) => {
+        const pharm = pharmacyMap.get(String(rec.pharmacyId));
+        const { area } = parseLocation(pharm?.location ?? "");
+        const date = new Date(Number(rec.timestamp / BigInt(1_000_000)))
+          .toISOString()
+          .split("T")[0];
+        const staffIdStr =
+          typeof rec.staffId === "object" && rec.staffId !== null
+            ? String(
+                (rec.staffId as { __principal__: string }).__principal__ ??
+                  rec.staffId,
+              )
+            : String(rec.staffId);
+        const items = rec.orderLines.map((line) => {
+          const med = medicineMap.get(String(line.medicineId));
+          const unitPrice = med ? Number(med.price) : 0;
+          const qty = Number(line.quantity);
+          const seed = MEDICINE_SEEDS.find((s) => s.name === med?.name);
+          return {
+            medicineName: med?.name ?? `Medicine #${line.medicineId}`,
+            strength: med?.strength || seed?.strength || "",
+            qty,
+            unitPrice,
+            total: unitPrice * qty,
+          };
+        });
+        const totalAmount = items.reduce((s, i) => s + i.total, 0);
+        const itemCount = items.length;
+        return {
+          backendId: rec.id,
+          orderId: `ORD-${rec.id}`,
+          pharmacyName: pharm?.name ?? `Pharmacy #${rec.pharmacyId}`,
+          pharmacyArea: area,
+          staffId:
+            staffIdStr.slice(0, 12) + (staffIdStr.length > 12 ? "…" : ""),
+          date,
+          itemCount,
+          totalAmount,
+          status: mapBackendStatus(rec.status),
+          items,
+        };
+      });
+      withLines.sort((a, b) => b.orderId.localeCompare(a.orderId));
+      setOrdersWithLines(withLines);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Backend error: ${msg}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [actor, isActorFetching]);
+
+  useEffect(() => {
+    loadAllData();
+  }, [loadAllData]);
+
+  // Auto-refresh every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadAllData();
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [loadAllData]);
+
+  async function handleUpdateStatus(
+    order: OfficeOrder,
+    newStatus: OrderStatus,
+  ) {
+    if (!actor) return;
+    setUpdatingId(order.backendId);
+    try {
+      await actor.updateOrderStatus(
+        order.backendId,
+        mapLocalStatusToBackend(newStatus),
+      );
+      toast.success(`Status updated to ${newStatus}`);
+      await loadAllData();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error: ${msg}`);
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
+  async function handleConfirmAll() {
+    if (!actor) return;
+    const pendingOrders = orders.filter((o) => o.status === "pending");
+    if (pendingOrders.length === 0) {
+      toast.info("No pending orders to confirm");
+      return;
+    }
+    setIsConfirmingAll(true);
+    try {
+      await Promise.all(
+        pendingOrders.map((o) =>
+          actor.updateOrderStatus(
+            o.backendId,
+            mapLocalStatusToBackend("confirmed"),
+          ),
+        ),
+      );
+      toast.success(
+        `${pendingOrders.length} orders confirmed | ${pendingOrders.length} آرڈر تصدیق ہو گئے`,
+      );
+      await loadAllData();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error confirming orders: ${msg}`);
+    } finally {
+      setIsConfirmingAll(false);
+    }
+  }
+
+  const filtered = useMemo(() => {
+    if (statusFilter === "all") return orders;
+    return orders.filter((o) => o.status === statusFilter);
+  }, [orders, statusFilter]);
+
+  const filteredWithLines = useMemo(() => {
+    if (statusFilter === "all") return ordersWithLines;
+    return ordersWithLines.filter((o) => o.status === statusFilter);
+  }, [ordersWithLines, statusFilter]);
+
+  const stats = useMemo(
+    () => ({
+      total: orders.length,
+      pending: orders.filter((o) => o.status === "pending").length,
+      confirmed: orders.filter((o) => o.status === "confirmed").length,
+      delivered: orders.filter((o) => o.status === "delivered").length,
+    }),
+    [orders],
+  );
+
+  // Inventory: group medicines by company
+  const medicinesByCompany = useMemo(() => {
+    const map = new Map<string, Medicine[]>();
+    for (const med of allMedicines) {
+      const company = med.company || "Unknown";
+      if (!map.has(company)) map.set(company, []);
+      map.get(company)!.push(med);
+    }
+    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [allMedicines]);
+
+  const filterTabs: Array<{
+    key: OrderStatus | "all";
+    label: string;
+    urdu: string;
+  }> = [
+    { key: "all", label: "All", urdu: "سب" },
+    { key: "pending", label: "Pending", urdu: "زیر التواء" },
+    { key: "confirmed", label: "Confirmed", urdu: "تصدیق شدہ" },
+    { key: "delivered", label: "Delivered", urdu: "تحویل شدہ" },
+  ];
+
+  return (
+    <div className="min-h-dvh bg-gray-50">
+      {/* Print styles */}
+      <style>{`
+        @media print {
+          body * { visibility: hidden !important; }
+          #print-area, #print-area * { visibility: visible !important; }
+          #print-area { position: absolute; left: 0; top: 0; width: 100%; }
+          .invoice-card { page-break-after: always; }
+          .invoice-card:last-child { page-break-after: avoid; }
+        }
+      `}</style>
+
+      <Toaster richColors position="top-center" />
+
+      {/* Header */}
+      <header
+        className="text-white px-6 py-4 shadow-lg"
+        style={{
+          background:
+            "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+        }}
+      >
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
+              <Package size={22} />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold font-heading">
+                MedOrder Office
+              </h1>
+              <p className="text-white/70 text-xs">
+                Office Dashboard | آفس ڈیش بورڈ
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <a
+              href="/delivery"
+              className="flex items-center gap-1.5 bg-white/15 hover:bg-white/25 transition-colors px-3 py-2 rounded-xl text-sm font-medium"
+            >
+              <Truck size={15} />
+              Delivery View
+            </a>
+            <button
+              type="button"
+              onClick={loadAllData}
+              disabled={isLoading}
+              className="flex items-center gap-1.5 bg-white/15 hover:bg-white/25 transition-colors px-4 py-2 rounded-xl text-sm font-medium disabled:opacity-60"
+            >
+              {isLoading ? (
+                <Loader2 size={15} className="animate-spin" />
+              ) : (
+                <RefreshCw size={15} />
+              )}
+              Refresh
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* View Tabs: Orders / Inventory */}
+      <div className="max-w-7xl mx-auto px-6 pt-5">
+        <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-xl p-1 w-fit shadow-sm">
+          <button
+            type="button"
+            onClick={() => setActiveView("orders")}
+            className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              activeView === "orders"
+                ? "bg-blue-600 text-white shadow-sm"
+                : "text-gray-600 hover:bg-gray-100"
+            }`}
+          >
+            <Package size={15} />
+            Orders | آرڈر
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveView("inventory")}
+            className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              activeView === "inventory"
+                ? "bg-blue-600 text-white shadow-sm"
+                : "text-gray-600 hover:bg-gray-100"
+            }`}
+          >
+            <Warehouse size={15} />
+            Inventory | انوینٹری
+          </button>
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto px-6 py-5 space-y-6">
+        {activeView === "orders" && (
+          <>
+            {/* Stats Row */}
+            <div className="grid grid-cols-4 gap-4">
+              {[
+                {
+                  label: "Total Orders",
+                  urdu: "کل آرڈر",
+                  value: stats.total,
+                  color: "text-blue-700",
+                  bg: "bg-blue-50 border-blue-200",
+                },
+                {
+                  label: "Pending",
+                  urdu: "زیر التواء",
+                  value: stats.pending,
+                  color: "text-amber-700",
+                  bg: "bg-amber-50 border-amber-200",
+                },
+                {
+                  label: "Confirmed",
+                  urdu: "تصدیق شدہ",
+                  value: stats.confirmed,
+                  color: "text-indigo-700",
+                  bg: "bg-indigo-50 border-indigo-200",
+                },
+                {
+                  label: "Delivered",
+                  urdu: "تحویل شدہ",
+                  value: stats.delivered,
+                  color: "text-emerald-700",
+                  bg: "bg-emerald-50 border-emerald-200",
+                },
+              ].map((stat) => (
+                <div
+                  key={stat.label}
+                  className={`rounded-xl border p-5 ${stat.bg}`}
+                >
+                  <div
+                    className={`text-3xl font-bold font-heading ${stat.color}`}
+                  >
+                    {isLoading ? (
+                      <Loader2 size={24} className="animate-spin" />
+                    ) : (
+                      stat.value
+                    )}
+                  </div>
+                  <div className="text-sm font-medium text-gray-700 mt-1">
+                    {stat.label}
+                  </div>
+                  <div className="text-xs text-gray-500">{stat.urdu}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Toolbar: filter tabs + action buttons */}
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                {filterTabs.map((tab) => (
+                  <button
+                    type="button"
+                    key={tab.key}
+                    onClick={() => setStatusFilter(tab.key)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      statusFilter === tab.key
+                        ? "bg-blue-600 text-white shadow-sm"
+                        : "bg-white border border-gray-200 text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    {tab.label} | {tab.urdu}
+                    {tab.key !== "all" && (
+                      <span
+                        className={`ml-2 text-xs px-1.5 py-0.5 rounded-full ${
+                          statusFilter === tab.key
+                            ? "bg-white/25 text-white"
+                            : "bg-gray-100 text-gray-500"
+                        }`}
+                      >
+                        {tab.key === "pending"
+                          ? stats.pending
+                          : tab.key === "confirmed"
+                            ? stats.confirmed
+                            : stats.delivered}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              <div className="ml-auto flex items-center gap-2">
+                {/* Confirm All */}
+                <button
+                  type="button"
+                  onClick={handleConfirmAll}
+                  disabled={isConfirmingAll || isLoading || stats.pending === 0}
+                  className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                >
+                  {isConfirmingAll ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <CheckCircle2 size={14} />
+                  )}
+                  Confirm All | سب تصدیق
+                  {stats.pending > 0 && (
+                    <span className="bg-white/25 text-white text-xs px-1.5 py-0.5 rounded-full">
+                      {stats.pending}
+                    </span>
+                  )}
+                </button>
+
+                {/* Print All */}
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  disabled={filtered.length === 0}
+                  className="flex items-center gap-2 bg-gray-600 hover:bg-gray-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                >
+                  <Printer size={14} />
+                  Print All | سب پرنٹ
+                </button>
+              </div>
+            </div>
+
+            {/* Orders Table */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              {isLoading ? (
+                <div className="flex items-center justify-center py-20">
+                  <Loader2 className="animate-spin text-blue-500" size={32} />
+                </div>
+              ) : filtered.length === 0 ? (
+                <div className="text-center py-20 text-gray-400">
+                  <Package size={40} className="mx-auto mb-3 opacity-50" />
+                  <p className="font-medium">
+                    No orders found | کوئی آرڈر نہیں ملا
+                  </p>
+                </div>
+              ) : (
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200">
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Order ID
+                      </th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Pharmacy | فارمیسی
+                      </th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Staff ID
+                      </th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Date | تاریخ
+                      </th>
+                      <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Items
+                      </th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Amount | رقم
+                      </th>
+                      <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Status | حیثیت
+                      </th>
+                      <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Actions | اقدامات
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {filtered.map((order, idx) => (
+                      <tr
+                        key={String(order.backendId)}
+                        className={idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"}
+                      >
+                        <td className="px-4 py-3 text-sm font-mono font-semibold text-blue-700">
+                          {order.orderId}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="text-sm font-semibold text-gray-900">
+                            {order.pharmacyName}
+                          </div>
+                          {order.pharmacyArea && (
+                            <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
+                              <MapPin size={10} />
+                              {order.pharmacyArea}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-500 font-mono">
+                          {order.staffId}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-600">
+                          {formatDate(order.date)}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-center text-gray-700 font-medium">
+                          {order.itemCount}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-right font-bold text-gray-900">
+                          {formatCurrency(order.totalAmount)}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <StatusBadge status={order.status} />
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-center gap-1.5">
+                            {order.status === "pending" && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleUpdateStatus(order, "confirmed")
+                                }
+                                disabled={updatingId === order.backendId}
+                                className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                              >
+                                {updatingId === order.backendId ? (
+                                  <Loader2 size={10} className="animate-spin" />
+                                ) : (
+                                  <CheckCircle2 size={11} />
+                                )}
+                                Confirm
+                              </button>
+                            )}
+                            {order.status === "confirmed" && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleUpdateStatus(order, "delivered")
+                                }
+                                disabled={updatingId === order.backendId}
+                                className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                              >
+                                {updatingId === order.backendId ? (
+                                  <Loader2 size={10} className="animate-spin" />
+                                ) : (
+                                  <Truck size={11} />
+                                )}
+                                Mark Delivered
+                              </button>
+                            )}
+                            {order.status === "delivered" && (
+                              <span className="text-xs text-emerald-600 font-medium flex items-center gap-1">
+                                <CheckCircle2 size={12} />
+                                Delivered
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </>
+        )}
+
+        {activeView === "inventory" && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900 font-heading">
+                  Inventory | انوینٹری
+                </h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  Medicines grouped by company · stock qty editable
+                </p>
+              </div>
+              <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1.5 rounded-lg font-medium">
+                {allMedicines.length} medicines · {medicinesByCompany.length}{" "}
+                companies
+              </span>
+            </div>
+
+            {isLoading ? (
+              <div className="flex items-center justify-center py-20">
+                <Loader2 className="animate-spin text-blue-500" size={32} />
+              </div>
+            ) : medicinesByCompany.length === 0 ? (
+              <div className="text-center py-20 text-gray-400">
+                <PillIcon size={40} className="mx-auto mb-3 opacity-50" />
+                <p className="font-medium">
+                  No medicines found | کوئی دوائی نہیں ملی
+                </p>
+              </div>
+            ) : (
+              medicinesByCompany.map(([company, meds]) => (
+                <div
+                  key={company}
+                  className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden"
+                >
+                  {/* Company header block */}
+                  <div className="flex items-center gap-3 px-5 py-3.5 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
+                    <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
+                      <Building2 size={16} className="text-white" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-gray-900 font-heading">
+                        {company}
+                      </h3>
+                      <p className="text-xs text-gray-500">
+                        {meds.length} medicine{meds.length !== 1 ? "s" : ""}
+                      </p>
+                    </div>
+                  </div>
+                  {/* Medicines table */}
+                  <table className="w-full">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200">
+                        <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                          Medicine Name
+                        </th>
+                        <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                          Strength
+                        </th>
+                        <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                          Pack Size
+                        </th>
+                        <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                          Price
+                        </th>
+                        <th className="text-center px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                          Stock Qty | اسٹاک
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {meds.map((med) => {
+                        const stockKey = `medorder_stock_${med.backendId}`;
+                        const storedVal = localStorage.getItem(stockKey);
+                        const stockVal =
+                          storedVal !== null && storedVal !== ""
+                            ? Number(storedVal)
+                            : 0;
+                        return (
+                          <tr key={med.id} className="hover:bg-gray-50/50">
+                            <td className="px-4 py-3">
+                              <span className="font-semibold text-sm text-gray-900">
+                                {med.name}
+                              </span>
+                              <span className="ml-2 text-xs capitalize text-gray-400">
+                                {med.category}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-600">
+                              {med.strength || "—"}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-600">
+                              {med.packSize || "—"}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-right font-bold text-gray-900">
+                              {formatCurrency(med.price)}
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <input
+                                type="number"
+                                min="0"
+                                defaultValue={stockVal}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  localStorage.setItem(stockKey, val);
+                                }}
+                                className="w-20 text-center text-sm font-bold text-gray-900 border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                aria-label={`Stock quantity for ${med.name}`}
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="text-center py-3 text-xs text-gray-400">
+          © {new Date().getFullYear()}. Built with ♥ using{" "}
+          <a
+            href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(window.location.hostname)}`}
+            className="text-blue-500 underline"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            caffeine.ai
+          </a>
+        </div>
+      </div>
+
+      {/* ── Print Area (hidden on screen, visible when printing) ── */}
+      <div id="print-area" style={{ display: "none" }}>
+        <div style={{ padding: "20px" }}>
+          {filteredWithLines.map((order) => (
+            <div
+              key={String(order.backendId)}
+              className="invoice-card"
+              style={{
+                border: "1px solid #e5e7eb",
+                borderRadius: "8px",
+                padding: "24px",
+                marginBottom: "24px",
+                fontFamily: "sans-serif",
+              }}
+            >
+              {/* Invoice Header */}
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  marginBottom: "20px",
+                  borderBottom: "2px solid #2563eb",
+                  paddingBottom: "16px",
+                }}
+              >
+                <div>
+                  <h1
+                    style={{
+                      fontSize: "22px",
+                      fontWeight: "bold",
+                      color: "#1e40af",
+                      margin: 0,
+                    }}
+                  >
+                    MedOrder Invoice
+                  </h1>
+                  <p
+                    style={{
+                      color: "#6b7280",
+                      fontSize: "13px",
+                      margin: "4px 0 0",
+                    }}
+                  >
+                    Medicine Distributor Order
+                  </p>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <p
+                    style={{
+                      fontWeight: "bold",
+                      fontSize: "16px",
+                      color: "#1e40af",
+                      margin: 0,
+                    }}
+                  >
+                    {order.orderId}
+                  </p>
+                  <p
+                    style={{
+                      color: "#6b7280",
+                      fontSize: "13px",
+                      margin: "4px 0 0",
+                    }}
+                  >
+                    {formatDate(order.date)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Order Info */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "12px",
+                  marginBottom: "20px",
+                  backgroundColor: "#f9fafb",
+                  borderRadius: "6px",
+                  padding: "12px",
+                }}
+              >
+                <div>
+                  <p
+                    style={{
+                      color: "#6b7280",
+                      fontSize: "11px",
+                      margin: "0 0 2px",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.05em",
+                    }}
+                  >
+                    Pharmacy
+                  </p>
+                  <p
+                    style={{
+                      fontWeight: "bold",
+                      fontSize: "14px",
+                      color: "#111827",
+                      margin: 0,
+                    }}
+                  >
+                    {order.pharmacyName}
+                  </p>
+                  {order.pharmacyArea && (
+                    <p
+                      style={{
+                        color: "#6b7280",
+                        fontSize: "12px",
+                        margin: "2px 0 0",
+                      }}
+                    >
+                      {order.pharmacyArea}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <p
+                    style={{
+                      color: "#6b7280",
+                      fontSize: "11px",
+                      margin: "0 0 2px",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.05em",
+                    }}
+                  >
+                    Staff ID
+                  </p>
+                  <p
+                    style={{
+                      fontWeight: "bold",
+                      fontSize: "14px",
+                      color: "#111827",
+                      margin: 0,
+                    }}
+                  >
+                    {order.staffId}
+                  </p>
+                </div>
+              </div>
+
+              {/* Items Table */}
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr
+                    style={{
+                      backgroundColor: "#eff6ff",
+                      borderBottom: "1px solid #bfdbfe",
+                    }}
+                  >
+                    <th
+                      style={{
+                        padding: "8px 12px",
+                        textAlign: "left",
+                        fontSize: "12px",
+                        color: "#1e40af",
+                        fontWeight: "600",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.05em",
+                      }}
+                    >
+                      Medicine Name
+                    </th>
+                    <th
+                      style={{
+                        padding: "8px 12px",
+                        textAlign: "left",
+                        fontSize: "12px",
+                        color: "#1e40af",
+                        fontWeight: "600",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.05em",
+                      }}
+                    >
+                      Strength
+                    </th>
+                    <th
+                      style={{
+                        padding: "8px 12px",
+                        textAlign: "center",
+                        fontSize: "12px",
+                        color: "#1e40af",
+                        fontWeight: "600",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.05em",
+                      }}
+                    >
+                      Qty
+                    </th>
+                    <th
+                      style={{
+                        padding: "8px 12px",
+                        textAlign: "right",
+                        fontSize: "12px",
+                        color: "#1e40af",
+                        fontWeight: "600",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.05em",
+                      }}
+                    >
+                      Unit Price
+                    </th>
+                    <th
+                      style={{
+                        padding: "8px 12px",
+                        textAlign: "right",
+                        fontSize: "12px",
+                        color: "#1e40af",
+                        fontWeight: "600",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.05em",
+                      }}
+                    >
+                      Total
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {order.items.map((item, i) => (
+                    <tr
+                      key={`${order.orderId}-item-${i}`}
+                      style={{
+                        borderBottom: "1px solid #f3f4f6",
+                        backgroundColor: i % 2 === 0 ? "#fff" : "#f9fafb",
+                      }}
+                    >
+                      <td
+                        style={{
+                          padding: "8px 12px",
+                          fontSize: "13px",
+                          color: "#111827",
+                          fontWeight: "500",
+                        }}
+                      >
+                        {item.medicineName}
+                      </td>
+                      <td
+                        style={{
+                          padding: "8px 12px",
+                          fontSize: "13px",
+                          color: "#6b7280",
+                        }}
+                      >
+                        {item.strength || "—"}
+                      </td>
+                      <td
+                        style={{
+                          padding: "8px 12px",
+                          textAlign: "center",
+                          fontSize: "13px",
+                          fontWeight: "600",
+                          color: "#374151",
+                        }}
+                      >
+                        {item.qty}
+                      </td>
+                      <td
+                        style={{
+                          padding: "8px 12px",
+                          textAlign: "right",
+                          fontSize: "13px",
+                          color: "#374151",
+                        }}
+                      >
+                        {formatCurrency(item.unitPrice)}
+                      </td>
+                      <td
+                        style={{
+                          padding: "8px 12px",
+                          textAlign: "right",
+                          fontSize: "13px",
+                          fontWeight: "bold",
+                          color: "#1e40af",
+                        }}
+                      >
+                        {formatCurrency(item.total)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr
+                    style={{
+                      borderTop: "2px solid #2563eb",
+                      backgroundColor: "#eff6ff",
+                    }}
+                  >
+                    <td
+                      colSpan={4}
+                      style={{
+                        padding: "10px 12px",
+                        textAlign: "right",
+                        fontWeight: "bold",
+                        fontSize: "14px",
+                        color: "#1e40af",
+                      }}
+                    >
+                      Grand Total | کل رقم
+                    </td>
+                    <td
+                      style={{
+                        padding: "10px 12px",
+                        textAlign: "right",
+                        fontWeight: "bold",
+                        fontSize: "16px",
+                        color: "#1e40af",
+                      }}
+                    >
+                      {formatCurrency(order.totalAmount)}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Delivery Dashboard ───────────────────────────────────────────────────────
+
+type DeliveryOrder = {
+  backendId: bigint;
+  orderId: string;
+  pharmacyName: string;
+  pharmacyAddress: string;
+  pharmacyArea: string;
+  itemCount: number;
+  totalAmount: number;
+  status: OrderStatus;
+};
+
+function DeliveryDashboard() {
+  const { actor, isFetching: isActorFetching } = useActor();
+  const [pendingOrders, setPendingOrders] = useState<DeliveryOrder[]>([]);
+  const [deliveredThisSession, setDeliveredThisSession] = useState<
+    DeliveryOrder[]
+  >([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [markingId, setMarkingId] = useState<bigint | null>(null);
+
+  const loadData = useCallback(async () => {
+    if (!actor || isActorFetching) return;
+    setIsLoading(true);
+    try {
+      const [rawOrders, rawPharmacies, rawMedicines] = await Promise.all([
+        actor.getAllStaffOrders(),
+        actor.getPharmacies(),
+        actor.getMedicines(),
+      ]);
+
+      const pharmacyMap = new Map(rawPharmacies.map((p) => [String(p.id), p]));
+      const medicineMap = new Map(rawMedicines.map((m) => [String(m.id), m]));
+
+      const mapped: DeliveryOrder[] = (rawOrders as unknown as RawOrder[]).map(
+        (rec) => {
+          const pharm = pharmacyMap.get(String(rec.pharmacyId));
+          const { address, area } = parseLocation(pharm?.location ?? "");
+          const itemCount = rec.orderLines.length;
+          const totalAmount = rec.orderLines.reduce((sum, line) => {
+            const med = medicineMap.get(String(line.medicineId));
+            return sum + (med ? Number(med.price) * Number(line.quantity) : 0);
+          }, 0);
+
+          return {
+            backendId: rec.id,
+            orderId: `ORD-${rec.id}`,
+            pharmacyName: pharm?.name ?? `Pharmacy #${rec.pharmacyId}`,
+            pharmacyAddress: address,
+            pharmacyArea: area,
+            itemCount,
+            totalAmount,
+            status: mapBackendStatus(rec.status),
+          };
+        },
+      );
+
+      const confirmed = mapped.filter((o) => o.status === "confirmed");
+      confirmed.sort((a, b) => b.orderId.localeCompare(a.orderId));
+      setPendingOrders(confirmed);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Backend error: ${msg}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [actor, isActorFetching]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  async function handleMarkDelivered(order: DeliveryOrder) {
+    if (!actor) return;
+    setMarkingId(order.backendId);
+    try {
+      await actor.updateOrderStatus(
+        order.backendId,
+        mapLocalStatusToBackend("delivered"),
+      );
+      toast.success(`${order.pharmacyName} — delivered!`);
+      setDeliveredThisSession((prev) => [
+        { ...order, status: "delivered" as OrderStatus },
+        ...prev,
+      ]);
+      setPendingOrders((prev) =>
+        prev.filter((o) => o.backendId !== order.backendId),
+      );
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error: ${msg}`);
+    } finally {
+      setMarkingId(null);
+    }
+  }
+
+  return (
+    <div className="min-h-dvh bg-gray-50">
+      <Toaster richColors position="top-center" />
+
+      {/* Header */}
+      <header
+        className="text-white px-4 py-4 shadow-lg"
+        style={{
+          background:
+            "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+        }}
+      >
+        <div className="max-w-sm mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center">
+              <Truck size={18} />
+            </div>
+            <div>
+              <h1 className="text-lg font-bold font-heading">
+                Delivery | ڈیلیوری
+              </h1>
+              <p className="text-white/70 text-xs">Delivery Dashboard</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <a
+              href="/office"
+              className="flex items-center gap-1 bg-white/15 hover:bg-white/25 transition-colors px-2.5 py-1.5 rounded-lg text-xs font-medium"
+            >
+              <Package size={12} />
+              Office View
+            </a>
+            <button
+              type="button"
+              onClick={loadData}
+              disabled={isLoading}
+              className="w-8 h-8 flex items-center justify-center bg-white/15 hover:bg-white/25 transition-colors rounded-lg disabled:opacity-60"
+              aria-label="Refresh"
+            >
+              {isLoading ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <RefreshCw size={14} />
+              )}
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="max-w-sm mx-auto px-4 py-5 space-y-5">
+        {/* Pending Deliveries */}
+        <div>
+          <h2 className="font-bold text-gray-800 font-heading mb-3 flex items-center gap-2">
+            <Clock size={16} className="text-amber-500" />
+            Pending Deliveries | زیر التواء ڈیلیوری
+            {!isLoading && (
+              <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-semibold">
+                {pendingOrders.length}
+              </span>
+            )}
+          </h2>
+
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="animate-spin text-blue-500" size={28} />
+            </div>
+          ) : pendingOrders.length === 0 ? (
+            <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-400">
+              <Truck size={32} className="mx-auto mb-3 opacity-40" />
+              <p className="text-sm font-medium">No pending deliveries</p>
+              <p className="text-xs mt-1">تمام ڈیلیوریاں مکمل ہو گئی ہیں</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {pendingOrders.map((order) => (
+                <div
+                  key={String(order.backendId)}
+                  className="bg-white rounded-xl border border-gray-200 shadow-sm p-4"
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <div>
+                      <h3 className="font-bold text-gray-900 font-heading">
+                        {order.pharmacyName}
+                      </h3>
+                      {order.pharmacyAddress && (
+                        <div className="flex items-center gap-1 mt-0.5 text-xs text-gray-500">
+                          <MapPin size={10} />
+                          <span>{order.pharmacyAddress}</span>
+                        </div>
+                      )}
+                      {order.pharmacyArea && (
+                        <span className="inline-block text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full mt-1">
+                          {order.pharmacyArea}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-xs font-mono text-gray-400 shrink-0 ml-2">
+                      {order.orderId}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm mt-3">
+                    <div className="text-gray-500">
+                      <span className="font-medium text-gray-700">
+                        {order.itemCount}
+                      </span>{" "}
+                      items ·{" "}
+                      <span className="font-bold text-gray-900">
+                        {formatCurrency(order.totalAmount)}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleMarkDelivered(order)}
+                    disabled={markingId === order.backendId}
+                    className="mt-3 w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-60 text-sm"
+                  >
+                    {markingId === order.backendId ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <CheckCircle2 size={16} />
+                    )}
+                    Mark Delivered | تحویل کریں
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Delivered This Session */}
+        {deliveredThisSession.length > 0 && (
+          <div>
+            <h2 className="font-bold text-gray-800 font-heading mb-3 flex items-center gap-2">
+              <CheckCircle2 size={16} className="text-emerald-500" />
+              Delivered Today | آج کی ڈیلیوری
+              <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-semibold">
+                {deliveredThisSession.length}
+              </span>
+            </h2>
+            <div className="space-y-2.5">
+              {deliveredThisSession.map((order) => (
+                <div
+                  key={String(order.backendId)}
+                  className="bg-emerald-50 border border-emerald-200 rounded-xl p-4"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-semibold text-emerald-900 text-sm">
+                        {order.pharmacyName}
+                      </h3>
+                      {order.pharmacyArea && (
+                        <p className="text-xs text-emerald-600 mt-0.5">
+                          {order.pharmacyArea}
+                        </p>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <span className="inline-flex items-center gap-1 text-xs text-emerald-700 bg-emerald-100 px-2 py-1 rounded-full font-semibold">
+                        <CheckCircle2 size={11} />
+                        Delivered
+                      </span>
+                      <p className="text-xs text-emerald-600 mt-1 font-mono">
+                        {order.orderId}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="text-center py-3 text-xs text-gray-400">
+          © {new Date().getFullYear()}. Built with ♥ using{" "}
+          <a
+            href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(window.location.hostname)}`}
+            className="text-blue-500 underline"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            caffeine.ai
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Mobile App Root ──────────────────────────────────────────────────────────
+
+function MobileApp() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [isLoadingPharmacies, setIsLoadingPharmacies] = useState(false);
   const [isLoadingMedicines, setIsLoadingMedicines] = useState(false);
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
+  const [sideMenuOpen, setSideMenuOpen] = useState(false);
 
   const { actor, isFetching: isActorFetching } = useActor();
 
@@ -2187,7 +4410,14 @@ export default function App() {
           // Seed backend
           await Promise.all(
             MEDICINE_SEEDS.map((s) =>
-              actor.addMedicine(s.name, BigInt(s.price), ""),
+              actor.addMedicine(
+                s.name,
+                BigInt(s.price),
+                "",
+                s.company,
+                s.strength,
+                s.packSize,
+              ),
             ),
           );
           // Reload after seeding
@@ -2198,12 +4428,12 @@ export default function App() {
               id: String(m.id),
               backendId: m.id,
               name: m.name,
-              company: seed?.company ?? "Unknown",
+              company: m.company || seed?.company || "Unknown",
               category: seed?.category ?? inferCategory(m.name),
-              strength: seed?.strength ?? "",
+              strength: m.strength || seed?.strength || "",
               unit: seed?.unit ?? "unit",
               price: Number(m.price),
-              packSize: seed?.packSize ?? "",
+              packSize: m.packSize || seed?.packSize || "",
             };
           });
         } else {
@@ -2213,12 +4443,12 @@ export default function App() {
               id: String(m.id),
               backendId: m.id,
               name: m.name,
-              company: seed?.company ?? "Unknown",
+              company: m.company || seed?.company || "Unknown",
               category: seed?.category ?? inferCategory(m.name),
-              strength: seed?.strength ?? "",
+              strength: m.strength || seed?.strength || "",
               unit: seed?.unit ?? "unit",
               price: Number(m.price),
-              packSize: seed?.packSize ?? "",
+              packSize: m.packSize || seed?.packSize || "",
             };
           });
         }
@@ -2268,13 +4498,17 @@ export default function App() {
     );
   }, [state.currentStaff, actor, pharmacies, medicines, loadOrders]);
 
-  const showBottomNav =
-    state.screen.name === "dashboard" ||
-    state.screen.name === "pharmacies" ||
-    state.screen.name === "order-history";
-
   const isLoadingData =
     isLoadingPharmacies || isLoadingMedicines || isLoadingOrders;
+
+  // ── Called by ManageScreen after add/delete to sync state ────────────
+  const handleManageDataReloaded = useCallback(
+    (newPharmacies: Pharmacy[], newMedicines: Medicine[]) => {
+      setPharmacies(newPharmacies);
+      setMedicines(newMedicines);
+    },
+    [],
+  );
 
   function renderScreen() {
     const { screen } = state;
@@ -2289,6 +4523,7 @@ export default function App() {
             pharmacies={pharmacies}
             isLoadingData={isLoadingData}
             onRefreshOrders={handleRefreshOrders}
+            onOpenMenu={() => setSideMenuOpen(true)}
           />
         );
       case "pharmacies":
@@ -2330,6 +4565,16 @@ export default function App() {
             actor={actor}
           />
         );
+      case "manage":
+        return (
+          <ManageScreen
+            pharmacies={pharmacies}
+            medicines={medicines}
+            actor={actor}
+            onDataReloaded={handleManageDataReloaded}
+            dispatch={dispatch}
+          />
+        );
     }
   }
 
@@ -2346,10 +4591,9 @@ export default function App() {
     <div className="app-container">
       <Toaster richColors position="top-center" />
       <main className="screen-enter">{renderScreen()}</main>
-      {showBottomNav && <BottomNav screen={state.screen} navigate={navigate} />}
       {/* Footer - only on dashboard */}
       {state.screen.name === "dashboard" && (
-        <div className="text-center py-3 px-4 text-xs text-muted-foreground border-t border-border mb-20">
+        <div className="text-center py-3 px-4 text-xs text-muted-foreground border-t border-border">
           © {new Date().getFullYear()}. Built with ♥ using{" "}
           <a
             href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(window.location.hostname)}`}
@@ -2361,6 +4605,134 @@ export default function App() {
           </a>
         </div>
       )}
+      {/* Side drawer - available on all authenticated screens */}
+      <SideDrawer
+        open={sideMenuOpen}
+        onClose={() => setSideMenuOpen(false)}
+        navigate={navigate}
+        dispatch={dispatch}
+      />
     </div>
   );
+}
+
+// ─── Test View: All 3 Dashboards Side by Side ────────────────────────────────
+
+function TestView() {
+  const base = window.location.origin;
+
+  const panels = [
+    {
+      label: "Staff App",
+      urdu: "اسٹاف ایپ",
+      url: `${base}/`,
+      width: 390,
+      color: "from-blue-600 to-blue-800",
+    },
+    {
+      label: "Office Dashboard",
+      urdu: "آفس ڈیش بورڈ",
+      url: `${base}/office`,
+      width: 900,
+      color: "from-indigo-600 to-indigo-800",
+    },
+    {
+      label: "Delivery Dashboard",
+      urdu: "ڈیلیوری ڈیش بورڈ",
+      url: `${base}/delivery`,
+      width: 390,
+      color: "from-emerald-600 to-emerald-800",
+    },
+  ];
+
+  return (
+    <div className="min-h-dvh bg-gray-100 flex flex-col">
+      {/* Header */}
+      <header
+        className="text-white px-6 py-4 shadow-lg shrink-0"
+        style={{
+          background:
+            "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+        }}
+      >
+        <div className="max-w-full mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
+              <Package size={22} />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold font-heading">
+                MedOrder — Test View
+              </h1>
+              <p className="text-white/70 text-xs">
+                Three dashboards side by side | تینوں ڈیش بورڈ ایک ساتھ
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            {panels.map((p) => (
+              <a
+                key={p.url}
+                href={p.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="bg-white/15 hover:bg-white/25 transition-colors px-3 py-1.5 rounded-lg font-medium"
+              >
+                {p.label} ↗
+              </a>
+            ))}
+          </div>
+        </div>
+      </header>
+
+      {/* Panels */}
+      <div className="flex-1 flex gap-4 p-4 overflow-x-auto items-start">
+        {panels.map((panel) => (
+          <div key={panel.label} className="flex flex-col shrink-0">
+            {/* Panel label */}
+            <div
+              className={`bg-gradient-to-r ${panel.color} text-white px-4 py-2.5 rounded-t-xl flex items-center justify-between`}
+            >
+              <div>
+                <div className="font-bold text-sm">{panel.label}</div>
+                <div className="text-white/70 text-xs">{panel.urdu}</div>
+              </div>
+              <a
+                href={panel.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="bg-white/20 hover:bg-white/30 transition-colors px-2 py-1 rounded-lg text-xs font-medium"
+              >
+                Open ↗
+              </a>
+            </div>
+
+            {/* iframe container */}
+            <div
+              className="bg-white rounded-b-xl shadow-lg border border-t-0 border-gray-200 overflow-hidden"
+              style={{ width: `${panel.width}px`, height: "85vh" }}
+            >
+              <iframe
+                src={panel.url}
+                title={panel.label}
+                width={panel.width}
+                height="100%"
+                style={{ border: "none", display: "block" }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── App Root (URL Router) ────────────────────────────────────────────────────
+
+export default function App() {
+  const pathname = window.location.pathname;
+  if (pathname === "/office") return <OfficeDashboard />;
+  if (pathname === "/delivery") return <DeliveryDashboard />;
+  if (pathname === "/test") return <TestView />;
+  return <MobileApp />;
 }

@@ -6,6 +6,8 @@ import Time "mo:core/Time";
 import Principal "mo:core/Principal";
 import Order "mo:core/Order";
 
+
+
 actor {
   type Staff = {
     name : Text;
@@ -24,6 +26,9 @@ actor {
     name : Text;
     price : Nat;
     description : Text;
+    company : Text;
+    strength : Text;
+    packSize : Text;
   };
 
   type MedicineItem = {
@@ -113,7 +118,6 @@ actor {
     staff.add(caller, staffRecord);
   };
 
-  // Pharmacist functions (TODO: make privileged?)
   public shared ({ caller }) func addPharmacy(name : Text, contact : Text, location : Text) : async Nat {
     let id = nextPharmacyId;
     nextPharmacyId += 1;
@@ -129,7 +133,21 @@ actor {
     id;
   };
 
-  public shared ({ caller }) func addMedicine(name : Text, price : Nat, description : Text) : async Nat {
+  public shared ({ caller }) func deletePharmacy(id : Nat) : async () {
+    if (not pharmacies.containsKey(id)) {
+      Runtime.trap("Pharmacy does not exist!");
+    };
+    pharmacies.remove(id);
+  };
+
+  public shared ({ caller }) func addMedicine(
+    name : Text,
+    price : Nat,
+    description : Text,
+    company : Text,
+    strength : Text,
+    packSize : Text,
+  ) : async Nat {
     let id = nextMedicineId;
     nextMedicineId += 1;
 
@@ -138,13 +156,22 @@ actor {
       name;
       price;
       description;
+      company;
+      strength;
+      packSize;
     };
 
     medicines.add(id, medicine);
     id;
   };
 
-  // Query methods
+  public shared ({ caller }) func deleteMedicine(id : Nat) : async () {
+    if (not medicines.containsKey(id)) {
+      Runtime.trap("Medicine does not exist!");
+    };
+    medicines.remove(id);
+  };
+
   public query ({ caller }) func getPharmacies() : async [Pharmacy] {
     pharmacies.values().toArray().sort();
   };
@@ -153,7 +180,6 @@ actor {
     medicines.values().toArray().sort();
   };
 
-  // Order Management
   public shared ({ caller }) func createOrder(
     pharmacyId : Nat,
     orderLines : [MedicineItem],
