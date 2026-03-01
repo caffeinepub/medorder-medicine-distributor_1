@@ -4,10 +4,10 @@ import Order "mo:core/Order";
 import Time "mo:core/Time";
 import Principal "mo:core/Principal";
 
-import Migration "migration";
+
 
 // Apply persistent storage migration
-(with migration = Migration.run)
+
 actor {
   type Staff = {
     name : Text;

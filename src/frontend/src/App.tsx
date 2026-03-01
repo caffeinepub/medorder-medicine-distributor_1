@@ -1626,15 +1626,16 @@ function OrderTakingScreen({
                       </span>
                     </div>
                   </div>
-                  {/* Qty controls */}
-                  <div className="flex items-center gap-2 ml-3 shrink-0">
+                  {/* Qty + Bonus + Discount controls */}
+                  <div className="flex flex-col items-end gap-1 ml-3 shrink-0">
                     <input
                       type="number"
                       min="0"
+                      step="any"
                       value={qty === 0 ? "" : qty}
                       placeholder="0"
                       onChange={(e) => {
-                        const val = Number(e.target.value);
+                        const val = Number.parseFloat(e.target.value) || 0;
                         if (!e.target.value || val === 0) {
                           if (qty > 0)
                             dispatch({
@@ -1659,6 +1660,65 @@ function OrderTakingScreen({
                       className="w-14 text-center text-sm font-bold text-foreground border border-input rounded-md px-1 py-1 focus:outline-none focus:ring-1 focus:ring-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       aria-label="Quantity"
                     />
+                    {qty > 0 && (
+                      <>
+                        <label className="flex items-center gap-1">
+                          <span className="text-[9px] text-emerald-600 font-medium">
+                            Bonus
+                          </span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={
+                              getBonusDiscount(med.id).bonus === 0
+                                ? ""
+                                : getBonusDiscount(med.id).bonus
+                            }
+                            placeholder="0"
+                            onChange={(e) => {
+                              const val =
+                                Number.parseFloat(e.target.value) || 0;
+                              updateBonus(med.id, Number.isNaN(val) ? 0 : val);
+                            }}
+                            className="w-12 text-center text-xs font-bold text-emerald-700 border border-emerald-300 bg-emerald-50 rounded px-1 py-0.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            aria-label="Bonus quantity"
+                          />
+                        </label>
+                        <label className="flex items-center gap-1">
+                          <span className="text-[9px] text-amber-600 font-medium">
+                            Disc%
+                          </span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="any"
+                            value={
+                              getBonusDiscount(med.id).discount === 0
+                                ? ""
+                                : getBonusDiscount(med.id).discount
+                            }
+                            placeholder="0"
+                            onChange={(e) => {
+                              const val = Math.min(
+                                100,
+                                Math.max(
+                                  0,
+                                  Number.parseFloat(e.target.value) || 0,
+                                ),
+                              );
+                              updateDiscount(
+                                med.id,
+                                Number.isNaN(val) ? 0 : val,
+                              );
+                            }}
+                            className="w-12 text-center text-xs font-bold text-amber-700 border border-amber-300 bg-amber-50 rounded px-1 py-0.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            aria-label="Discount percent"
+                          />
+                        </label>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1753,9 +1813,11 @@ function OrderTakingScreen({
                           <input
                             type="number"
                             min="0"
+                            step="any"
                             value={ci.qty}
                             onChange={(e) => {
-                              const val = Number(e.target.value);
+                              const val =
+                                Number.parseFloat(e.target.value) || 0;
                               if (!e.target.value || val === 0) {
                                 dispatch({
                                   type: "REMOVE_FROM_CART",
@@ -3101,9 +3163,6 @@ function ManageScreen({
 function buildPrintHtml(orders: OfficeOrderDetail[]): string {
   const invoicesHtml = orders
     .map((order) => {
-      const subtotal = order.items.reduce((s, i) => s + i.total, 0);
-      const advancedTax = Math.round(subtotal * 0.005);
-      const grandTotal = subtotal + advancedTax;
       const hasBonus = order.items.some((i) => i.bonusQty > 0);
       const hasDiscount = order.items.some((i) => i.discountPercent > 0);
 
@@ -3120,6 +3179,13 @@ function buildPrintHtml(orders: OfficeOrderDetail[]): string {
               : idx % 2 === 0
                 ? "#fff"
                 : "#f9fafb";
+          const discountAmt =
+            item.discountPercent > 0
+              ? Math.round(
+                  (item.unitPrice * item.qty * item.discountPercent) / 100,
+                )
+              : 0;
+          const discountedTotal = item.total - discountAmt;
           return `
         <tr style="border-bottom:1px solid #f3f4f6;background:${rowBg};">
           <td style="padding:7px 10px;font-size:12px;color:#111827;font-weight:500;">${item.medicineName}${isReturned ? ' <span style="color:#dc2626;font-size:10px;">(Returned)</span>' : ""}</td>
@@ -3128,15 +3194,25 @@ function buildPrintHtml(orders: OfficeOrderDetail[]): string {
           <td style="padding:7px 10px;text-align:center;font-size:12px;font-weight:600;color:#374151;">${item.qty}</td>
           ${hasBonus ? `<td style="padding:7px 10px;text-align:center;font-size:12px;font-weight:600;color:#059669;">${item.bonusQty > 0 ? item.bonusQty : "—"}</td>` : ""}
           ${hasDiscount ? `<td style="padding:7px 10px;text-align:center;font-size:12px;font-weight:600;color:#d97706;">${item.discountPercent > 0 ? `${item.discountPercent}%` : "—"}</td>` : ""}
+          ${hasDiscount ? `<td style="padding:7px 10px;text-align:right;font-size:12px;font-weight:600;color:#dc2626;">${discountAmt > 0 ? `-Rs ${discountAmt.toLocaleString()}` : "—"}</td>` : ""}
           <td style="padding:7px 10px;text-align:right;font-size:12px;color:#374151;">Rs ${item.unitPrice.toLocaleString()}</td>
-          <td style="padding:7px 10px;text-align:right;font-size:12px;font-weight:bold;color:#1e40af;">Rs ${item.total.toLocaleString()}</td>
+          <td style="padding:7px 10px;text-align:right;font-size:12px;font-weight:bold;color:#1e40af;">Rs ${discountedTotal.toLocaleString()}</td>
         </tr>
       `;
         })
         .join("");
 
-      const extraColCount = (hasBonus ? 1 : 0) + (hasDiscount ? 1 : 0);
+      const extraColCount = (hasBonus ? 1 : 0) + (hasDiscount ? 2 : 0);
       const totalCols = 6 + extraColCount;
+      const subtotal = order.items.reduce((s, i) => {
+        const discountAmt =
+          i.discountPercent > 0
+            ? Math.round((i.unitPrice * i.qty * i.discountPercent) / 100)
+            : 0;
+        return s + (i.total - discountAmt);
+      }, 0);
+      const advancedTax = Math.round(subtotal * 0.005);
+      const grandTotal = subtotal + advancedTax;
 
       return `
     <div style="border:1px solid #e5e7eb;border-radius:10px;padding:28px;margin-bottom:32px;page-break-after:always;font-family:'Segoe UI',Arial,sans-serif;max-width:800px;margin-left:auto;margin-right:auto;">
@@ -3177,6 +3253,7 @@ function buildPrintHtml(orders: OfficeOrderDetail[]): string {
             <th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;">Qty</th>
             ${hasBonus ? '<th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;background:#065f46;">Bonus</th>' : ""}
             ${hasDiscount ? '<th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;background:#92400e;">Disc%</th>' : ""}
+            ${hasDiscount ? '<th style="padding:9px 10px;text-align:right;font-size:11px;font-weight:600;text-transform:uppercase;background:#7f1d1d;">Disc Amt</th>' : ""}
             <th style="padding:9px 10px;text-align:right;font-size:11px;font-weight:600;text-transform:uppercase;">Unit Price</th>
             <th style="padding:9px 10px;text-align:right;font-size:11px;font-weight:600;text-transform:uppercase;">Total</th>
           </tr>
@@ -3389,7 +3466,18 @@ function OrderDetailModal({
               const hasDiscount = order.items.some(
                 (i) => i.discountPercent > 0,
               );
-              const totalCols = 5 + (hasBonus ? 1 : 0) + (hasDiscount ? 1 : 0);
+              const totalCols = 5 + (hasBonus ? 1 : 0) + (hasDiscount ? 2 : 0);
+              const discountedSubtotal = order.items.reduce((s, i) => {
+                const discAmt =
+                  i.discountPercent > 0
+                    ? Math.round(
+                        (i.unitPrice * i.qty * i.discountPercent) / 100,
+                      )
+                    : 0;
+                return s + (i.total - discAmt);
+              }, 0);
+              const advTax = Math.round(discountedSubtotal * 0.005);
+              const grandTotal = discountedSubtotal + advTax;
               return (
                 <table className="w-full text-sm">
                   <thead>
@@ -3411,6 +3499,11 @@ function OrderDetailModal({
                       {hasDiscount && (
                         <th className="text-center px-3 py-2.5 text-xs font-semibold text-amber-700 uppercase">
                           Disc% | ڈسکاؤنٹ
+                        </th>
+                      )}
+                      {hasDiscount && (
+                        <th className="text-right px-3 py-2.5 text-xs font-semibold text-red-700 uppercase">
+                          Disc Amt
                         </th>
                       )}
                       <th className="text-right px-3 py-2.5 text-xs font-semibold text-blue-700 uppercase">
@@ -3435,6 +3528,16 @@ function OrderDetailModal({
                         : i % 2 === 0
                           ? "bg-white"
                           : "bg-gray-50/50";
+                      const discountAmt =
+                        item.discountPercent > 0
+                          ? Math.round(
+                              (item.unitPrice *
+                                item.qty *
+                                item.discountPercent) /
+                                100,
+                            )
+                          : 0;
+                      const discountedTotal = item.total - discountAmt;
                       return (
                         <tr
                           key={`${item.medicineName}-${i}`}
@@ -3466,11 +3569,18 @@ function OrderDetailModal({
                                 : "—"}
                             </td>
                           )}
+                          {hasDiscount && (
+                            <td className="px-3 py-2.5 text-right font-bold text-red-600">
+                              {discountAmt > 0
+                                ? `-${formatCurrency(discountAmt)}`
+                                : "—"}
+                            </td>
+                          )}
                           <td className="px-3 py-2.5 text-right text-gray-600">
                             {formatCurrency(item.unitPrice)}
                           </td>
                           <td className="px-3 py-2.5 text-right font-bold text-blue-700">
-                            {formatCurrency(item.total)}
+                            {formatCurrency(discountedTotal)}
                           </td>
                         </tr>
                       );
@@ -3485,9 +3595,7 @@ function OrderDetailModal({
                         Sub Total | ذیلی کل
                       </td>
                       <td className="px-3 py-2 text-right font-bold text-gray-700 text-sm">
-                        {formatCurrency(
-                          order.items.reduce((s, i) => s + i.total, 0),
-                        )}
+                        {formatCurrency(discountedSubtotal)}
                       </td>
                     </tr>
                     <tr className="bg-yellow-50 border-t border-yellow-200">
@@ -3498,12 +3606,7 @@ function OrderDetailModal({
                         Advanced Tax U/S 236-H @ 0.50%
                       </td>
                       <td className="px-3 py-2 text-right font-bold text-yellow-800 text-xs">
-                        {formatCurrency(
-                          Math.round(
-                            order.items.reduce((s, i) => s + i.total, 0) *
-                              0.005,
-                          ),
-                        )}
+                        {formatCurrency(advTax)}
                       </td>
                     </tr>
                     <tr className="border-t-2 border-blue-300 bg-blue-50">
@@ -3514,12 +3617,7 @@ function OrderDetailModal({
                         Grand Total | کل رقم
                       </td>
                       <td className="px-3 py-3 text-right font-bold text-xl text-blue-800">
-                        {formatCurrency(
-                          Math.round(
-                            order.items.reduce((s, i) => s + i.total, 0) *
-                              1.005,
-                          ),
-                        )}
+                        {formatCurrency(grandTotal)}
                       </td>
                     </tr>
                   </tfoot>
@@ -3708,8 +3806,28 @@ function OfficeDashboard() {
   const [updatingId, setUpdatingId] = useState<bigint | null>(null);
   const [isConfirmingAll, setIsConfirmingAll] = useState(false);
   const [activeView, setActiveView] = useState<
-    "orders" | "history" | "inventory" | "purchasing"
+    "orders" | "history" | "inventory" | "purchasing" | "add-order"
   >("orders");
+  const [allPharmacies, setAllPharmacies] = useState<
+    Array<{ id: bigint; name: string; location: string }>
+  >([]);
+  const [newOrderPharmacyId, setNewOrderPharmacyId] = useState<bigint | null>(
+    null,
+  );
+  const [newOrderLines, setNewOrderLines] = useState<
+    Array<{
+      _key: string;
+      medicineId: bigint;
+      medicineName: string;
+      qty: string;
+      bonus: string;
+      discount: string;
+    }>
+  >([]);
+  const [newOrderNotes, setNewOrderNotes] = useState("");
+  const [isSubmittingNewOrder, setIsSubmittingNewOrder] = useState(false);
+  const [newOrderStaffName, setNewOrderStaffName] = useState("");
+  const [newOrderStaffCode, setNewOrderStaffCode] = useState("");
   const [purchases, setPurchases] = useState<
     Array<{
       id: bigint;
@@ -3758,6 +3876,15 @@ function OfficeDashboard() {
 
       const pharmacyMap = new Map(rawPharmacies.map((p) => [String(p.id), p]));
       const medicineMap = new Map(rawMedicines.map((m) => [String(m.id), m]));
+
+      // Store pharmacies for add-order form
+      setAllPharmacies(
+        rawPharmacies.map((p) => ({
+          id: p.id,
+          name: p.name,
+          location: p.location,
+        })),
+      );
 
       // Map medicines for inventory view
       const mappedMedicines: Medicine[] = rawMedicines.map((m) => {
@@ -3958,6 +4085,40 @@ function OfficeDashboard() {
     }
   }
 
+  async function handleSubmitNewOrder() {
+    if (!actor || !newOrderPharmacyId || newOrderLines.length === 0) return;
+    setIsSubmittingNewOrder(true);
+    try {
+      const orderLines = newOrderLines.map((line) => ({
+        medicineId: line.medicineId,
+        quantity: BigInt(Math.round(Number.parseFloat(line.qty) || 1)),
+        bonusQty: BigInt(Math.round(Number.parseFloat(line.bonus) || 0)),
+        discountPercent: BigInt(
+          Math.round(Number.parseFloat(line.discount) || 0),
+        ),
+      }));
+      await actor.createOrder(
+        newOrderPharmacyId,
+        orderLines,
+        newOrderStaffName.trim(),
+        newOrderStaffCode.trim(),
+      );
+      toast.success("Order submit ho gaya! | Order submitted!");
+      setNewOrderPharmacyId(null);
+      setNewOrderLines([]);
+      setNewOrderStaffName("");
+      setNewOrderStaffCode("");
+      setNewOrderNotes("");
+      setActiveView("orders");
+      await loadAllData();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error: ${msg}`);
+    } finally {
+      setIsSubmittingNewOrder(false);
+    }
+  }
+
   const filtered = useMemo((): OfficeOrderDetail[] => {
     if (statusFilter === "all") return orders;
     return orders.filter((o) => o.status === statusFilter);
@@ -4005,7 +4166,7 @@ function OfficeDashboard() {
   ];
 
   return (
-    <div className="min-h-dvh bg-gray-50">
+    <div className="min-h-dvh bg-gray-50 flex flex-col">
       <Toaster richColors position="top-center" />
 
       {/* Backend error banner */}
@@ -4040,13 +4201,13 @@ function OfficeDashboard() {
 
       {/* Header */}
       <header
-        className="text-white px-6 py-4 shadow-lg"
+        className="text-white px-6 py-4 shadow-lg shrink-0"
         style={{
           background:
             "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
         }}
       >
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
               <Package size={22} />
@@ -4085,927 +4246,1242 @@ function OfficeDashboard() {
         </div>
       </header>
 
-      {/* View Tabs: Orders / History / Inventory / Purchasing */}
-      <div className="max-w-7xl mx-auto px-6 pt-5">
-        <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-xl p-1 w-fit shadow-sm flex-wrap">
-          <button
-            type="button"
-            onClick={() => setActiveView("orders")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
-              activeView === "orders"
-                ? "bg-blue-600 text-white shadow-sm"
-                : "text-gray-600 hover:bg-gray-100"
-            }`}
-          >
-            <Package size={15} />
-            Active Orders | فعال آرڈر
-            <span className="text-xs opacity-70">(48 hrs)</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveView("history")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
-              activeView === "history"
-                ? "bg-blue-600 text-white shadow-sm"
-                : "text-gray-600 hover:bg-gray-100"
-            }`}
-          >
-            <History size={15} />
-            History | تاریخ
-            <span className="text-xs opacity-70">(1 سال)</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveView("inventory")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
-              activeView === "inventory"
-                ? "bg-blue-600 text-white shadow-sm"
-                : "text-gray-600 hover:bg-gray-100"
-            }`}
-          >
-            <Warehouse size={15} />
-            Inventory | انوینٹری
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveView("purchasing")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
-              activeView === "purchasing"
-                ? "bg-blue-600 text-white shadow-sm"
-                : "text-gray-600 hover:bg-gray-100"
-            }`}
-          >
-            <ShoppingBag size={15} />
-            Purchasing | خریداری
-          </button>
-        </div>
-      </div>
-
-      <div className="max-w-7xl mx-auto px-6 py-5 space-y-6">
-        {activeView === "orders" && (
-          <>
-            {/* Stats Row */}
-            <div className="grid grid-cols-4 gap-4">
-              {[
-                {
-                  label: "Total Orders",
-                  urdu: "کل آرڈر",
-                  value: stats.total,
-                  color: "text-blue-700",
-                  bg: "bg-blue-50 border-blue-200",
-                },
-                {
-                  label: "Pending",
-                  urdu: "زیر التواء",
-                  value: stats.pending,
-                  color: "text-amber-700",
-                  bg: "bg-amber-50 border-amber-200",
-                },
-                {
-                  label: "Confirmed",
-                  urdu: "تصدیق شدہ",
-                  value: stats.confirmed,
-                  color: "text-indigo-700",
-                  bg: "bg-indigo-50 border-indigo-200",
-                },
-                {
-                  label: "Delivered",
-                  urdu: "تحویل شدہ",
-                  value: stats.delivered,
-                  color: "text-emerald-700",
-                  bg: "bg-emerald-50 border-emerald-200",
-                },
-              ].map((stat) => (
-                <div
-                  key={stat.label}
-                  className={`rounded-xl border p-5 ${stat.bg}`}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Sidebar */}
+        <aside className="w-56 bg-white border-r border-gray-200 flex flex-col py-4 shrink-0 overflow-y-auto">
+          <nav className="space-y-1 px-3">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-2 mb-2">
+              Orders | آرڈر
+            </p>
+            <button
+              type="button"
+              onClick={() => setActiveView("orders")}
+              className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "orders" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"}`}
+            >
+              <Package size={16} />
+              <span>Active Orders</span>
+              {stats.total > 0 && (
+                <span
+                  className={`ml-auto text-xs px-1.5 py-0.5 rounded-full font-semibold ${activeView === "orders" ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-500"}`}
                 >
-                  <div
-                    className={`text-3xl font-bold font-heading ${stat.color}`}
-                  >
-                    {isLoading ? (
-                      <Loader2 size={24} className="animate-spin" />
-                    ) : (
-                      stat.value
-                    )}
-                  </div>
-                  <div className="text-sm font-medium text-gray-700 mt-1">
-                    {stat.label}
-                  </div>
-                  <div className="text-xs text-gray-500">{stat.urdu}</div>
-                </div>
-              ))}
+                  {stats.total}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveView("history")}
+              className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "history" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"}`}
+            >
+              <History size={16} />
+              <span>History | تاریخ</span>
+            </button>
+            <div className="pt-3 border-t border-gray-100 mt-3">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-2 mb-2">
+                Management | انتظام
+              </p>
+              <button
+                type="button"
+                onClick={() => setActiveView("inventory")}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "inventory" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"}`}
+              >
+                <Warehouse size={16} />
+                <span>Inventory | انوینٹری</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveView("purchasing");
+                }}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "purchasing" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"}`}
+              >
+                <ShoppingBag size={16} />
+                <span>Purchasing | خریداری</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveView("add-order")}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "add-order" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"}`}
+              >
+                <Plus size={16} />
+                <span>Add Order | آرڈر شامل</span>
+              </button>
             </div>
+          </nav>
+        </aside>
 
-            {/* Toolbar: filter tabs + action buttons */}
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2 flex-wrap">
-                {filterTabs.map((tab) => (
-                  <button
-                    type="button"
-                    key={tab.key}
-                    onClick={() => setStatusFilter(tab.key)}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      statusFilter === tab.key
-                        ? "bg-blue-600 text-white shadow-sm"
-                        : "bg-white border border-gray-200 text-gray-600 hover:bg-gray-50"
-                    }`}
-                  >
-                    {tab.label} | {tab.urdu}
-                    {tab.key !== "all" && (
-                      <span
-                        className={`ml-2 text-xs px-1.5 py-0.5 rounded-full ${
+        {/* Main content */}
+        <main className="flex-1 overflow-y-auto">
+          <div className="px-6 py-5 space-y-6">
+            {activeView === "orders" && (
+              <>
+                {/* Stats Row */}
+                <div className="grid grid-cols-4 gap-4">
+                  {[
+                    {
+                      label: "Total Orders",
+                      urdu: "کل آرڈر",
+                      value: stats.total,
+                      color: "text-blue-700",
+                      bg: "bg-blue-50 border-blue-200",
+                    },
+                    {
+                      label: "Pending",
+                      urdu: "زیر التواء",
+                      value: stats.pending,
+                      color: "text-amber-700",
+                      bg: "bg-amber-50 border-amber-200",
+                    },
+                    {
+                      label: "Confirmed",
+                      urdu: "تصدیق شدہ",
+                      value: stats.confirmed,
+                      color: "text-indigo-700",
+                      bg: "bg-indigo-50 border-indigo-200",
+                    },
+                    {
+                      label: "Delivered",
+                      urdu: "تحویل شدہ",
+                      value: stats.delivered,
+                      color: "text-emerald-700",
+                      bg: "bg-emerald-50 border-emerald-200",
+                    },
+                  ].map((stat) => (
+                    <div
+                      key={stat.label}
+                      className={`rounded-xl border p-5 ${stat.bg}`}
+                    >
+                      <div
+                        className={`text-3xl font-bold font-heading ${stat.color}`}
+                      >
+                        {isLoading ? (
+                          <Loader2 size={24} className="animate-spin" />
+                        ) : (
+                          stat.value
+                        )}
+                      </div>
+                      <div className="text-sm font-medium text-gray-700 mt-1">
+                        {stat.label}
+                      </div>
+                      <div className="text-xs text-gray-500">{stat.urdu}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Toolbar: filter tabs + action buttons */}
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {filterTabs.map((tab) => (
+                      <button
+                        type="button"
+                        key={tab.key}
+                        onClick={() => setStatusFilter(tab.key)}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                           statusFilter === tab.key
-                            ? "bg-white/25 text-white"
-                            : "bg-gray-100 text-gray-500"
+                            ? "bg-blue-600 text-white shadow-sm"
+                            : "bg-white border border-gray-200 text-gray-600 hover:bg-gray-50"
                         }`}
                       >
-                        {tab.key === "pending"
-                          ? stats.pending
-                          : tab.key === "confirmed"
-                            ? stats.confirmed
-                            : stats.delivered}
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
-
-              <div className="ml-auto flex items-center gap-2">
-                {/* Confirm All */}
-                <button
-                  type="button"
-                  onClick={handleConfirmAll}
-                  disabled={isConfirmingAll || isLoading || stats.pending === 0}
-                  className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
-                >
-                  {isConfirmingAll ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <CheckCircle2 size={14} />
-                  )}
-                  Confirm All | سب تصدیق
-                  {stats.pending > 0 && (
-                    <span className="bg-white/25 text-white text-xs px-1.5 py-0.5 rounded-full">
-                      {stats.pending}
-                    </span>
-                  )}
-                </button>
-
-                {/* Print All */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const printWin = window.open("", "_blank");
-                    if (!printWin) return;
-                    const html = buildPrintHtml(filteredWithLines);
-                    printWin.document.write(html);
-                    printWin.document.close();
-                    printWin.print();
-                  }}
-                  disabled={filtered.length === 0}
-                  className="flex items-center gap-2 bg-gray-600 hover:bg-gray-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
-                >
-                  <Printer size={14} />
-                  Print All | سب پرنٹ
-                </button>
-              </div>
-            </div>
-
-            {/* Orders Table */}
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-              {isLoading ? (
-                <div className="flex items-center justify-center py-20">
-                  <Loader2 className="animate-spin text-blue-500" size={32} />
-                </div>
-              ) : filtered.length === 0 ? (
-                <div className="text-center py-20 text-gray-400">
-                  <Package size={40} className="mx-auto mb-3 opacity-50" />
-                  <p className="font-medium">
-                    No orders found | کوئی آرڈر نہیں ملا
-                  </p>
-                </div>
-              ) : (
-                <table className="w-full">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-200">
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Order ID
-                      </th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Pharmacy | فارمیسی
-                      </th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Staff Name | نام
-                      </th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Date | تاریخ
-                      </th>
-                      <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Items
-                      </th>
-                      <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Amount | رقم
-                      </th>
-                      <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Status | حیثیت
-                      </th>
-                      <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Actions | اقدامات
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {filtered.map((order, idx) => {
-                      return (
-                        <tr
-                          key={String(order.backendId)}
-                          className={`cursor-pointer hover:bg-blue-50/60 transition-colors ${idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"}`}
-                          onClick={() => setSelectedOrder(order)}
-                          onKeyDown={(e) =>
-                            e.key === "Enter" && setSelectedOrder(order)
-                          }
-                          tabIndex={0}
-                        >
-                          <td className="px-4 py-3 text-sm font-mono font-semibold text-blue-700">
-                            {order.orderId}
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="text-sm font-semibold text-gray-900">
-                              {order.pharmacyName}
-                            </div>
-                            {order.pharmacyArea && (
-                              <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
-                                <MapPin size={10} />
-                                {order.pharmacyArea}
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="text-sm font-semibold text-gray-900">
-                              {order.staffName || "—"}
-                            </div>
-                            {order.staffCode && (
-                              <div className="text-xs text-gray-400 font-mono">
-                                {order.staffCode}
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-600">
-                            {formatDate(order.date)}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-center text-gray-700 font-medium">
-                            {order.itemCount}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-right font-bold text-gray-900">
-                            {formatCurrency(order.totalAmount)}
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <StatusBadge status={order.status} />
-                            {(order.returnItems ?? []).length > 0 && (
-                              <div className="mt-1">
-                                <span className="inline-flex items-center gap-1 text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-semibold">
-                                  ↩ {order.returnItems!.length} returns
-                                </span>
-                              </div>
-                            )}
-                          </td>
-                          <td
-                            className="px-4 py-3"
-                            onClick={(e) => e.stopPropagation()}
-                            onKeyDown={(e) => e.stopPropagation()}
+                        {tab.label} | {tab.urdu}
+                        {tab.key !== "all" && (
+                          <span
+                            className={`ml-2 text-xs px-1.5 py-0.5 rounded-full ${
+                              statusFilter === tab.key
+                                ? "bg-white/25 text-white"
+                                : "bg-gray-100 text-gray-500"
+                            }`}
                           >
-                            <div className="flex items-center justify-center gap-1.5">
-                              {order.status === "pending" && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    handleUpdateStatus(order, "confirmed")
-                                  }
-                                  disabled={updatingId === order.backendId}
-                                  className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors disabled:opacity-50"
-                                >
-                                  {updatingId === order.backendId ? (
-                                    <Loader2
-                                      size={10}
-                                      className="animate-spin"
-                                    />
-                                  ) : (
-                                    <CheckCircle2 size={11} />
-                                  )}
-                                  Confirm
-                                </button>
-                              )}
-                              {order.status === "confirmed" && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    handleUpdateStatus(order, "delivered")
-                                  }
-                                  disabled={updatingId === order.backendId}
-                                  className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors disabled:opacity-50"
-                                >
-                                  {updatingId === order.backendId ? (
-                                    <Loader2
-                                      size={10}
-                                      className="animate-spin"
-                                    />
-                                  ) : (
-                                    <Truck size={11} />
-                                  )}
-                                  Mark Delivered
-                                </button>
-                              )}
-                              {order.status === "delivered" && (
-                                <span className="text-xs text-emerald-600 font-medium flex items-center gap-1">
-                                  <CheckCircle2 size={12} />
-                                  Delivered
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </>
-        )}
-
-        {activeView === "history" && (
-          <>
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-xl font-bold text-gray-900 font-heading">
-                  History | تاریخ
-                </h2>
-                <p className="text-sm text-gray-500 mt-0.5">
-                  Delivered orders older than 48 hours · up to 1 year
-                </p>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1.5 rounded-lg font-medium">
-                  {historyOrders.length} orders
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const printWin = window.open("", "_blank");
-                    if (!printWin) return;
-                    const html = buildPrintHtml(filteredHistory);
-                    printWin.document.write(html);
-                    printWin.document.close();
-                    printWin.print();
-                  }}
-                  disabled={filteredHistory.length === 0}
-                  className="flex items-center gap-2 bg-gray-600 hover:bg-gray-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
-                >
-                  <Printer size={14} />
-                  Print History | تاریخ پرنٹ
-                </button>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-              {isLoading ? (
-                <div className="flex items-center justify-center py-20">
-                  <Loader2 className="animate-spin text-blue-500" size={32} />
-                </div>
-              ) : filteredHistory.length === 0 ? (
-                <div className="text-center py-20 text-gray-400">
-                  <History size={40} className="mx-auto mb-3 opacity-50" />
-                  <p className="font-medium">
-                    No history orders | کوئی تاریخ نہیں
-                  </p>
-                  <p className="text-xs mt-1">
-                    Delivered orders older than 48 hours will appear here
-                  </p>
-                </div>
-              ) : (
-                <table className="w-full">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-200">
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Invoice # | انوائس
-                      </th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Pharmacy | فارمیسی
-                      </th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Staff Name | نام
-                      </th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Date | تاریخ
-                      </th>
-                      <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Items
-                      </th>
-                      <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Amount | رقم
-                      </th>
-                      <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Status | حیثیت
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {filteredHistory.map((order, idx) => (
-                      <tr
-                        key={String(order.backendId)}
-                        className={`cursor-pointer hover:bg-blue-50/60 transition-colors ${idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"}`}
-                        onClick={() => setSelectedOrder(order)}
-                        onKeyDown={(e) =>
-                          e.key === "Enter" && setSelectedOrder(order)
-                        }
-                        tabIndex={0}
-                      >
-                        <td className="px-4 py-3">
-                          <span className="text-sm font-mono font-bold text-blue-700">
-                            {order.orderId}
+                            {tab.key === "pending"
+                              ? stats.pending
+                              : tab.key === "confirmed"
+                                ? stats.confirmed
+                                : stats.delivered}
                           </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="text-sm font-semibold text-gray-900">
-                            {order.pharmacyName}
-                          </div>
-                          {order.pharmacyArea && (
-                            <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
-                              <MapPin size={10} />
-                              {order.pharmacyArea}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="text-sm font-semibold text-gray-900">
-                            {order.staffName || "—"}
-                          </div>
-                          {order.staffCode && (
-                            <div className="text-xs text-gray-400 font-mono">
-                              {order.staffCode}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-600">
-                          {formatDate(order.date)}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-center text-gray-700 font-medium">
-                          {order.itemCount}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right font-bold text-gray-900">
-                          {formatCurrency(order.totalAmount)}
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <StatusBadge status={order.status} />
-                        </td>
-                      </tr>
+                        )}
+                      </button>
                     ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </>
-        )}
+                  </div>
 
-        {activeView === "inventory" && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-xl font-bold text-gray-900 font-heading">
-                  Inventory | انوینٹری
-                </h2>
-                <p className="text-sm text-gray-500 mt-0.5">
-                  Medicines grouped by company · stock qty editable
-                </p>
-              </div>
-              <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1.5 rounded-lg font-medium">
-                {allMedicines.length} medicines · {medicinesByCompany.length}{" "}
-                companies
-              </span>
-            </div>
+                  <div className="ml-auto flex items-center gap-2">
+                    {/* Confirm All */}
+                    <button
+                      type="button"
+                      onClick={handleConfirmAll}
+                      disabled={
+                        isConfirmingAll || isLoading || stats.pending === 0
+                      }
+                      className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                    >
+                      {isConfirmingAll ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : (
+                        <CheckCircle2 size={14} />
+                      )}
+                      Confirm All | سب تصدیق
+                      {stats.pending > 0 && (
+                        <span className="bg-white/25 text-white text-xs px-1.5 py-0.5 rounded-full">
+                          {stats.pending}
+                        </span>
+                      )}
+                    </button>
 
-            {isLoading ? (
-              <div className="flex items-center justify-center py-20">
-                <Loader2 className="animate-spin text-blue-500" size={32} />
-              </div>
-            ) : medicinesByCompany.length === 0 ? (
-              <div className="text-center py-20 text-gray-400">
-                <PillIcon size={40} className="mx-auto mb-3 opacity-50" />
-                <p className="font-medium">
-                  No medicines found | کوئی دوائی نہیں ملی
-                </p>
-              </div>
-            ) : (
-              medicinesByCompany.map(([company, meds]) => (
-                <div
-                  key={company}
-                  className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden"
-                >
-                  {/* Company header block */}
-                  <div className="flex items-center gap-3 px-5 py-3.5 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
-                    <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
-                      <Building2 size={16} className="text-white" />
+                    {/* Print All */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const printWin = window.open("", "_blank");
+                        if (!printWin) return;
+                        const html = buildPrintHtml(filteredWithLines);
+                        printWin.document.write(html);
+                        printWin.document.close();
+                        printWin.print();
+                      }}
+                      disabled={filtered.length === 0}
+                      className="flex items-center gap-2 bg-gray-600 hover:bg-gray-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                    >
+                      <Printer size={14} />
+                      Print All | سب پرنٹ
+                    </button>
+                  </div>
+                </div>
+
+                {/* Orders Table */}
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                  {isLoading ? (
+                    <div className="flex items-center justify-center py-20">
+                      <Loader2
+                        className="animate-spin text-blue-500"
+                        size={32}
+                      />
                     </div>
-                    <div>
-                      <h3 className="font-bold text-gray-900 font-heading">
-                        {company}
-                      </h3>
-                      <p className="text-xs text-gray-500">
-                        {meds.length} medicine{meds.length !== 1 ? "s" : ""}
+                  ) : filtered.length === 0 ? (
+                    <div className="text-center py-20 text-gray-400">
+                      <Package size={40} className="mx-auto mb-3 opacity-50" />
+                      <p className="font-medium">
+                        No orders found | کوئی آرڈر نہیں ملا
                       </p>
                     </div>
+                  ) : (
+                    <table className="w-full">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-200">
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Order ID
+                          </th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Pharmacy | فارمیسی
+                          </th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Staff Name | نام
+                          </th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Date | تاریخ
+                          </th>
+                          <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Items
+                          </th>
+                          <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Amount | رقم
+                          </th>
+                          <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Status | حیثیت
+                          </th>
+                          <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Actions | اقدامات
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {filtered.map((order, idx) => {
+                          return (
+                            <tr
+                              key={String(order.backendId)}
+                              className={`cursor-pointer hover:bg-blue-50/60 transition-colors ${idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"}`}
+                              onClick={() => setSelectedOrder(order)}
+                              onKeyDown={(e) =>
+                                e.key === "Enter" && setSelectedOrder(order)
+                              }
+                              tabIndex={0}
+                            >
+                              <td className="px-4 py-3 text-sm font-mono font-semibold text-blue-700">
+                                {order.orderId}
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="text-sm font-semibold text-gray-900">
+                                  {order.pharmacyName}
+                                </div>
+                                {order.pharmacyArea && (
+                                  <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
+                                    <MapPin size={10} />
+                                    {order.pharmacyArea}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="text-sm font-semibold text-gray-900">
+                                  {order.staffName || "—"}
+                                </div>
+                                {order.staffCode && (
+                                  <div className="text-xs text-gray-400 font-mono">
+                                    {order.staffCode}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-600">
+                                {formatDate(order.date)}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-center text-gray-700 font-medium">
+                                {order.itemCount}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-right font-bold text-gray-900">
+                                {formatCurrency(order.totalAmount)}
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <StatusBadge status={order.status} />
+                                {(order.returnItems ?? []).length > 0 && (
+                                  <div className="mt-1">
+                                    <span className="inline-flex items-center gap-1 text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-semibold">
+                                      ↩ {order.returnItems!.length} returns
+                                    </span>
+                                  </div>
+                                )}
+                              </td>
+                              <td
+                                className="px-4 py-3"
+                                onClick={(e) => e.stopPropagation()}
+                                onKeyDown={(e) => e.stopPropagation()}
+                              >
+                                <div className="flex items-center justify-center gap-1.5">
+                                  {order.status === "pending" && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleUpdateStatus(order, "confirmed")
+                                      }
+                                      disabled={updatingId === order.backendId}
+                                      className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                                    >
+                                      {updatingId === order.backendId ? (
+                                        <Loader2
+                                          size={10}
+                                          className="animate-spin"
+                                        />
+                                      ) : (
+                                        <CheckCircle2 size={11} />
+                                      )}
+                                      Confirm
+                                    </button>
+                                  )}
+                                  {order.status === "confirmed" && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleUpdateStatus(order, "delivered")
+                                      }
+                                      disabled={updatingId === order.backendId}
+                                      className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                                    >
+                                      {updatingId === order.backendId ? (
+                                        <Loader2
+                                          size={10}
+                                          className="animate-spin"
+                                        />
+                                      ) : (
+                                        <Truck size={11} />
+                                      )}
+                                      Mark Delivered
+                                    </button>
+                                  )}
+                                  {order.status === "delivered" && (
+                                    <span className="text-xs text-emerald-600 font-medium flex items-center gap-1">
+                                      <CheckCircle2 size={12} />
+                                      Delivered
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </>
+            )}
+
+            {activeView === "history" && (
+              <>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-xl font-bold text-gray-900 font-heading">
+                      History | تاریخ
+                    </h2>
+                    <p className="text-sm text-gray-500 mt-0.5">
+                      Delivered orders older than 48 hours · up to 1 year
+                    </p>
                   </div>
-                  {/* Medicines table */}
-                  <table className="w-full">
-                    <thead>
-                      <tr className="bg-gray-50 border-b border-gray-200">
-                        <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                          Medicine Name
-                        </th>
-                        <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                          Strength
-                        </th>
-                        <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                          Pack Size
-                        </th>
-                        <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                          Price
-                        </th>
-                        <th className="text-center px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                          Stock Qty | اسٹاک
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {meds.map((med) => {
-                        const stockKey = `medorder_stock_${med.backendId}`;
-                        const storedVal = localStorage.getItem(stockKey);
-                        const stockVal =
-                          storedVal !== null && storedVal !== ""
-                            ? Number(storedVal)
-                            : 0;
-                        return (
-                          <tr key={med.id} className="hover:bg-gray-50/50">
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1.5 rounded-lg font-medium">
+                      {historyOrders.length} orders
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const printWin = window.open("", "_blank");
+                        if (!printWin) return;
+                        const html = buildPrintHtml(filteredHistory);
+                        printWin.document.write(html);
+                        printWin.document.close();
+                        printWin.print();
+                      }}
+                      disabled={filteredHistory.length === 0}
+                      className="flex items-center gap-2 bg-gray-600 hover:bg-gray-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                    >
+                      <Printer size={14} />
+                      Print History | تاریخ پرنٹ
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                  {isLoading ? (
+                    <div className="flex items-center justify-center py-20">
+                      <Loader2
+                        className="animate-spin text-blue-500"
+                        size={32}
+                      />
+                    </div>
+                  ) : filteredHistory.length === 0 ? (
+                    <div className="text-center py-20 text-gray-400">
+                      <History size={40} className="mx-auto mb-3 opacity-50" />
+                      <p className="font-medium">
+                        No history orders | کوئی تاریخ نہیں
+                      </p>
+                      <p className="text-xs mt-1">
+                        Delivered orders older than 48 hours will appear here
+                      </p>
+                    </div>
+                  ) : (
+                    <table className="w-full">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-200">
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Invoice # | انوائس
+                          </th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Pharmacy | فارمیسی
+                          </th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Staff Name | نام
+                          </th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Date | تاریخ
+                          </th>
+                          <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Items
+                          </th>
+                          <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Amount | رقم
+                          </th>
+                          <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Status | حیثیت
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {filteredHistory.map((order, idx) => (
+                          <tr
+                            key={String(order.backendId)}
+                            className={`cursor-pointer hover:bg-blue-50/60 transition-colors ${idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"}`}
+                            onClick={() => setSelectedOrder(order)}
+                            onKeyDown={(e) =>
+                              e.key === "Enter" && setSelectedOrder(order)
+                            }
+                            tabIndex={0}
+                          >
                             <td className="px-4 py-3">
-                              <span className="font-semibold text-sm text-gray-900">
-                                {med.name}
-                              </span>
-                              <span className="ml-2 text-xs capitalize text-gray-400">
-                                {med.category}
+                              <span className="text-sm font-mono font-bold text-blue-700">
+                                {order.orderId}
                               </span>
                             </td>
-                            <td className="px-4 py-3 text-sm text-gray-600">
-                              {med.strength || "—"}
+                            <td className="px-4 py-3">
+                              <div className="text-sm font-semibold text-gray-900">
+                                {order.pharmacyName}
+                              </div>
+                              {order.pharmacyArea && (
+                                <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
+                                  <MapPin size={10} />
+                                  {order.pharmacyArea}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="text-sm font-semibold text-gray-900">
+                                {order.staffName || "—"}
+                              </div>
+                              {order.staffCode && (
+                                <div className="text-xs text-gray-400 font-mono">
+                                  {order.staffCode}
+                                </div>
+                              )}
                             </td>
                             <td className="px-4 py-3 text-sm text-gray-600">
-                              {med.packSize || "—"}
+                              {formatDate(order.date)}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-center text-gray-700 font-medium">
+                              {order.itemCount}
                             </td>
                             <td className="px-4 py-3 text-sm text-right font-bold text-gray-900">
-                              {formatCurrency(med.price)}
+                              {formatCurrency(order.totalAmount)}
                             </td>
                             <td className="px-4 py-3 text-center">
+                              <StatusBadge status={order.status} />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </>
+            )}
+
+            {activeView === "inventory" && (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-xl font-bold text-gray-900 font-heading">
+                      Inventory | انوینٹری
+                    </h2>
+                    <p className="text-sm text-gray-500 mt-0.5">
+                      Medicines grouped by company · stock qty editable
+                    </p>
+                  </div>
+                  <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1.5 rounded-lg font-medium">
+                    {allMedicines.length} medicines ·{" "}
+                    {medicinesByCompany.length} companies
+                  </span>
+                </div>
+
+                {isLoading ? (
+                  <div className="flex items-center justify-center py-20">
+                    <Loader2 className="animate-spin text-blue-500" size={32} />
+                  </div>
+                ) : medicinesByCompany.length === 0 ? (
+                  <div className="text-center py-20 text-gray-400">
+                    <PillIcon size={40} className="mx-auto mb-3 opacity-50" />
+                    <p className="font-medium">
+                      No medicines found | کوئی دوائی نہیں ملی
+                    </p>
+                  </div>
+                ) : (
+                  medicinesByCompany.map(([company, meds]) => (
+                    <div
+                      key={company}
+                      className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden"
+                    >
+                      {/* Company header block */}
+                      <div className="flex items-center gap-3 px-5 py-3.5 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
+                        <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
+                          <Building2 size={16} className="text-white" />
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-gray-900 font-heading">
+                            {company}
+                          </h3>
+                          <p className="text-xs text-gray-500">
+                            {meds.length} medicine{meds.length !== 1 ? "s" : ""}
+                          </p>
+                        </div>
+                      </div>
+                      {/* Medicines table */}
+                      <table className="w-full">
+                        <thead>
+                          <tr className="bg-gray-50 border-b border-gray-200">
+                            <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                              Medicine Name
+                            </th>
+                            <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                              Strength
+                            </th>
+                            <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                              Pack Size
+                            </th>
+                            <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                              Price
+                            </th>
+                            <th className="text-center px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                              Stock Qty | اسٹاک
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {meds.map((med) => {
+                            const stockKey = `medorder_stock_${med.backendId}`;
+                            const storedVal = localStorage.getItem(stockKey);
+                            const stockVal =
+                              storedVal !== null && storedVal !== ""
+                                ? Number(storedVal)
+                                : 0;
+                            return (
+                              <tr key={med.id} className="hover:bg-gray-50/50">
+                                <td className="px-4 py-3">
+                                  <span className="font-semibold text-sm text-gray-900">
+                                    {med.name}
+                                  </span>
+                                  <span className="ml-2 text-xs capitalize text-gray-400">
+                                    {med.category}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-sm text-gray-600">
+                                  {med.strength || "—"}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-gray-600">
+                                  {med.packSize || "—"}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-right font-bold text-gray-900">
+                                  {formatCurrency(med.price)}
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    defaultValue={stockVal}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      localStorage.setItem(stockKey, val);
+                                    }}
+                                    className="w-20 text-center text-sm font-bold text-gray-900 border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                    aria-label={`Stock quantity for ${med.name}`}
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {activeView === "purchasing" && (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-xl font-bold text-gray-900 font-heading">
+                      Purchasing | خریداری
+                    </h2>
+                    <p className="text-sm text-gray-500 mt-0.5">
+                      New product purchase records · نئی خریداری ریکارڈ
+                    </p>
+                  </div>
+                  <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1.5 rounded-lg font-medium">
+                    {purchases.length} records
+                  </span>
+                </div>
+
+                {/* Add Purchase Form */}
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+                  <h3 className="font-bold text-gray-900 font-heading mb-4 flex items-center gap-2">
+                    <Plus size={16} className="text-blue-600" />
+                    Add New Purchase Record | نئی خریداری شامل کریں
+                  </h3>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    <div>
+                      <label
+                        htmlFor="pur-product-name"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Product Name | پروڈکٹ نام *
+                      </label>
+                      <input
+                        id="pur-product-name"
+                        type="text"
+                        value={purchaseProductName}
+                        onChange={(e) => setPurchaseProductName(e.target.value)}
+                        placeholder="e.g. Panadol"
+                        disabled={isAddingPurchase}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="pur-generic-name"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Generic Name | عام نام
+                      </label>
+                      <input
+                        id="pur-generic-name"
+                        type="text"
+                        value={purchaseGenericName}
+                        onChange={(e) => setPurchaseGenericName(e.target.value)}
+                        placeholder="e.g. Paracetamol"
+                        disabled={isAddingPurchase}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="pur-batch-no"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Batch # | بیچ نمبر *
+                      </label>
+                      <input
+                        id="pur-batch-no"
+                        type="text"
+                        value={purchaseBatchNo}
+                        onChange={(e) => setPurchaseBatchNo(e.target.value)}
+                        placeholder="e.g. BN-2024-001"
+                        disabled={isAddingPurchase}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="pur-quantity"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Quantity | مقدار *
+                      </label>
+                      <input
+                        id="pur-quantity"
+                        type="number"
+                        min="1"
+                        value={purchaseQuantity}
+                        onChange={(e) => setPurchaseQuantity(e.target.value)}
+                        placeholder="e.g. 500"
+                        disabled={isAddingPurchase}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="pur-price"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Price (Rs) | قیمت *
+                      </label>
+                      <input
+                        id="pur-price"
+                        type="number"
+                        min="1"
+                        value={purchasePrice}
+                        onChange={(e) => setPurchasePrice(e.target.value)}
+                        placeholder="e.g. 15000"
+                        disabled={isAddingPurchase}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="pur-pack-size"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Pack Size | پیک سائز
+                      </label>
+                      <input
+                        id="pur-pack-size"
+                        type="text"
+                        value={purchasePackSize}
+                        onChange={(e) => setPurchasePackSize(e.target.value)}
+                        placeholder="e.g. Pack of 10"
+                        disabled={isAddingPurchase}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label
+                        htmlFor="pur-company-name"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Company Name | کمپنی نام *
+                      </label>
+                      <input
+                        id="pur-company-name"
+                        type="text"
+                        value={purchaseCompanyName}
+                        onChange={(e) => setPurchaseCompanyName(e.target.value)}
+                        placeholder="e.g. GlaxoSmithKline"
+                        disabled={isAddingPurchase}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
+                      />
+                    </div>
+                    <div className="flex items-end">
+                      <button
+                        type="button"
+                        onClick={handleAddPurchase}
+                        disabled={isAddingPurchase}
+                        className="w-full h-10 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold text-sm rounded-lg transition-colors"
+                      >
+                        {isAddingPurchase ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <Plus size={14} />
+                        )}
+                        {isAddingPurchase
+                          ? "Adding..."
+                          : "Add Record | شامل کریں"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Purchases Table */}
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                  {isLoadingPurchases ? (
+                    <div className="flex items-center justify-center py-20">
+                      <Loader2
+                        className="animate-spin text-blue-500"
+                        size={32}
+                      />
+                    </div>
+                  ) : purchases.length === 0 ? (
+                    <div className="text-center py-20 text-gray-400">
+                      <ShoppingBag
+                        size={40}
+                        className="mx-auto mb-3 opacity-50"
+                      />
+                      <p className="font-medium">
+                        No purchase records yet | کوئی خریداری ریکارڈ نہیں
+                      </p>
+                      <p className="text-xs mt-1">
+                        Use the form above to add your first purchase record
+                      </p>
+                    </div>
+                  ) : (
+                    <table className="w-full">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-200">
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Product Name | پروڈکٹ
+                          </th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Generic Name | عام نام
+                          </th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Batch # | بیچ
+                          </th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Company | کمپنی
+                          </th>
+                          <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Qty | مقدار
+                          </th>
+                          <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Price (Rs) | قیمت
+                          </th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Pack Size | پیک
+                          </th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Date | تاریخ
+                          </th>
+                          <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Action
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {purchases.map((purchase, idx) => {
+                          const date = new Date(
+                            Number(purchase.timestamp / BigInt(1_000_000)),
+                          )
+                            .toISOString()
+                            .split("T")[0];
+                          return (
+                            <tr
+                              key={String(purchase.id)}
+                              className={
+                                idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"
+                              }
+                            >
+                              <td className="px-4 py-3">
+                                <div className="font-semibold text-sm text-gray-900">
+                                  {purchase.productName}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-600">
+                                {purchase.genericName || "—"}
+                              </td>
+                              <td className="px-4 py-3 text-sm font-mono text-gray-700">
+                                {purchase.batchNo}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-700">
+                                {purchase.companyName}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-center font-bold text-gray-900">
+                                {String(purchase.quantity)}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-right font-bold text-blue-700">
+                                {formatCurrency(Number(purchase.price))}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-600">
+                                {purchase.packSize || "—"}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-500">
+                                {formatDate(date)}
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                {confirmDeletePurchaseId === purchase.id ? (
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleDeletePurchase(purchase.id)
+                                      }
+                                      disabled={
+                                        deletingPurchaseId === purchase.id
+                                      }
+                                      className="flex items-center gap-1 bg-red-500 hover:bg-red-600 text-white text-xs px-2 py-1 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                                    >
+                                      {deletingPurchaseId === purchase.id ? (
+                                        <Loader2
+                                          size={10}
+                                          className="animate-spin"
+                                        />
+                                      ) : null}
+                                      Yes
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setConfirmDeletePurchaseId(null)
+                                      }
+                                      className="text-xs px-2 py-1 rounded-lg border border-gray-300 font-semibold hover:bg-gray-50 transition-colors"
+                                      disabled={
+                                        deletingPurchaseId === purchase.id
+                                      }
+                                    >
+                                      No
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setConfirmDeletePurchaseId(purchase.id)
+                                    }
+                                    className="flex items-center gap-1 text-red-500 hover:text-red-700 hover:bg-red-50 text-xs px-2 py-1 rounded-lg transition-colors mx-auto"
+                                    disabled={
+                                      deletingPurchaseId === purchase.id
+                                    }
+                                    aria-label={`Delete purchase ${purchase.productName}`}
+                                  >
+                                    <Trash2 size={12} />
+                                    Delete
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {activeView === "add-order" && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900 font-heading">
+                    Add New Order | نیا آرڈر شامل کریں
+                  </h2>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    Office se naya order banayein | آفس سے آرڈر بنائیں
+                  </p>
+                </div>
+
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-5">
+                  {/* Staff info */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label
+                        htmlFor="new-order-staff-name"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Staff Name | نام
+                      </label>
+                      <input
+                        id="new-order-staff-name"
+                        type="text"
+                        value={newOrderStaffName}
+                        onChange={(e) => setNewOrderStaffName(e.target.value)}
+                        placeholder="e.g. Ahmed Ali"
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="new-order-staff-code"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Staff Code | کوڈ
+                      </label>
+                      <input
+                        id="new-order-staff-code"
+                        type="text"
+                        value={newOrderStaffCode}
+                        onChange={(e) => setNewOrderStaffCode(e.target.value)}
+                        placeholder="e.g. SA-001"
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Pharmacy select */}
+                  <div>
+                    <label
+                      htmlFor="new-order-pharmacy"
+                      className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                    >
+                      Pharmacy | فارمیسی *
+                    </label>
+                    <select
+                      id="new-order-pharmacy"
+                      value={
+                        newOrderPharmacyId ? String(newOrderPharmacyId) : ""
+                      }
+                      onChange={(e) =>
+                        setNewOrderPharmacyId(
+                          e.target.value ? BigInt(e.target.value) : null,
+                        )
+                      }
+                      className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">
+                        Select pharmacy... | فارمیسی منتخب کریں
+                      </option>
+                      {allPharmacies.map((p) => (
+                        <option key={String(p.id)} value={String(p.id)}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Medicine rows */}
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                        Order Items | اشیاء *
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setNewOrderLines((prev) => [
+                            ...prev,
+                            {
+                              _key: `line-${Date.now()}-${Math.random()}`,
+                              medicineId:
+                                allMedicines[0]?.backendId ?? BigInt(0),
+                              medicineName: allMedicines[0]?.name ?? "",
+                              qty: "1",
+                              bonus: "0",
+                              discount: "0",
+                            },
+                          ])
+                        }
+                        disabled={allMedicines.length === 0}
+                        className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors"
+                      >
+                        <Plus size={13} />
+                        Add Item | شامل کریں
+                      </button>
+                    </div>
+
+                    {newOrderLines.length === 0 ? (
+                      <div className="text-center py-8 text-gray-400 text-sm border-2 border-dashed border-gray-200 rounded-xl">
+                        Add items using the button above | اوپر بٹن سے اشیاء
+                        شامل کریں
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-12 gap-2 px-1 text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                          <div className="col-span-5">Medicine</div>
+                          <div className="col-span-2 text-center">Qty</div>
+                          <div className="col-span-2 text-center">Bonus</div>
+                          <div className="col-span-2 text-center">Disc%</div>
+                          <div className="col-span-1" />
+                        </div>
+                        {newOrderLines.map((line) => (
+                          <div
+                            key={line._key}
+                            className="grid grid-cols-12 gap-2 items-center"
+                          >
+                            <div className="col-span-5">
+                              <select
+                                value={String(line.medicineId)}
+                                onChange={(e) => {
+                                  const med = allMedicines.find(
+                                    (m) =>
+                                      String(m.backendId) === e.target.value,
+                                  );
+                                  if (med) {
+                                    setNewOrderLines((prev) =>
+                                      prev.map((l) =>
+                                        l._key === line._key
+                                          ? {
+                                              ...l,
+                                              medicineId: med.backendId,
+                                              medicineName: med.name,
+                                            }
+                                          : l,
+                                      ),
+                                    );
+                                  }
+                                }}
+                                className="w-full h-9 text-sm border border-gray-300 rounded-lg px-2 bg-white text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              >
+                                {allMedicines.map((m) => (
+                                  <option
+                                    key={String(m.backendId)}
+                                    value={String(m.backendId)}
+                                  >
+                                    {m.name}
+                                    {m.strength ? ` (${m.strength})` : ""}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="col-span-2">
                               <input
                                 type="number"
                                 min="0"
-                                defaultValue={stockVal}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  localStorage.setItem(stockKey, val);
-                                }}
-                                className="w-20 text-center text-sm font-bold text-gray-900 border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                aria-label={`Stock quantity for ${med.name}`}
+                                step="any"
+                                placeholder="Qty"
+                                value={line.qty}
+                                onChange={(e) =>
+                                  setNewOrderLines((prev) =>
+                                    prev.map((l) =>
+                                      l._key === line._key
+                                        ? { ...l, qty: e.target.value }
+                                        : l,
+                                    ),
+                                  )
+                                }
+                                className="w-full h-9 border border-gray-300 rounded-lg px-2 text-sm text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
-        {activeView === "purchasing" && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-xl font-bold text-gray-900 font-heading">
-                  Purchasing | خریداری
-                </h2>
-                <p className="text-sm text-gray-500 mt-0.5">
-                  New product purchase records · نئی خریداری ریکارڈ
-                </p>
-              </div>
-              <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1.5 rounded-lg font-medium">
-                {purchases.length} records
-              </span>
-            </div>
-
-            {/* Add Purchase Form */}
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-              <h3 className="font-bold text-gray-900 font-heading mb-4 flex items-center gap-2">
-                <Plus size={16} className="text-blue-600" />
-                Add New Purchase Record | نئی خریداری شامل کریں
-              </h3>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                <div>
-                  <label
-                    htmlFor="pur-product-name"
-                    className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
-                  >
-                    Product Name | پروڈکٹ نام *
-                  </label>
-                  <input
-                    id="pur-product-name"
-                    type="text"
-                    value={purchaseProductName}
-                    onChange={(e) => setPurchaseProductName(e.target.value)}
-                    placeholder="e.g. Panadol"
-                    disabled={isAddingPurchase}
-                    className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="pur-generic-name"
-                    className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
-                  >
-                    Generic Name | عام نام
-                  </label>
-                  <input
-                    id="pur-generic-name"
-                    type="text"
-                    value={purchaseGenericName}
-                    onChange={(e) => setPurchaseGenericName(e.target.value)}
-                    placeholder="e.g. Paracetamol"
-                    disabled={isAddingPurchase}
-                    className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="pur-batch-no"
-                    className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
-                  >
-                    Batch # | بیچ نمبر *
-                  </label>
-                  <input
-                    id="pur-batch-no"
-                    type="text"
-                    value={purchaseBatchNo}
-                    onChange={(e) => setPurchaseBatchNo(e.target.value)}
-                    placeholder="e.g. BN-2024-001"
-                    disabled={isAddingPurchase}
-                    className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="pur-quantity"
-                    className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
-                  >
-                    Quantity | مقدار *
-                  </label>
-                  <input
-                    id="pur-quantity"
-                    type="number"
-                    min="1"
-                    value={purchaseQuantity}
-                    onChange={(e) => setPurchaseQuantity(e.target.value)}
-                    placeholder="e.g. 500"
-                    disabled={isAddingPurchase}
-                    className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="pur-price"
-                    className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
-                  >
-                    Price (Rs) | قیمت *
-                  </label>
-                  <input
-                    id="pur-price"
-                    type="number"
-                    min="1"
-                    value={purchasePrice}
-                    onChange={(e) => setPurchasePrice(e.target.value)}
-                    placeholder="e.g. 15000"
-                    disabled={isAddingPurchase}
-                    className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="pur-pack-size"
-                    className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
-                  >
-                    Pack Size | پیک سائز
-                  </label>
-                  <input
-                    id="pur-pack-size"
-                    type="text"
-                    value={purchasePackSize}
-                    onChange={(e) => setPurchasePackSize(e.target.value)}
-                    placeholder="e.g. Pack of 10"
-                    disabled={isAddingPurchase}
-                    className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <label
-                    htmlFor="pur-company-name"
-                    className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
-                  >
-                    Company Name | کمپنی نام *
-                  </label>
-                  <input
-                    id="pur-company-name"
-                    type="text"
-                    value={purchaseCompanyName}
-                    onChange={(e) => setPurchaseCompanyName(e.target.value)}
-                    placeholder="e.g. GlaxoSmithKline"
-                    disabled={isAddingPurchase}
-                    className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
-                  />
-                </div>
-                <div className="flex items-end">
-                  <button
-                    type="button"
-                    onClick={handleAddPurchase}
-                    disabled={isAddingPurchase}
-                    className="w-full h-10 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold text-sm rounded-lg transition-colors"
-                  >
-                    {isAddingPurchase ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <Plus size={14} />
-                    )}
-                    {isAddingPurchase ? "Adding..." : "Add Record | شامل کریں"}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Purchases Table */}
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-              {isLoadingPurchases ? (
-                <div className="flex items-center justify-center py-20">
-                  <Loader2 className="animate-spin text-blue-500" size={32} />
-                </div>
-              ) : purchases.length === 0 ? (
-                <div className="text-center py-20 text-gray-400">
-                  <ShoppingBag size={40} className="mx-auto mb-3 opacity-50" />
-                  <p className="font-medium">
-                    No purchase records yet | کوئی خریداری ریکارڈ نہیں
-                  </p>
-                  <p className="text-xs mt-1">
-                    Use the form above to add your first purchase record
-                  </p>
-                </div>
-              ) : (
-                <table className="w-full">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-200">
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Product Name | پروڈکٹ
-                      </th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Generic Name | عام نام
-                      </th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Batch # | بیچ
-                      </th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Company | کمپنی
-                      </th>
-                      <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Qty | مقدار
-                      </th>
-                      <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Price (Rs) | قیمت
-                      </th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Pack Size | پیک
-                      </th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Date | تاریخ
-                      </th>
-                      <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Action
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {purchases.map((purchase, idx) => {
-                      const date = new Date(
-                        Number(purchase.timestamp / BigInt(1_000_000)),
-                      )
-                        .toISOString()
-                        .split("T")[0];
-                      return (
-                        <tr
-                          key={String(purchase.id)}
-                          className={
-                            idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"
-                          }
-                        >
-                          <td className="px-4 py-3">
-                            <div className="font-semibold text-sm text-gray-900">
-                              {purchase.productName}
                             </div>
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-600">
-                            {purchase.genericName || "—"}
-                          </td>
-                          <td className="px-4 py-3 text-sm font-mono text-gray-700">
-                            {purchase.batchNo}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-700">
-                            {purchase.companyName}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-center font-bold text-gray-900">
-                            {String(purchase.quantity)}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-right font-bold text-blue-700">
-                            {formatCurrency(Number(purchase.price))}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-600">
-                            {purchase.packSize || "—"}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-500">
-                            {formatDate(date)}
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            {confirmDeletePurchaseId === purchase.id ? (
-                              <div className="flex items-center justify-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    handleDeletePurchase(purchase.id)
-                                  }
-                                  disabled={deletingPurchaseId === purchase.id}
-                                  className="flex items-center gap-1 bg-red-500 hover:bg-red-600 text-white text-xs px-2 py-1 rounded-lg font-semibold transition-colors disabled:opacity-50"
-                                >
-                                  {deletingPurchaseId === purchase.id ? (
-                                    <Loader2
-                                      size={10}
-                                      className="animate-spin"
-                                    />
-                                  ) : null}
-                                  Yes
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setConfirmDeletePurchaseId(null)
-                                  }
-                                  className="text-xs px-2 py-1 rounded-lg border border-gray-300 font-semibold hover:bg-gray-50 transition-colors"
-                                  disabled={deletingPurchaseId === purchase.id}
-                                >
-                                  No
-                                </button>
-                              </div>
-                            ) : (
+                            <div className="col-span-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="any"
+                                placeholder="Bonus"
+                                value={line.bonus}
+                                onChange={(e) =>
+                                  setNewOrderLines((prev) =>
+                                    prev.map((l) =>
+                                      l._key === line._key
+                                        ? { ...l, bonus: e.target.value }
+                                        : l,
+                                    ),
+                                  )
+                                }
+                                className="w-full h-9 border border-emerald-300 bg-emerald-50 rounded-lg px-2 text-sm text-center text-emerald-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              />
+                            </div>
+                            <div className="col-span-2">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="any"
+                                placeholder="Disc%"
+                                value={line.discount}
+                                onChange={(e) =>
+                                  setNewOrderLines((prev) =>
+                                    prev.map((l) =>
+                                      l._key === line._key
+                                        ? { ...l, discount: e.target.value }
+                                        : l,
+                                    ),
+                                  )
+                                }
+                                className="w-full h-9 border border-amber-300 bg-amber-50 rounded-lg px-2 text-sm text-center text-amber-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              />
+                            </div>
+                            <div className="col-span-1 flex justify-center">
                               <button
                                 type="button"
                                 onClick={() =>
-                                  setConfirmDeletePurchaseId(purchase.id)
+                                  setNewOrderLines((prev) =>
+                                    prev.filter((l) => l._key !== line._key),
+                                  )
                                 }
-                                className="flex items-center gap-1 text-red-500 hover:text-red-700 hover:bg-red-50 text-xs px-2 py-1 rounded-lg transition-colors mx-auto"
-                                disabled={deletingPurchaseId === purchase.id}
-                                aria-label={`Delete purchase ${purchase.productName}`}
+                                className="w-8 h-8 flex items-center justify-center text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                aria-label="Remove item"
                               >
-                                <Trash2 size={12} />
-                                Delete
+                                <Trash2 size={14} />
                               </button>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Notes */}
+                  <div>
+                    <label
+                      htmlFor="new-order-notes"
+                      className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                    >
+                      Notes | نوٹس
+                    </label>
+                    <textarea
+                      id="new-order-notes"
+                      value={newOrderNotes}
+                      onChange={(e) => setNewOrderNotes(e.target.value)}
+                      placeholder="Special instructions..."
+                      rows={2}
+                      className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+                    />
+                  </div>
+
+                  {/* Submit */}
+                  <button
+                    type="button"
+                    onClick={handleSubmitNewOrder}
+                    disabled={
+                      isSubmittingNewOrder ||
+                      !newOrderPharmacyId ||
+                      newOrderLines.length === 0
+                    }
+                    className="w-full h-11 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold rounded-lg transition-colors"
+                  >
+                    {isSubmittingNewOrder ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <Plus size={16} />
+                    )}
+                    Submit Order | آرڈر جمع کریں
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Footer */}
+            <div className="text-center py-3 text-xs text-gray-400">
+              © {new Date().getFullYear()}. Built with ♥ using{" "}
+              <a
+                href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(window.location.hostname)}`}
+                className="text-blue-500 underline"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                caffeine.ai
+              </a>
             </div>
           </div>
-        )}
-
-        {/* Footer */}
-        <div className="text-center py-3 text-xs text-gray-400">
-          © {new Date().getFullYear()}. Built with ♥ using{" "}
-          <a
-            href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(window.location.hostname)}`}
-            className="text-blue-500 underline"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            caffeine.ai
-          </a>
-        </div>
+        </main>
       </div>
 
       {/* Order Detail Modal */}
@@ -5342,9 +5818,6 @@ function DeliveryDashboard() {
                         </span>
                       )}
                     </div>
-                    <span className="text-xs font-mono text-gray-400 shrink-0 ml-2">
-                      {order.orderId}
-                    </span>
                   </div>
                   <div className="flex items-center justify-between text-sm mt-3">
                     <div className="text-gray-500">
