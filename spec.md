@@ -1,61 +1,42 @@
 # MedOrder - Medicine Distributor
 
 ## Current State
-
-Full-stack medicine distribution app with:
-- Staff mobile app (login, order taking, order history, manage)
-- Office Dashboard (/office) with: active orders, history, inventory, purchasing, add-order, payments, daily sale statement
-- Delivery Dashboard (/delivery) with payment recording, return items
-- Backend stores: staff, pharmacies, medicines, orders, purchases
-- Medicine model: id, name, price, description, company, strength, packSize
-- PurchaseRecord model: id, productName, genericName, batchNo, quantity, price, packSize, companyName, timestamp
-- Payments view in Office sidebar shows monthly/daily payment history with "Clear Today's Payments" button
-- Inventory view in Office shows medicines grouped by company
+Full-stack medicine distributor order management app with:
+- Staff mobile dashboard with side drawer navigation
+- Office dashboard (`/office`) with left sidebar (hamburger toggle), multiple views: Active Orders, History, Inventory, Purchasing, Add Order, Payments, Daily Sale Statement, Customer Wise Sales, Add Customer
+- Delivery dashboard (`/delivery`) with order return/payment flow
+- Backend stores orders, medicines, pharmacies, customers, purchases
 
 ## Requested Changes (Diff)
 
 ### Add
-
-1. **Customer backend type**: New `Customer` record with fields: id, name, customerType (#doctor | #medicalStore | #pharmacy), address, area, contactNo, groupName, code, timestamp
-2. **Backend methods**: addCustomer, deleteCustomer, getCustomers
-3. **Medicine backend fields**: Add `genericName: Text`, `batchNo: Text`, `medicineType: Text` (tablet/syrup/injection/capsule/drop/cream/sachet/other)
-4. **PurchaseRecord backend field**: Add `medicineType: Text`
-5. **Office sidebar item**: "Customer Wise Sales | کسٹمر وائز سیلز" - new view
-6. **Customer Wise Sales view**: date range filter + filter tabs: All Over / Company Wise / Group Wise / Area Wise / Product Wise. Data linked to daily sale statement order records. Shows pharmacy/customer names, total units sold, total value.
-7. **Office sidebar item**: "Add Customer | کسٹمر شامل کریں" - new view
-8. **Add Customer view**: Form to add Doctors, Medical Stores, Pharmacies with fields: name, type (Doctor/Medical Store/Pharmacy), contact, address, area, group name, code. List of existing customers with delete.
-9. **Auto-reset payments at midnight**: Delivery dashboard payment summary auto-resets at midnight (12am). Previous day payments move to historical record with their date. Current day payments start fresh.
+1. **Order color coding in Office Active Orders table** — add a left-border color indicator per row based on discount/bonus presence:
+   - Has both discount AND bonus items → purple left border
+   - Only discount items (no bonus) → red left border
+   - Only bonus items (no discount) → blue left border
+   - Neither discount nor bonus → green left border
+   - Also add a small colored dot/badge in the row to make it visible
+2. **NTN# and CNIC fields in Add Customer form** — two new text input fields below the existing fields
+3. **NTN# and CNIC display in invoices** (buildPrintHtml) — show these fields in the invoice header if set on the customer/pharmacy
 
 ### Modify
-
-1. **Inventory (office)**: Add `Generic Name`, `Batch#`, `Type` columns to medicine list display
-2. **Medicine add form (Manage screen, staff)**: Add `Generic Name`, `Batch#`, `Type` fields - stored in medicine `description` field encoded as JSON: `{"genericName":"...","batchNo":"...","type":"..."}`
-3. **Purchasing tab (office)**: Add `Medicine Type` field to add purchase form and display in table
-4. **Payments view (office)**: Remove "Clear Today's Payments" button. Auto-reset logic: at midnight, previous day payments freeze in history under previous date. Current day shows fresh. The midnight check is frontend-based using localStorage timestamp.
-5. **Delivery dashboard**: Payment summary bars show only current day payments (since last midnight). Previous day data visible in historical record with date labels.
+1. **Office sidebar auto-close on item select** — when any sidebar nav button is clicked (setActiveView), also call `setSidebarOpen(false)` to close the sidebar automatically. The hamburger toggle still opens/closes manually.
+2. **Customer Wise Sales — link all tabs to selected customer** — add a customer search/select at the top of the Customer Wise Sales view. When a customer is selected, ALL tabs (All Over, Company Wise, Group Wise, Area Wise, Product Wise) filter to show only orders from that specific customer's pharmacy (matched by name). If no customer selected, show all data (current behavior).
+3. **Daily Sale Statement — delivered orders only + exclude returned items** — the `filteredOrders` in DailySaleStatement should only include orders with `status === "delivered"`. Items that are in `returnItems` array should be excluded from the sale quantities. The DailySaleStatement receives `allOrders` prop from `[...ordersWithLines, ...historyOrders]` — filter to delivered only and subtract returned item quantities.
 
 ### Remove
-
-1. "Clear Today's Payments" button from PaymentsView component
+- Nothing removed
 
 ## Implementation Plan
 
-### Backend (main.mo)
-- Add `Customer` type with fields: id, name, customerType (variant), address, area, contactNo, groupName, code, timestamp
-- Add `customers` map and `nextCustomerId` counter
-- Add `addCustomer`, `deleteCustomer`, `getCustomers` methods
-- Update `Medicine` type: add `genericName: Text`, `batchNo: Text`, `medicineType: Text`
-- Update `addMedicine` to accept 3 new params
-- Update `PurchaseRecord` type: add `medicineType: Text`
-- Update `addPurchase` to accept `medicineType`
+1. **Office sidebar close on nav click** — In OfficeDashboard, wrap each `setActiveView(...)` call inside sidebar nav buttons with `() => { setActiveView("..."); setSidebarOpen(false); }` for all nav buttons.
 
-### Frontend
-- Update `backend.d.ts` to match new backend types
-- **Inventory (office)**: Show genericName, batchNo, medicineType in medicine cards (parse from description JSON for older medicines)
-- **Manage > Add Medicine form**: Add genericName, batchNo, type (select) fields
-- **Purchasing tab**: Add medicineType field in form and table column
-- **PaymentsView**: Remove "Clear Today's Payments" button. Add midnight auto-reset: store last-cleared date in localStorage; on component mount and every minute, check if current date != last-cleared date, if so auto-reset
-- **Delivery dashboard payment bars**: Only show payments from current calendar day (after midnight)
-- **Office sidebar**: Add "Customer Wise Sales" and "Add Customer" items
-- **Customer Wise Sales view**: Date range picker, filter tabs (All Over/Company Wise/Group Wise/Area Wise/Product Wise), table linked to orders data showing pharmacy/customer names with units + value totals
-- **Add Customer view**: Form + list for managing Doctors, Medical Stores, Pharmacies as customers with type field
+2. **Customer Wise Sales — customer selector** — Add `cwsSelectedCustomer` state (Customer | null). Add a search input at the top of the customer-wise-sales view that filters `allCustomers` and shows a dropdown to select. When selected, filter all CWS tabs to orders where `o.pharmacyName.toLowerCase() === selectedCustomer.name.toLowerCase()` (or by code match). Show "Viewing: [name]" badge with clear button.
+
+3. **Add Customer — NTN# and CNIC fields** — Add `custNTN` and `custCNIC` state strings. Add two input fields in the Add Customer form. Pass them to `actor.addCustomer(...)` — but since the backend Customer type doesn't have these fields, store them in `localStorage` keyed by customer backend ID as a fallback. Also display them in the customer list.
+
+4. **NTN# and CNIC in invoice** — In `buildPrintHtml`, look up the NTN/CNIC from localStorage for the order's pharmacy (by matching pharmacy name/code). Display below pharmacy name in invoice header if present.
+
+5. **Daily Sale Statement — delivered only + no returns** — In `DailySaleStatement`, change `filteredOrders` to only include `o.status === "delivered"`. When computing quantities per medicine, subtract returned quantities: for each order line item, check `o.returnItems` and subtract returned qty from the sale qty.
+
+6. **Order color coding** — In `OfficeDashboard` Active Orders table, compute per-order `hasDiscount` and `hasBonus` from `order.items`. Apply left border color class to each `<tr>`: purple=`border-l-4 border-l-purple-500`, red=`border-l-4 border-l-red-500`, blue=`border-l-4 border-l-blue-500`, green=`border-l-4 border-l-green-500`. Add a small color dot badge in the Order ID cell.

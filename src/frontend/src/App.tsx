@@ -3406,10 +3406,46 @@ function buildPrintHtml(orders: OfficeOrderDetail[]): string {
       <!-- Invoice Meta -->
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px;">
         <div>
-          <p style="color:#6b7280;font-size:10px;margin:0 0 3px;text-transform:uppercase;letter-spacing:.05em;font-weight:600;">Pharmacy | فارمیسی</p>
-          <p style="font-weight:bold;font-size:14px;color:#111827;margin:0;">${order.pharmacyName}</p>
-          ${order.pharmacyArea ? `<p style="color:#6b7280;font-size:11px;margin:2px 0 0;">${order.pharmacyArea}</p>` : ""}
-          ${order.pharmacyMasterCode ? `<p style="color:#374151;font-size:11px;margin:2px 0 0;font-family:monospace;">Code: ${order.pharmacyMasterCode}</p>` : ""}
+           <p style="color:#6b7280;font-size:10px;margin:0 0 3px;text-transform:uppercase;letter-spacing:.05em;font-weight:600;">Pharmacy | فارمیسی</p>
+           <p style="font-weight:bold;font-size:14px;color:#111827;margin:0;">${order.pharmacyName}</p>
+           ${order.pharmacyArea ? `<p style="color:#6b7280;font-size:11px;margin:2px 0 0;">${order.pharmacyArea}</p>` : ""}
+           ${order.pharmacyMasterCode ? `<p style="color:#374151;font-size:11px;margin:2px 0 0;font-family:monospace;">Code: ${order.pharmacyMasterCode}</p>` : ""}
+           ${(() => {
+             const pharmNameLower = order.pharmacyName.toLowerCase();
+             let ntnLine = "";
+             let cnicLine = "";
+             try {
+               for (let i = 0; i < localStorage.length; i++) {
+                 const key = localStorage.key(i);
+                 if (!key) continue;
+                 if (key.startsWith("medorder_customer_ntn_")) {
+                   const backendId = key.replace("medorder_customer_ntn_", "");
+                   const ntnVal = localStorage.getItem(key);
+                   const storedName =
+                     localStorage.getItem(
+                       `medorder_customer_name_${backendId}`,
+                     ) || "";
+                   if (storedName.toLowerCase() === pharmNameLower && ntnVal) {
+                     ntnLine = `<p style="color:#374151;font-size:11px;margin:2px 0 0;">NTN: <span style="font-family:monospace;">${ntnVal}</span></p>`;
+                   }
+                 }
+                 if (key.startsWith("medorder_customer_cnic_")) {
+                   const backendId = key.replace("medorder_customer_cnic_", "");
+                   const cnicVal = localStorage.getItem(key);
+                   const storedName =
+                     localStorage.getItem(
+                       `medorder_customer_name_${backendId}`,
+                     ) || "";
+                   if (storedName.toLowerCase() === pharmNameLower && cnicVal) {
+                     cnicLine = `<p style="color:#374151;font-size:11px;margin:2px 0 0;">CNIC: <span style="font-family:monospace;">${cnicVal}</span></p>`;
+                   }
+                 }
+               }
+             } catch {
+               /* ignore */
+             }
+             return ntnLine + cnicLine;
+           })()}
         </div>
         <div>
           <p style="color:#6b7280;font-size:10px;margin:0 0 3px;text-transform:uppercase;letter-spacing:.05em;font-weight:600;">Booker | بکر</p>
@@ -4065,9 +4101,11 @@ function DailySaleStatement({
     return Array.from(set).sort();
   }, [allOrders]);
 
-  // Filter orders by date range
+  // Filter orders by date range — only delivered orders, excluding returns
   const filteredOrders = useMemo(() => {
-    return allOrders.filter((o) => o.date >= dateFrom && o.date <= dateTo);
+    return allOrders.filter(
+      (o) => o.date >= dateFrom && o.date <= dateTo && o.status === "delivered",
+    );
   }, [allOrders, dateFrom, dateTo]);
 
   // Group medicines by company
@@ -4164,20 +4202,29 @@ function DailySaleStatement({
         for (const item of order.items) {
           if (String(item.medicineId) !== String(med.backendId)) continue;
 
-          const qty = item.qty;
+          // Subtract returned quantity
+          const returnedQty =
+            (order.returnItems || []).find(
+              (ri) => ri.medicineId === item.medicineId,
+            )?.returnedQty ?? 0;
+          const effectiveQty = Math.max(0, item.qty - returnedQty);
+
+          if (effectiveQty === 0) continue;
+
           const discPct = item.discountPercent / 10; // stored as percent * 10
-          const discAmt = (discPct / 100) * item.unitPrice * qty;
-          const netValue = item.unitPrice * qty - discAmt;
+          const discAmt = (discPct / 100) * item.unitPrice * effectiveQty;
+          const netValue = item.unitPrice * effectiveQty - discAmt;
 
           // All sales area units
-          stat.areaUnits[area] = (stat.areaUnits[area] || 0) + qty;
-          stat.netSaleUnits += qty;
+          stat.areaUnits[area] = (stat.areaUnits[area] || 0) + effectiveQty;
+          stat.netSaleUnits += effectiveQty;
           stat.netSaleValue += netValue;
           stat.saleBonus += item.bonusQty || 0;
 
           if (item.discountPercent > 0) {
             stat.dealCount += 1;
-            stat.dealAreaUnits[area] = (stat.dealAreaUnits[area] || 0) + qty;
+            stat.dealAreaUnits[area] =
+              (stat.dealAreaUnits[area] || 0) + effectiveQty;
           }
 
           if ((item.bonusQty || 0) > 0) {
@@ -4187,7 +4234,7 @@ function DailySaleStatement({
 
           // Today sale
           if (order.date === today) {
-            stat.todaySale += qty;
+            stat.todaySale += effectiveQty;
             stat.todaySaleValue += netValue;
           }
 
@@ -4196,23 +4243,23 @@ function DailySaleStatement({
             order.date >= lastMonthRange.from &&
             order.date <= lastMonthRange.to
           ) {
-            stat.lastMonthSale += qty;
+            stat.lastMonthSale += effectiveQty;
             stat.lastMonthSaleValue += netValue;
           }
 
           // Quarterly
           const q = getQuarter(order.date);
           if (q === 1) {
-            stat.q1Sale += qty;
+            stat.q1Sale += effectiveQty;
             stat.q1SaleValue += netValue;
           } else if (q === 2) {
-            stat.q2Sale += qty;
+            stat.q2Sale += effectiveQty;
             stat.q2SaleValue += netValue;
           } else if (q === 3) {
-            stat.q3Sale += qty;
+            stat.q3Sale += effectiveQty;
             stat.q3SaleValue += netValue;
           } else {
-            stat.q4Sale += qty;
+            stat.q4Sale += effectiveQty;
             stat.q4SaleValue += netValue;
           }
         }
@@ -5404,6 +5451,8 @@ function OfficeDashboard() {
   const [custArea, setCustArea] = useState("");
   const [custGroup, setCustGroup] = useState("");
   const [custCode, setCustCode] = useState("");
+  const [custNTN, setCustNTN] = useState("");
+  const [custCNIC, setCustCNIC] = useState("");
   const [isAddingCustomer, setIsAddingCustomer] = useState(false);
   const [deletingCustomerId, setDeletingCustomerId] = useState<bigint | null>(
     null,
@@ -5415,6 +5464,10 @@ function OfficeDashboard() {
   const [cwsTab, setCwsTab] = useState<
     "allover" | "company" | "group" | "area" | "product"
   >("allover");
+  const [cwsSelectedCustomer, setCwsSelectedCustomer] =
+    useState<Customer | null>(null);
+  const [cwsCustomerSearch, setCwsCustomerSearch] = useState("");
+  const [cwsCustomerDropdownOpen, setCwsCustomerDropdownOpen] = useState(false);
   const [cwsDateFrom, setCwsDateFrom] = useState(
     new Date(new Date().getFullYear(), new Date().getMonth(), 1)
       .toISOString()
@@ -5700,7 +5753,7 @@ function OfficeDashboard() {
     }
     setIsAddingCustomer(true);
     try {
-      await actor.addCustomer(
+      const newBackendId = await actor.addCustomer(
         custName.trim(),
         custType,
         custAddress.trim(),
@@ -5709,6 +5762,35 @@ function OfficeDashboard() {
         custGroup.trim(),
         custCode.trim(),
       );
+      // Store NTN/CNIC/name in localStorage for invoice lookup
+      try {
+        localStorage.setItem(
+          `medorder_customer_name_${newBackendId}`,
+          custName.trim(),
+        );
+      } catch {
+        /* ignore */
+      }
+      if (custNTN.trim()) {
+        try {
+          localStorage.setItem(
+            `medorder_customer_ntn_${newBackendId}`,
+            custNTN.trim(),
+          );
+        } catch {
+          /* ignore */
+        }
+      }
+      if (custCNIC.trim()) {
+        try {
+          localStorage.setItem(
+            `medorder_customer_cnic_${newBackendId}`,
+            custCNIC.trim(),
+          );
+        } catch {
+          /* ignore */
+        }
+      }
       toast.success(`Customer "${custName.trim()}" add ho gaya!`);
       setCustName("");
       setCustType(CustomerType.pharmacy);
@@ -5717,6 +5799,8 @@ function OfficeDashboard() {
       setCustArea("");
       setCustGroup("");
       setCustCode("");
+      setCustNTN("");
+      setCustCNIC("");
       await loadCustomers();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Unknown error";
@@ -5997,7 +6081,10 @@ function OfficeDashboard() {
             )}
             <button
               type="button"
-              onClick={() => setActiveView("orders")}
+              onClick={() => {
+                setActiveView("orders");
+                setSidebarOpen(false);
+              }}
               title="Active Orders"
               className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "orders" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
             >
@@ -6013,7 +6100,10 @@ function OfficeDashboard() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveView("history")}
+              onClick={() => {
+                setActiveView("history");
+                setSidebarOpen(false);
+              }}
               title="History"
               className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "history" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
             >
@@ -6028,7 +6118,10 @@ function OfficeDashboard() {
               )}
               <button
                 type="button"
-                onClick={() => setActiveView("inventory")}
+                onClick={() => {
+                  setActiveView("inventory");
+                  setSidebarOpen(false);
+                }}
                 title="Inventory"
                 className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "inventory" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
               >
@@ -6039,6 +6132,7 @@ function OfficeDashboard() {
                 type="button"
                 onClick={() => {
                   setActiveView("purchasing");
+                  setSidebarOpen(false);
                 }}
                 title="Purchasing"
                 className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "purchasing" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
@@ -6048,7 +6142,10 @@ function OfficeDashboard() {
               </button>
               <button
                 type="button"
-                onClick={() => setActiveView("add-order")}
+                onClick={() => {
+                  setActiveView("add-order");
+                  setSidebarOpen(false);
+                }}
                 title="Add Order"
                 className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "add-order" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
               >
@@ -6057,7 +6154,10 @@ function OfficeDashboard() {
               </button>
               <button
                 type="button"
-                onClick={() => setActiveView("payments")}
+                onClick={() => {
+                  setActiveView("payments");
+                  setSidebarOpen(false);
+                }}
                 title="Payments"
                 className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "payments" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
               >
@@ -6066,7 +6166,10 @@ function OfficeDashboard() {
               </button>
               <button
                 type="button"
-                onClick={() => setActiveView("daily-sale-statement")}
+                onClick={() => {
+                  setActiveView("daily-sale-statement");
+                  setSidebarOpen(false);
+                }}
                 title="Daily Sale Statement"
                 className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "daily-sale-statement" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
               >
@@ -6083,7 +6186,10 @@ function OfficeDashboard() {
                 )}
                 <button
                   type="button"
-                  onClick={() => setActiveView("customer-wise-sales")}
+                  onClick={() => {
+                    setActiveView("customer-wise-sales");
+                    setSidebarOpen(false);
+                  }}
                   title="Customer Wise Sales"
                   className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "customer-wise-sales" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
                 >
@@ -6092,7 +6198,10 @@ function OfficeDashboard() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setActiveView("add-customer")}
+                  onClick={() => {
+                    setActiveView("add-customer");
+                    setSidebarOpen(false);
+                  }}
                   title="Add Customer"
                   className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "add-customer" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
                 >
@@ -6195,7 +6304,6 @@ function OfficeDashboard() {
                       </button>
                     ))}
                   </div>
-
                   <div className="ml-auto flex items-center gap-2">
                     {/* Confirm All */}
                     <button
@@ -6293,6 +6401,29 @@ function OfficeDashboard() {
                   </div>
                 </div>
 
+                {/* Color Legend */}
+                <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500 px-1">
+                  <span className="font-semibold text-gray-600">
+                    Order Colors:
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-purple-500" />
+                    Discount + Bonus
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500" />
+                    Discount only
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-blue-500" />
+                    Bonus only
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-green-500" />
+                    No discount/bonus
+                  </span>
+                </div>
+
                 {/* Orders Table */}
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                   {isLoading ? (
@@ -6348,10 +6479,31 @@ function OfficeDashboard() {
                           const isSelectedForReprint = selectedForReprint.has(
                             order.orderId,
                           );
+                          const hasAnyDiscount = order.items.some(
+                            (i) => (i.discountPercent ?? 0) > 0,
+                          );
+                          const hasAnyBonus = order.items.some(
+                            (i) => (i.bonusQty ?? 0) > 0,
+                          );
+                          let orderColorClass = "";
+                          let orderDotColor = "";
+                          if (hasAnyDiscount && hasAnyBonus) {
+                            orderColorClass = "border-l-4 border-l-purple-500";
+                            orderDotColor = "bg-purple-500";
+                          } else if (hasAnyDiscount && !hasAnyBonus) {
+                            orderColorClass = "border-l-4 border-l-red-500";
+                            orderDotColor = "bg-red-500";
+                          } else if (!hasAnyDiscount && hasAnyBonus) {
+                            orderColorClass = "border-l-4 border-l-blue-500";
+                            orderDotColor = "bg-blue-500";
+                          } else {
+                            orderColorClass = "border-l-4 border-l-green-500";
+                            orderDotColor = "bg-green-500";
+                          }
                           return (
                             <tr
                               key={String(order.backendId)}
-                              className={`cursor-pointer hover:bg-blue-50/60 transition-colors ${idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"} ${isPrinted ? "opacity-80" : ""}`}
+                              className={`cursor-pointer hover:bg-blue-50/60 transition-colors ${idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"} ${isPrinted ? "opacity-80" : ""} ${orderColorClass}`}
                               onClick={() => setSelectedOrder(order)}
                               onKeyDown={(e) =>
                                 e.key === "Enter" && setSelectedOrder(order)
@@ -6390,6 +6542,9 @@ function OfficeDashboard() {
                                 )}
                               </td>
                               <td className="px-4 py-3 text-sm font-mono font-semibold text-blue-700">
+                                <span
+                                  className={`inline-block w-2 h-2 rounded-full mr-1 ${orderDotColor}`}
+                                />
                                 {order.orderId}
                               </td>
                               <td className="px-4 py-3">
@@ -7630,6 +7785,104 @@ function OfficeDashboard() {
                   </p>
                 </div>
 
+                {/* Customer Selector */}
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+                  <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide block mb-2">
+                    Search Customer | کسٹمر تلاش کریں
+                  </p>
+                  <div className="relative">
+                    <div className="flex items-center gap-2">
+                      <div className="relative flex-1">
+                        <Search
+                          size={14}
+                          className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                        />
+                        <input
+                          type="text"
+                          aria-label="Search customer"
+                          data-ocid="cws.customer_search_input"
+                          value={cwsCustomerSearch}
+                          onChange={(e) => {
+                            setCwsCustomerSearch(e.target.value);
+                            setCwsCustomerDropdownOpen(true);
+                          }}
+                          onFocus={() => setCwsCustomerDropdownOpen(true)}
+                          placeholder="Type customer name, code or area..."
+                          className="w-full h-10 text-sm border border-gray-300 rounded-lg pl-9 pr-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      {cwsSelectedCustomer && (
+                        <button
+                          type="button"
+                          data-ocid="cws.customer_clear_button"
+                          onClick={() => {
+                            setCwsSelectedCustomer(null);
+                            setCwsCustomerSearch("");
+                            setCwsCustomerDropdownOpen(false);
+                          }}
+                          className="flex items-center gap-1.5 bg-blue-100 text-blue-700 text-xs font-semibold px-3 py-2 rounded-lg hover:bg-blue-200 transition-colors"
+                        >
+                          <span>Viewing: {cwsSelectedCustomer.name}</span>
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+                    {cwsCustomerDropdownOpen &&
+                      cwsCustomerSearch.trim().length > 0 && (
+                        <div className="absolute z-20 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
+                          {allCustomers
+                            .filter((c) => {
+                              const q = cwsCustomerSearch.toLowerCase();
+                              return (
+                                c.name.toLowerCase().includes(q) ||
+                                c.code.toLowerCase().includes(q) ||
+                                c.area.toLowerCase().includes(q)
+                              );
+                            })
+                            .map((c) => (
+                              <button
+                                key={c.id}
+                                type="button"
+                                className="w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 flex items-center justify-between gap-2"
+                                onClick={() => {
+                                  setCwsSelectedCustomer(c);
+                                  setCwsCustomerSearch(c.name);
+                                  setCwsCustomerDropdownOpen(false);
+                                }}
+                              >
+                                <span className="font-medium text-gray-900">
+                                  {c.name}
+                                </span>
+                                <span className="text-xs text-gray-400">
+                                  {c.area} {c.code && `· ${c.code}`}
+                                </span>
+                              </button>
+                            ))}
+                          {allCustomers.filter((c) => {
+                            const q = cwsCustomerSearch.toLowerCase();
+                            return (
+                              c.name.toLowerCase().includes(q) ||
+                              c.code.toLowerCase().includes(q) ||
+                              c.area.toLowerCase().includes(q)
+                            );
+                          }).length === 0 && (
+                            <div className="px-4 py-3 text-sm text-gray-400">
+                              No customers found
+                            </div>
+                          )}
+                        </div>
+                      )}
+                  </div>
+                  {cwsSelectedCustomer && (
+                    <p className="text-xs text-blue-600 mt-2">
+                      Showing sales for:{" "}
+                      <strong>{cwsSelectedCustomer.name}</strong>
+                      {cwsSelectedCustomer.area &&
+                        ` — ${cwsSelectedCustomer.area}`}
+                    </p>
+                  )}
+                </div>
+
                 {/* Date Range + Filter Tabs */}
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
                   <div className="flex flex-wrap items-center gap-4 mb-4">
@@ -7713,9 +7966,20 @@ function OfficeDashboard() {
                     ...ordersWithLines,
                     ...historyOrders,
                   ];
-                  const filteredCwsOrders = allOrdersForCws.filter(
-                    (o) => o.date >= cwsDateFrom && o.date <= cwsDateTo,
-                  );
+                  const filteredCwsOrders = allOrdersForCws.filter((o) => {
+                    if (o.date < cwsDateFrom || o.date > cwsDateTo)
+                      return false;
+                    if (cwsSelectedCustomer) {
+                      const nameMatch =
+                        o.pharmacyName.toLowerCase() ===
+                        cwsSelectedCustomer.name.toLowerCase();
+                      const codeMatch =
+                        cwsSelectedCustomer.code &&
+                        o.pharmacyCode === cwsSelectedCustomer.code;
+                      return nameMatch || !!codeMatch;
+                    }
+                    return true;
+                  });
 
                   if (cwsTab === "allover") {
                     // Group by pharmacy
@@ -8443,6 +8707,42 @@ function OfficeDashboard() {
                         className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
                       />
                     </div>
+                    <div>
+                      <label
+                        htmlFor="cust-ntn"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        NTN# | این ٹی این
+                      </label>
+                      <input
+                        id="cust-ntn"
+                        type="text"
+                        data-ocid="add_customer.ntn_input"
+                        value={custNTN}
+                        onChange={(e) => setCustNTN(e.target.value)}
+                        placeholder="e.g. 1234567-8"
+                        disabled={isAddingCustomer}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="cust-cnic"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        CNIC# | شناختی کارڈ
+                      </label>
+                      <input
+                        id="cust-cnic"
+                        type="text"
+                        data-ocid="add_customer.cnic_input"
+                        value={custCNIC}
+                        onChange={(e) => setCustCNIC(e.target.value)}
+                        placeholder="e.g. 12345-1234567-1"
+                        disabled={isAddingCustomer}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
+                      />
+                    </div>
                     <div className="flex items-end">
                       <button
                         type="button"
@@ -8558,6 +8858,45 @@ function OfficeDashboard() {
                                   {cust.address}
                                 </p>
                               )}
+                              {(() => {
+                                const ntn = (() => {
+                                  try {
+                                    return localStorage.getItem(
+                                      `medorder_customer_ntn_${cust.backendId}`,
+                                    );
+                                  } catch {
+                                    return null;
+                                  }
+                                })();
+                                const cnic = (() => {
+                                  try {
+                                    return localStorage.getItem(
+                                      `medorder_customer_cnic_${cust.backendId}`,
+                                    );
+                                  } catch {
+                                    return null;
+                                  }
+                                })();
+                                if (!ntn && !cnic) return null;
+                                return (
+                                  <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                                    {ntn && (
+                                      <span className="text-xs text-gray-500">
+                                        NTN:{" "}
+                                        <span className="font-mono">{ntn}</span>
+                                      </span>
+                                    )}
+                                    {cnic && (
+                                      <span className="text-xs text-gray-500">
+                                        CNIC:{" "}
+                                        <span className="font-mono">
+                                          {cnic}
+                                        </span>
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </div>
                             <div className="shrink-0">
                               {confirmDeleteCustomerId === cust.backendId ? (

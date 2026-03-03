@@ -3,11 +3,11 @@ import Map "mo:core/Map";
 import Order "mo:core/Order";
 import Time "mo:core/Time";
 import Principal "mo:core/Principal";
-import Migration "migration";
+
 
 // Persistent storage migration API
 
-(with migration = Migration.run)
+
 actor {
   type Staff = {
     name : Text;
