@@ -93,6 +93,7 @@ export type Time = bigint;
 export interface Pharmacy {
     id: bigint;
     contact: string;
+    code: string;
     name: string;
     location: string;
 }
@@ -121,6 +122,7 @@ export interface PurchaseRecord {
     quantity: bigint;
     batchNo: string;
     price: bigint;
+    medicineType: string;
 }
 export interface Medicine {
     id: bigint;
@@ -129,7 +131,10 @@ export interface Medicine {
     description: string;
     company: string;
     strength: string;
+    genericName: string;
+    batchNo: string;
     price: bigint;
+    medicineType: string;
 }
 export interface MedicineItem {
     discountPercent: bigint;
@@ -137,9 +142,25 @@ export interface MedicineItem {
     quantity: bigint;
     medicineId: bigint;
 }
+export interface Customer {
+    id: bigint;
+    customerType: CustomerType;
+    area: string;
+    code: string;
+    name: string;
+    address: string;
+    timestamp: Time;
+    contactNo: string;
+    groupName: string;
+}
 export interface ReturnItem {
     medicineId: bigint;
     returnedQty: bigint;
+}
+export enum CustomerType {
+    doctor = "doctor",
+    medicalStore = "medicalStore",
+    pharmacy = "pharmacy"
 }
 export enum OrderStatus {
     pending = "pending",
@@ -147,15 +168,18 @@ export enum OrderStatus {
     confirmed = "confirmed"
 }
 export interface backendInterface {
-    addMedicine(name: string, price: bigint, description: string, company: string, strength: string, packSize: string): Promise<bigint>;
-    addPharmacy(name: string, contact: string, location: string): Promise<bigint>;
-    addPurchase(productName: string, genericName: string, batchNo: string, quantity: bigint, price: bigint, packSize: string, companyName: string): Promise<bigint>;
+    addCustomer(name: string, customerType: CustomerType, address: string, area: string, contactNo: string, groupName: string, code: string): Promise<bigint>;
+    addMedicine(name: string, price: bigint, description: string, company: string, strength: string, packSize: string, genericName: string, batchNo: string, medicineType: string): Promise<bigint>;
+    addPharmacy(name: string, contact: string, location: string, code: string): Promise<bigint>;
+    addPurchase(productName: string, genericName: string, batchNo: string, quantity: bigint, price: bigint, packSize: string, companyName: string, medicineType: string): Promise<bigint>;
     createOrder(pharmacyId: bigint, orderLines: Array<MedicineItem>, staffName: string, staffCode: string): Promise<bigint>;
+    deleteCustomer(id: bigint): Promise<boolean>;
     deleteMedicine(id: bigint): Promise<boolean>;
     deletePharmacy(id: bigint): Promise<boolean>;
     deletePurchase(id: bigint): Promise<boolean>;
     getActiveOrders(): Promise<Array<OrderRecord>>;
     getAllStaffOrders(): Promise<Array<OrderRecord>>;
+    getCustomers(): Promise<Array<Customer>>;
     getHistoryOrders(): Promise<Array<OrderRecord>>;
     getMedicines(): Promise<Array<Medicine>>;
     getOrder(orderId: bigint): Promise<OrderRecord | null>;
@@ -166,48 +190,62 @@ export interface backendInterface {
     updateOrderPaymentAndReturn(orderId: bigint, paymentReceived: bigint, returnItems: Array<ReturnItem>, returnReason: string, pharmacyCode: string): Promise<boolean>;
     updateOrderStatus(orderId: bigint, newStatus: OrderStatus): Promise<boolean>;
 }
-import type { MedicineItem as _MedicineItem, OrderRecord as _OrderRecord, OrderStatus as _OrderStatus, ReturnItem as _ReturnItem, Time as _Time } from "./declarations/backend.did.d.ts";
+import type { Customer as _Customer, CustomerType as _CustomerType, MedicineItem as _MedicineItem, OrderRecord as _OrderRecord, OrderStatus as _OrderStatus, ReturnItem as _ReturnItem, Time as _Time } from "./declarations/backend.did.d.ts";
 export class Backend implements backendInterface {
     constructor(private actor: ActorSubclass<_SERVICE>, private _uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, private _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, private processError?: (error: unknown) => never){}
-    async addMedicine(arg0: string, arg1: bigint, arg2: string, arg3: string, arg4: string, arg5: string): Promise<bigint> {
+    async addCustomer(arg0: string, arg1: CustomerType, arg2: string, arg3: string, arg4: string, arg5: string, arg6: string): Promise<bigint> {
         if (this.processError) {
             try {
-                const result = await this.actor.addMedicine(arg0, arg1, arg2, arg3, arg4, arg5);
+                const result = await this.actor.addCustomer(arg0, to_candid_CustomerType_n1(this._uploadFile, this._downloadFile, arg1), arg2, arg3, arg4, arg5, arg6);
                 return result;
             } catch (e) {
                 this.processError(e);
                 throw new Error("unreachable");
             }
         } else {
-            const result = await this.actor.addMedicine(arg0, arg1, arg2, arg3, arg4, arg5);
+            const result = await this.actor.addCustomer(arg0, to_candid_CustomerType_n1(this._uploadFile, this._downloadFile, arg1), arg2, arg3, arg4, arg5, arg6);
             return result;
         }
     }
-    async addPharmacy(arg0: string, arg1: string, arg2: string): Promise<bigint> {
+    async addMedicine(arg0: string, arg1: bigint, arg2: string, arg3: string, arg4: string, arg5: string, arg6: string, arg7: string, arg8: string): Promise<bigint> {
         if (this.processError) {
             try {
-                const result = await this.actor.addPharmacy(arg0, arg1, arg2);
+                const result = await this.actor.addMedicine(arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
                 return result;
             } catch (e) {
                 this.processError(e);
                 throw new Error("unreachable");
             }
         } else {
-            const result = await this.actor.addPharmacy(arg0, arg1, arg2);
+            const result = await this.actor.addMedicine(arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
             return result;
         }
     }
-    async addPurchase(arg0: string, arg1: string, arg2: string, arg3: bigint, arg4: bigint, arg5: string, arg6: string): Promise<bigint> {
+    async addPharmacy(arg0: string, arg1: string, arg2: string, arg3: string): Promise<bigint> {
         if (this.processError) {
             try {
-                const result = await this.actor.addPurchase(arg0, arg1, arg2, arg3, arg4, arg5, arg6);
+                const result = await this.actor.addPharmacy(arg0, arg1, arg2, arg3);
                 return result;
             } catch (e) {
                 this.processError(e);
                 throw new Error("unreachable");
             }
         } else {
-            const result = await this.actor.addPurchase(arg0, arg1, arg2, arg3, arg4, arg5, arg6);
+            const result = await this.actor.addPharmacy(arg0, arg1, arg2, arg3);
+            return result;
+        }
+    }
+    async addPurchase(arg0: string, arg1: string, arg2: string, arg3: bigint, arg4: bigint, arg5: string, arg6: string, arg7: string): Promise<bigint> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.addPurchase(arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.addPurchase(arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7);
             return result;
         }
     }
@@ -222,6 +260,20 @@ export class Backend implements backendInterface {
             }
         } else {
             const result = await this.actor.createOrder(arg0, arg1, arg2, arg3);
+            return result;
+        }
+    }
+    async deleteCustomer(arg0: bigint): Promise<boolean> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.deleteCustomer(arg0);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.deleteCustomer(arg0);
             return result;
         }
     }
@@ -271,42 +323,56 @@ export class Backend implements backendInterface {
         if (this.processError) {
             try {
                 const result = await this.actor.getActiveOrders();
-                return from_candid_vec_n1(this._uploadFile, this._downloadFile, result);
+                return from_candid_vec_n3(this._uploadFile, this._downloadFile, result);
             } catch (e) {
                 this.processError(e);
                 throw new Error("unreachable");
             }
         } else {
             const result = await this.actor.getActiveOrders();
-            return from_candid_vec_n1(this._uploadFile, this._downloadFile, result);
+            return from_candid_vec_n3(this._uploadFile, this._downloadFile, result);
         }
     }
     async getAllStaffOrders(): Promise<Array<OrderRecord>> {
         if (this.processError) {
             try {
                 const result = await this.actor.getAllStaffOrders();
-                return from_candid_vec_n1(this._uploadFile, this._downloadFile, result);
+                return from_candid_vec_n3(this._uploadFile, this._downloadFile, result);
             } catch (e) {
                 this.processError(e);
                 throw new Error("unreachable");
             }
         } else {
             const result = await this.actor.getAllStaffOrders();
-            return from_candid_vec_n1(this._uploadFile, this._downloadFile, result);
+            return from_candid_vec_n3(this._uploadFile, this._downloadFile, result);
+        }
+    }
+    async getCustomers(): Promise<Array<Customer>> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.getCustomers();
+                return from_candid_vec_n8(this._uploadFile, this._downloadFile, result);
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.getCustomers();
+            return from_candid_vec_n8(this._uploadFile, this._downloadFile, result);
         }
     }
     async getHistoryOrders(): Promise<Array<OrderRecord>> {
         if (this.processError) {
             try {
                 const result = await this.actor.getHistoryOrders();
-                return from_candid_vec_n1(this._uploadFile, this._downloadFile, result);
+                return from_candid_vec_n3(this._uploadFile, this._downloadFile, result);
             } catch (e) {
                 this.processError(e);
                 throw new Error("unreachable");
             }
         } else {
             const result = await this.actor.getHistoryOrders();
-            return from_candid_vec_n1(this._uploadFile, this._downloadFile, result);
+            return from_candid_vec_n3(this._uploadFile, this._downloadFile, result);
         }
     }
     async getMedicines(): Promise<Array<Medicine>> {
@@ -327,14 +393,14 @@ export class Backend implements backendInterface {
         if (this.processError) {
             try {
                 const result = await this.actor.getOrder(arg0);
-                return from_candid_opt_n6(this._uploadFile, this._downloadFile, result);
+                return from_candid_opt_n13(this._uploadFile, this._downloadFile, result);
             } catch (e) {
                 this.processError(e);
                 throw new Error("unreachable");
             }
         } else {
             const result = await this.actor.getOrder(arg0);
-            return from_candid_opt_n6(this._uploadFile, this._downloadFile, result);
+            return from_candid_opt_n13(this._uploadFile, this._downloadFile, result);
         }
     }
     async getPharmacies(): Promise<Array<Pharmacy>> {
@@ -369,14 +435,14 @@ export class Backend implements backendInterface {
         if (this.processError) {
             try {
                 const result = await this.actor.getStaffOrders(arg0);
-                return from_candid_vec_n1(this._uploadFile, this._downloadFile, result);
+                return from_candid_vec_n3(this._uploadFile, this._downloadFile, result);
             } catch (e) {
                 this.processError(e);
                 throw new Error("unreachable");
             }
         } else {
             const result = await this.actor.getStaffOrders(arg0);
-            return from_candid_vec_n1(this._uploadFile, this._downloadFile, result);
+            return from_candid_vec_n3(this._uploadFile, this._downloadFile, result);
         }
     }
     async registerStaff(arg0: string, arg1: string): Promise<boolean> {
@@ -410,28 +476,67 @@ export class Backend implements backendInterface {
     async updateOrderStatus(arg0: bigint, arg1: OrderStatus): Promise<boolean> {
         if (this.processError) {
             try {
-                const result = await this.actor.updateOrderStatus(arg0, to_candid_OrderStatus_n7(this._uploadFile, this._downloadFile, arg1));
+                const result = await this.actor.updateOrderStatus(arg0, to_candid_OrderStatus_n14(this._uploadFile, this._downloadFile, arg1));
                 return result;
             } catch (e) {
                 this.processError(e);
                 throw new Error("unreachable");
             }
         } else {
-            const result = await this.actor.updateOrderStatus(arg0, to_candid_OrderStatus_n7(this._uploadFile, this._downloadFile, arg1));
+            const result = await this.actor.updateOrderStatus(arg0, to_candid_OrderStatus_n14(this._uploadFile, this._downloadFile, arg1));
             return result;
         }
     }
 }
-function from_candid_OrderRecord_n2(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: _OrderRecord): OrderRecord {
-    return from_candid_record_n3(_uploadFile, _downloadFile, value);
+function from_candid_CustomerType_n11(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: _CustomerType): CustomerType {
+    return from_candid_variant_n12(_uploadFile, _downloadFile, value);
 }
-function from_candid_OrderStatus_n4(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: _OrderStatus): OrderStatus {
-    return from_candid_variant_n5(_uploadFile, _downloadFile, value);
+function from_candid_Customer_n9(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: _Customer): Customer {
+    return from_candid_record_n10(_uploadFile, _downloadFile, value);
 }
-function from_candid_opt_n6(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: [] | [_OrderRecord]): OrderRecord | null {
-    return value.length === 0 ? null : from_candid_OrderRecord_n2(_uploadFile, _downloadFile, value[0]);
+function from_candid_OrderRecord_n4(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: _OrderRecord): OrderRecord {
+    return from_candid_record_n5(_uploadFile, _downloadFile, value);
 }
-function from_candid_record_n3(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: {
+function from_candid_OrderStatus_n6(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: _OrderStatus): OrderStatus {
+    return from_candid_variant_n7(_uploadFile, _downloadFile, value);
+}
+function from_candid_opt_n13(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: [] | [_OrderRecord]): OrderRecord | null {
+    return value.length === 0 ? null : from_candid_OrderRecord_n4(_uploadFile, _downloadFile, value[0]);
+}
+function from_candid_record_n10(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: {
+    id: bigint;
+    customerType: _CustomerType;
+    area: string;
+    code: string;
+    name: string;
+    address: string;
+    timestamp: _Time;
+    contactNo: string;
+    groupName: string;
+}): {
+    id: bigint;
+    customerType: CustomerType;
+    area: string;
+    code: string;
+    name: string;
+    address: string;
+    timestamp: Time;
+    contactNo: string;
+    groupName: string;
+} {
+    return {
+        id: value.id,
+        customerType: from_candid_CustomerType_n11(_uploadFile, _downloadFile, value.customerType),
+        area: value.area,
+        code: value.code,
+        name: value.name,
+        address: value.address,
+        timestamp: value.timestamp,
+        contactNo: value.contactNo,
+        groupName: value.groupName
+    };
+}
+function from_candid_record_n5(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: {
     id: bigint;
     status: _OrderStatus;
     staffCode: string;
@@ -462,7 +567,7 @@ function from_candid_record_n3(_uploadFile: (file: ExternalBlob) => Promise<Uint
 } {
     return {
         id: value.id,
-        status: from_candid_OrderStatus_n4(_uploadFile, _downloadFile, value.status),
+        status: from_candid_OrderStatus_n6(_uploadFile, _downloadFile, value.status),
         staffCode: value.staffCode,
         staffName: value.staffName,
         staffId: value.staffId,
@@ -476,7 +581,16 @@ function from_candid_record_n3(_uploadFile: (file: ExternalBlob) => Promise<Uint
         returnItems: value.returnItems
     };
 }
-function from_candid_variant_n5(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: {
+function from_candid_variant_n12(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: {
+    doctor: null;
+} | {
+    medicalStore: null;
+} | {
+    pharmacy: null;
+}): CustomerType {
+    return "doctor" in value ? CustomerType.doctor : "medicalStore" in value ? CustomerType.medicalStore : "pharmacy" in value ? CustomerType.pharmacy : value;
+}
+function from_candid_variant_n7(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: {
     pending: null;
 } | {
     delivered: null;
@@ -485,13 +599,19 @@ function from_candid_variant_n5(_uploadFile: (file: ExternalBlob) => Promise<Uin
 }): OrderStatus {
     return "pending" in value ? OrderStatus.pending : "delivered" in value ? OrderStatus.delivered : "confirmed" in value ? OrderStatus.confirmed : value;
 }
-function from_candid_vec_n1(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: Array<_OrderRecord>): Array<OrderRecord> {
-    return value.map((x)=>from_candid_OrderRecord_n2(_uploadFile, _downloadFile, x));
+function from_candid_vec_n3(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: Array<_OrderRecord>): Array<OrderRecord> {
+    return value.map((x)=>from_candid_OrderRecord_n4(_uploadFile, _downloadFile, x));
 }
-function to_candid_OrderStatus_n7(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: OrderStatus): _OrderStatus {
-    return to_candid_variant_n8(_uploadFile, _downloadFile, value);
+function from_candid_vec_n8(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: Array<_Customer>): Array<Customer> {
+    return value.map((x)=>from_candid_Customer_n9(_uploadFile, _downloadFile, x));
 }
-function to_candid_variant_n8(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: OrderStatus): {
+function to_candid_CustomerType_n1(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: CustomerType): _CustomerType {
+    return to_candid_variant_n2(_uploadFile, _downloadFile, value);
+}
+function to_candid_OrderStatus_n14(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: OrderStatus): _OrderStatus {
+    return to_candid_variant_n15(_uploadFile, _downloadFile, value);
+}
+function to_candid_variant_n15(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: OrderStatus): {
     pending: null;
 } | {
     delivered: null;
@@ -504,6 +624,21 @@ function to_candid_variant_n8(_uploadFile: (file: ExternalBlob) => Promise<Uint8
         delivered: null
     } : value == OrderStatus.confirmed ? {
         confirmed: null
+    } : value;
+}
+function to_candid_variant_n2(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: CustomerType): {
+    doctor: null;
+} | {
+    medicalStore: null;
+} | {
+    pharmacy: null;
+} {
+    return value == CustomerType.doctor ? {
+        doctor: null
+    } : value == CustomerType.medicalStore ? {
+        medicalStore: null
+    } : value == CustomerType.pharmacy ? {
+        pharmacy: null
     } : value;
 }
 export interface CreateActorOptions {

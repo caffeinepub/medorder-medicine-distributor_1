@@ -5,6 +5,7 @@ import { Separator } from "@/components/ui/separator";
 import { Toaster } from "@/components/ui/sonner";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  BarChart2,
   Beaker,
   Building2,
   Calendar,
@@ -13,12 +14,15 @@ import {
   ChevronLeft,
   ChevronUp,
   Clock,
+  CreditCard,
+  Download,
   Droplets,
   FlaskConical,
   History,
   Layers,
   Loader2,
   LogOut,
+  Mail,
   MapPin,
   Menu,
   Package,
@@ -28,6 +32,7 @@ import {
   Printer,
   RefreshCw,
   Search,
+  SendHorizonal,
   Settings2,
   ShoppingBag,
   ShoppingCart,
@@ -46,7 +51,7 @@ import type {
   OrderStatus as BackendOrderStatus,
   backendInterface,
 } from "./backend";
-import { OrderStatus as BackendOrderStatusEnum } from "./backend";
+import { OrderStatus as BackendOrderStatusEnum, CustomerType } from "./backend";
 import { useActor } from "./hooks/useActor";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -62,6 +67,7 @@ type Pharmacy = {
   contactNo: string;
   lastOrderDate: string | null;
   isVisited: boolean;
+  code: string;
 };
 
 type Category =
@@ -82,6 +88,21 @@ type Medicine = {
   unit: string;
   price: number;
   packSize: string;
+  genericName?: string;
+  batchNo?: string;
+  medicineType?: string;
+};
+
+type Customer = {
+  id: string;
+  backendId: bigint;
+  name: string;
+  customerType: CustomerType;
+  address: string;
+  area: string;
+  contactNo: string;
+  groupName: string;
+  code: string;
 };
 
 type CartItem = { medicine: Medicine; qty: number };
@@ -523,6 +544,25 @@ function inferCategory(name: string): Category {
   return "tablets";
 }
 
+function categoryToTypeLabel(cat: Category): string {
+  switch (cat) {
+    case "tablets":
+      return "Tablet";
+    case "syrups":
+      return "Syrup";
+    case "injections":
+      return "Inj";
+    case "capsules":
+      return "Capsule";
+    case "drops":
+      return "Drop";
+    case "creams":
+      return "Cream";
+    default:
+      return "Other";
+  }
+}
+
 // ─── Reducer ─────────────────────────────────────────────────────────────────
 
 const initialState: AppState = {
@@ -624,7 +664,8 @@ function formatDate(dateStr: string) {
 }
 
 function formatCurrency(amount: number) {
-  return `Rs ${amount.toLocaleString()}`;
+  if (Number.isNaN(amount) || !Number.isFinite(amount)) return "Rs 0.00";
+  return `Rs ${amount.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function mapBackendStatus(status: BackendOrderStatus): OrderStatus {
@@ -1294,6 +1335,13 @@ function PharmacyListScreen({
                       <Phone size={11} />
                       <span>{pharmacy.contactNo}</span>
                     </div>
+                    {pharmacy.code && (
+                      <div className="mt-1">
+                        <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-mono font-semibold">
+                          Code: {pharmacy.code}
+                        </span>
+                      </div>
+                    )}
                   </div>
                   <span className="text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full shrink-0 ml-2">
                     {pharmacy.area}
@@ -1438,12 +1486,15 @@ function OrderTakingScreen({
       }
 
       // Build order lines using backend IDs (with bonus/discount)
+      // discountPercent stored as integer * 10 to support decimals (e.g. 11.5% → stored as 115)
       const orderLines = state.cart.map((ci) => ({
         medicineId: ci.medicine.backendId,
-        quantity: BigInt(ci.qty),
-        bonusQty: BigInt(bonusDiscountMap[ci.medicine.id]?.bonus ?? 0),
+        quantity: BigInt(Math.round(ci.qty)),
+        bonusQty: BigInt(
+          Math.round(bonusDiscountMap[ci.medicine.id]?.bonus ?? 0),
+        ),
         discountPercent: BigInt(
-          bonusDiscountMap[ci.medicine.id]?.discount ?? 0,
+          Math.round((bonusDiscountMap[ci.medicine.id]?.discount ?? 0) * 10),
         ),
       }));
 
@@ -1466,7 +1517,10 @@ function OrderTakingScreen({
         unitPrice: ci.medicine.price,
         total: ci.medicine.price * ci.qty,
         bonusQty: bonusDiscountMap[ci.medicine.id]?.bonus ?? 0,
-        discountPercent: bonusDiscountMap[ci.medicine.id]?.discount ?? 0,
+        // Store as * 10 to support decimals (11.5% → 115); display as / 10
+        discountPercent: Math.round(
+          (bonusDiscountMap[ci.medicine.id]?.discount ?? 0) * 10,
+        ),
       }));
 
       const order: Order = {
@@ -2330,7 +2384,7 @@ function OrderDetailScreen({
                         )}
                         {hasDiscount && (
                           <div className="text-center text-xs font-semibold text-amber-600">
-                            {item.discountPercent ?? 0}%
+                            {(item.discountPercent ?? 0) / 10}%
                           </div>
                         )}
                         <div className="text-right text-xs">
@@ -2415,6 +2469,7 @@ function ManageScreen({
   const [pharmContact, setPharmContact] = useState("");
   const [pharmAddress, setPharmAddress] = useState("");
   const [pharmArea, setPharmArea] = useState("");
+  const [pharmCode, setPharmCode] = useState("");
   const [isAddingPharm, setIsAddingPharm] = useState(false);
   const [deletingPharmId, setDeletingPharmId] = useState<string | null>(null);
   const [confirmDeletePharmId, setConfirmDeletePharmId] = useState<
@@ -2429,6 +2484,9 @@ function ManageScreen({
   const [medCompany, setMedCompany] = useState("");
   const [medStrength, setMedStrength] = useState("");
   const [medPackSize, setMedPackSize] = useState("");
+  const [medGenericName, setMedGenericName] = useState("");
+  const [medBatchNo, setMedBatchNo] = useState("");
+  const [medMedicineType, setMedMedicineType] = useState("Tablet");
   const [isAddingMed, setIsAddingMed] = useState(false);
   const [deletingMedId, setDeletingMedId] = useState<string | null>(null);
   const [confirmDeleteMedId, setConfirmDeleteMedId] = useState<string | null>(
@@ -2450,6 +2508,7 @@ function ManageScreen({
         contactNo: p.contact,
         lastOrderDate: null,
         isVisited: false,
+        code: p.code || "",
       };
     });
   }
@@ -2470,6 +2529,9 @@ function ManageScreen({
         unit: seed?.unit ?? "unit",
         price: Number(m.price),
         packSize: m.packSize || seed?.packSize || "",
+        genericName: m.genericName || "",
+        batchNo: m.batchNo || "",
+        medicineType: m.medicineType || "",
       };
     });
   }
@@ -2489,7 +2551,12 @@ function ManageScreen({
     setIsAddingPharm(true);
     try {
       const location = `${pharmAddress.trim()} | ${pharmArea.trim()}`;
-      await actor.addPharmacy(pharmName.trim(), pharmContact.trim(), location);
+      await actor.addPharmacy(
+        pharmName.trim(),
+        pharmContact.trim(),
+        location,
+        pharmCode.trim(),
+      );
       const [newPharmacies, newMedicines] = await Promise.all([
         reloadPharmacies(),
         Promise.resolve(medicines),
@@ -2499,6 +2566,7 @@ function ManageScreen({
       setPharmContact("");
       setPharmAddress("");
       setPharmArea("");
+      setPharmCode("");
       setShowPharmacyForm(false);
       toast.success(`Pharmacy "${pharmName.trim()}" add ho gayi!`);
     } catch (e: unknown) {
@@ -2548,6 +2616,9 @@ function ManageScreen({
         medCompany.trim(),
         medStrength.trim(),
         medPackSize.trim(),
+        medGenericName.trim(),
+        medBatchNo.trim(),
+        medMedicineType,
       );
       const newMedicines = await reloadMedicines();
       onDataReloaded(pharmacies, newMedicines);
@@ -2557,6 +2628,9 @@ function ManageScreen({
       setMedCompany("");
       setMedStrength("");
       setMedPackSize("");
+      setMedGenericName("");
+      setMedBatchNo("");
+      setMedMedicineType("Tablet");
       setShowMedForm(false);
       toast.success(`Medicine "${medName.trim()}" add ho gayi!`);
     } catch (e: unknown) {
@@ -2755,6 +2829,22 @@ function ManageScreen({
                     disabled={isAddingPharm}
                   />
                 </div>
+                <div>
+                  <label
+                    htmlFor="pharm-code"
+                    className="text-xs font-medium text-muted-foreground mb-1 block"
+                  >
+                    Pharmacy Code | کوڈ
+                  </label>
+                  <Input
+                    id="pharm-code"
+                    value={pharmCode}
+                    onChange={(e) => setPharmCode(e.target.value)}
+                    placeholder="e.g. PH-001"
+                    className="h-10 text-sm"
+                    disabled={isAddingPharm}
+                  />
+                </div>
               </div>
               <div className="flex gap-2 pt-1">
                 <Button
@@ -2786,6 +2876,7 @@ function ManageScreen({
                     setPharmContact("");
                     setPharmAddress("");
                     setPharmArea("");
+                    setPharmCode("");
                   }}
                   className="h-10 px-3 text-sm"
                   disabled={isAddingPharm}
@@ -2824,6 +2915,13 @@ function ManageScreen({
                         <Phone size={10} />
                         <span>{pharmacy.contactNo}</span>
                       </div>
+                      {pharmacy.code && (
+                        <div className="mt-1">
+                          <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-mono font-semibold">
+                            Code: {pharmacy.code}
+                          </span>
+                        </div>
+                      )}
                     </div>
                     <div className="flex flex-col items-end gap-1 shrink-0">
                       <span className="text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full">
@@ -3009,6 +3107,64 @@ function ManageScreen({
                     />
                   </div>
                 </div>
+                <div>
+                  <label
+                    htmlFor="med-generic-name"
+                    className="text-xs font-medium text-muted-foreground mb-1 block"
+                  >
+                    Generic Name | جنیرک نام
+                  </label>
+                  <Input
+                    id="med-generic-name"
+                    value={medGenericName}
+                    onChange={(e) => setMedGenericName(e.target.value)}
+                    placeholder="e.g. Paracetamol"
+                    className="h-10 text-sm"
+                    disabled={isAddingMed}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label
+                      htmlFor="med-batch-no"
+                      className="text-xs font-medium text-muted-foreground mb-1 block"
+                    >
+                      Batch # | بیچ نمبر
+                    </label>
+                    <Input
+                      id="med-batch-no"
+                      value={medBatchNo}
+                      onChange={(e) => setMedBatchNo(e.target.value)}
+                      placeholder="e.g. BN-2024-001"
+                      className="h-10 text-sm"
+                      disabled={isAddingMed}
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="med-medicine-type"
+                      className="text-xs font-medium text-muted-foreground mb-1 block"
+                    >
+                      Medicine Type | قسم
+                    </label>
+                    <select
+                      id="med-medicine-type"
+                      value={medMedicineType}
+                      onChange={(e) => setMedMedicineType(e.target.value)}
+                      className="w-full h-10 text-sm border border-input rounded-md px-3 bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                      disabled={isAddingMed}
+                    >
+                      <option value="Tablet">Tablet | گولی</option>
+                      <option value="Syrup">Syrup | شربت</option>
+                      <option value="Injection">Injection | انجکشن</option>
+                      <option value="Capsule">Capsule | کیپسول</option>
+                      <option value="Drop">Drop | قطرے</option>
+                      <option value="Cream">Cream | کریم</option>
+                      <option value="Sachet">Sachet | سیشے</option>
+                      <option value="Other">Other | دیگر</option>
+                    </select>
+                  </div>
+                </div>
               </div>
               <div className="flex gap-2 pt-1">
                 <Button
@@ -3042,6 +3198,9 @@ function ManageScreen({
                     setMedCompany("");
                     setMedStrength("");
                     setMedPackSize("");
+                    setMedGenericName("");
+                    setMedBatchNo("");
+                    setMedMedicineType("Tablet");
                   }}
                   className="h-10 px-3 text-sm"
                   disabled={isAddingMed}
@@ -3073,9 +3232,16 @@ function ManageScreen({
                         <p className="font-semibold text-sm text-foreground font-heading">
                           {medicine.name}
                         </p>
-                        <span className="text-xs bg-secondary text-secondary-foreground px-1.5 py-0.5 rounded-full capitalize">
-                          {medicine.category}
-                        </span>
+                        {medicine.medicineType && (
+                          <span className="text-xs bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded-full font-semibold">
+                            {medicine.medicineType}
+                          </span>
+                        )}
+                        {!medicine.medicineType && (
+                          <span className="text-xs bg-secondary text-secondary-foreground px-1.5 py-0.5 rounded-full capitalize">
+                            {medicine.category}
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
                         <span className="font-semibold text-primary">
@@ -3086,9 +3252,15 @@ function ManageScreen({
                             {medicine.strength}
                           </span>
                         )}
+                        {medicine.genericName && (
+                          <span className="text-gray-500 italic">
+                            ({medicine.genericName})
+                          </span>
+                        )}
                       </div>
                       {((medicine.company && medicine.company !== "Unknown") ||
-                        medicine.packSize) && (
+                        medicine.packSize ||
+                        medicine.batchNo) && (
                         <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground flex-wrap">
                           {medicine.company &&
                             medicine.company !== "Unknown" && (
@@ -3101,6 +3273,11 @@ function ManageScreen({
                             <span className="flex items-center gap-1">
                               <Package size={9} />
                               {medicine.packSize}
+                            </span>
+                          )}
+                          {medicine.batchNo && (
+                            <span className="font-mono text-gray-500">
+                              #{medicine.batchNo}
                             </span>
                           )}
                         </div>
@@ -3179,35 +3356,38 @@ function buildPrintHtml(orders: OfficeOrderDetail[]): string {
               : idx % 2 === 0
                 ? "#fff"
                 : "#f9fafb";
+          const discountPct = item.discountPercent / 10;
           const discountAmt =
             item.discountPercent > 0
-              ? Math.round(
-                  (item.unitPrice * item.qty * item.discountPercent) / 100,
-                )
+              ? Math.round((item.unitPrice * item.qty * discountPct) / 100)
               : 0;
           const discountedTotal = item.total - discountAmt;
           return `
         <tr style="border-bottom:1px solid #f3f4f6;background:${rowBg};">
           <td style="padding:7px 10px;font-size:12px;color:#111827;font-weight:500;">${item.medicineName}${isReturned ? ' <span style="color:#dc2626;font-size:10px;">(Returned)</span>' : ""}</td>
           <td style="padding:7px 10px;font-size:12px;color:#6b7280;text-align:center;">${item.strength || "—"}</td>
+          <td style="padding:7px 10px;font-size:12px;color:#7c3aed;text-align:center;font-weight:600;">${item.productType || "—"}</td>
+          <td style="padding:7px 10px;font-size:12px;color:#6b7280;text-align:center;">${item.packSize || "—"}</td>
           <td style="padding:7px 10px;font-size:12px;color:#6b7280;text-align:center;">—</td>
           <td style="padding:7px 10px;text-align:center;font-size:12px;font-weight:600;color:#374151;">${item.qty}</td>
           ${hasBonus ? `<td style="padding:7px 10px;text-align:center;font-size:12px;font-weight:600;color:#059669;">${item.bonusQty > 0 ? item.bonusQty : "—"}</td>` : ""}
-          ${hasDiscount ? `<td style="padding:7px 10px;text-align:center;font-size:12px;font-weight:600;color:#d97706;">${item.discountPercent > 0 ? `${item.discountPercent}%` : "—"}</td>` : ""}
-          ${hasDiscount ? `<td style="padding:7px 10px;text-align:right;font-size:12px;font-weight:600;color:#dc2626;">${discountAmt > 0 ? `-Rs ${discountAmt.toLocaleString()}` : "—"}</td>` : ""}
-          <td style="padding:7px 10px;text-align:right;font-size:12px;color:#374151;">Rs ${item.unitPrice.toLocaleString()}</td>
-          <td style="padding:7px 10px;text-align:right;font-size:12px;font-weight:bold;color:#1e40af;">Rs ${discountedTotal.toLocaleString()}</td>
+          ${hasDiscount ? `<td style="padding:7px 10px;text-align:center;font-size:12px;font-weight:600;color:#d97706;">${item.discountPercent > 0 ? `${discountPct}%` : "—"}</td>` : ""}
+          ${hasDiscount ? `<td style="padding:7px 10px;text-align:right;font-size:12px;font-weight:600;color:#dc2626;">${discountAmt > 0 ? `-Rs ${discountAmt.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</td>` : ""}
+          <td style="padding:7px 10px;text-align:right;font-size:12px;color:#374151;">Rs ${item.unitPrice.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+          <td style="padding:7px 10px;text-align:right;font-size:12px;font-weight:bold;color:#1e40af;">Rs ${discountedTotal.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
         </tr>
       `;
         })
         .join("");
 
       const extraColCount = (hasBonus ? 1 : 0) + (hasDiscount ? 2 : 0);
-      const totalCols = 6 + extraColCount;
+      // base cols: Medicine Name, Strength, Type, Pack Size, Batch#, Qty, Unit Price, Total = 8
+      const totalCols = 8 + extraColCount;
       const subtotal = order.items.reduce((s, i) => {
+        const discountPct = i.discountPercent / 10;
         const discountAmt =
           i.discountPercent > 0
-            ? Math.round((i.unitPrice * i.qty * i.discountPercent) / 100)
+            ? Math.round((i.unitPrice * i.qty * discountPct) / 100)
             : 0;
         return s + (i.total - discountAmt);
       }, 0);
@@ -3229,7 +3409,7 @@ function buildPrintHtml(orders: OfficeOrderDetail[]): string {
           <p style="color:#6b7280;font-size:10px;margin:0 0 3px;text-transform:uppercase;letter-spacing:.05em;font-weight:600;">Pharmacy | فارمیسی</p>
           <p style="font-weight:bold;font-size:14px;color:#111827;margin:0;">${order.pharmacyName}</p>
           ${order.pharmacyArea ? `<p style="color:#6b7280;font-size:11px;margin:2px 0 0;">${order.pharmacyArea}</p>` : ""}
-          ${order.pharmacyCode ? `<p style="color:#374151;font-size:11px;margin:2px 0 0;font-family:monospace;">Code: ${order.pharmacyCode}</p>` : ""}
+          ${order.pharmacyMasterCode ? `<p style="color:#374151;font-size:11px;margin:2px 0 0;font-family:monospace;">Code: ${order.pharmacyMasterCode}</p>` : ""}
         </div>
         <div>
           <p style="color:#6b7280;font-size:10px;margin:0 0 3px;text-transform:uppercase;letter-spacing:.05em;font-weight:600;">Booker | بکر</p>
@@ -3249,6 +3429,8 @@ function buildPrintHtml(orders: OfficeOrderDetail[]): string {
           <tr style="background:#1e40af;color:white;">
             <th style="padding:9px 10px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;">Medicine Name | دوائی</th>
             <th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;">Strength</th>
+            <th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;background:#6d28d9;">Type | قسم</th>
+            <th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;background:#5b21b6;">Pack Size | پیک</th>
             <th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;">Batch #</th>
             <th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;">Qty</th>
             ${hasBonus ? '<th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;background:#065f46;">Bonus</th>' : ""}
@@ -3264,26 +3446,26 @@ function buildPrintHtml(orders: OfficeOrderDetail[]): string {
         <tfoot>
           <tr style="border-top:1px solid #d1d5db;background:#f9fafb;">
             <td colspan="${totalCols - 1}" style="padding:8px 10px;text-align:right;font-weight:600;font-size:13px;color:#374151;">Sub Total | ذیلی کل</td>
-            <td style="padding:8px 10px;text-align:right;font-weight:bold;font-size:13px;color:#374151;">Rs ${subtotal.toLocaleString()}</td>
+            <td style="padding:8px 10px;text-align:right;font-weight:bold;font-size:13px;color:#374151;">Rs ${subtotal.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
           </tr>
           <tr style="background:#fef3c7;border-top:1px solid #f59e0b;">
             <td colspan="${totalCols - 1}" style="padding:8px 10px;text-align:right;font-weight:600;font-size:12px;color:#92400e;">Advanced Tax U/S 236-H @ 0.50%</td>
-            <td style="padding:8px 10px;text-align:right;font-weight:bold;font-size:12px;color:#92400e;">Rs ${advancedTax.toLocaleString()}</td>
+            <td style="padding:8px 10px;text-align:right;font-weight:bold;font-size:12px;color:#92400e;">Rs ${advancedTax.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
           </tr>
           <tr style="border-top:2px solid #1e40af;background:#dbeafe;">
             <td colspan="${totalCols - 1}" style="padding:10px 10px;text-align:right;font-weight:bold;font-size:14px;color:#1e40af;">Grand Total | کل رقم</td>
-            <td style="padding:10px 10px;text-align:right;font-weight:900;font-size:18px;color:#1e3a8a;">Rs ${grandTotal.toLocaleString()}</td>
+            <td style="padding:10px 10px;text-align:right;font-weight:900;font-size:18px;color:#1e3a8a;">Rs ${grandTotal.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
           </tr>
           ${
             order.paymentReceived > 0
               ? `
           <tr style="background:#f0fdf4;border-top:1px solid #86efac;">
             <td colspan="${totalCols - 1}" style="padding:7px 10px;text-align:right;font-weight:600;font-size:12px;color:#065f46;">Payment Received | موصول</td>
-            <td style="padding:7px 10px;text-align:right;font-weight:bold;font-size:12px;color:#065f46;">Rs ${order.paymentReceived.toLocaleString()}</td>
+            <td style="padding:7px 10px;text-align:right;font-weight:bold;font-size:12px;color:#065f46;">Rs ${order.paymentReceived.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
           </tr>
           <tr style="background:${grandTotal - order.paymentReceived > 0 ? "#fef2f2" : "#f0fdf4"};border-top:1px solid ${grandTotal - order.paymentReceived > 0 ? "#fca5a5" : "#86efac"};">
             <td colspan="${totalCols - 1}" style="padding:7px 10px;text-align:right;font-weight:600;font-size:12px;color:${grandTotal - order.paymentReceived > 0 ? "#dc2626" : "#065f46"};">Balance | باقی</td>
-            <td style="padding:7px 10px;text-align:right;font-weight:bold;font-size:12px;color:${grandTotal - order.paymentReceived > 0 ? "#dc2626" : "#065f46"};">Rs ${Math.abs(grandTotal - order.paymentReceived).toLocaleString()}</td>
+            <td style="padding:7px 10px;text-align:right;font-weight:bold;font-size:12px;color:${grandTotal - order.paymentReceived > 0 ? "#dc2626" : "#065f46"};">Rs ${Math.abs(grandTotal - order.paymentReceived).toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
           </tr>
           `
               : ""
@@ -3444,13 +3626,13 @@ function OrderDetailModal({
                 </p>
               </div>
             )}
-            {order.pharmacyCode && (
+            {(order.pharmacyMasterCode || order.pharmacyCode) && (
               <div>
                 <p className="text-xs text-gray-500 uppercase tracking-wider mb-0.5">
                   Pharmacy Code | فارمیسی کوڈ
                 </p>
                 <p className="font-bold text-gray-900 font-mono">
-                  {order.pharmacyCode}
+                  {order.pharmacyMasterCode || order.pharmacyCode}
                 </p>
               </div>
             )}
@@ -3466,13 +3648,12 @@ function OrderDetailModal({
               const hasDiscount = order.items.some(
                 (i) => i.discountPercent > 0,
               );
-              const totalCols = 5 + (hasBonus ? 1 : 0) + (hasDiscount ? 2 : 0);
+              const totalCols = 7 + (hasBonus ? 1 : 0) + (hasDiscount ? 2 : 0);
               const discountedSubtotal = order.items.reduce((s, i) => {
+                const discPct = i.discountPercent / 10;
                 const discAmt =
                   i.discountPercent > 0
-                    ? Math.round(
-                        (i.unitPrice * i.qty * i.discountPercent) / 100,
-                      )
+                    ? Math.round((i.unitPrice * i.qty * discPct) / 100)
                     : 0;
                 return s + (i.total - discAmt);
               }, 0);
@@ -3487,6 +3668,12 @@ function OrderDetailModal({
                       </th>
                       <th className="text-left px-3 py-2.5 text-xs font-semibold text-blue-700 uppercase">
                         Strength
+                      </th>
+                      <th className="text-center px-3 py-2.5 text-xs font-semibold text-purple-700 uppercase">
+                        Type | قسم
+                      </th>
+                      <th className="text-center px-3 py-2.5 text-xs font-semibold text-purple-700 uppercase">
+                        Pack Size
                       </th>
                       <th className="text-center px-3 py-2.5 text-xs font-semibold text-blue-700 uppercase">
                         Qty
@@ -3528,13 +3715,11 @@ function OrderDetailModal({
                         : i % 2 === 0
                           ? "bg-white"
                           : "bg-gray-50/50";
+                      const discountPct = item.discountPercent / 10;
                       const discountAmt =
                         item.discountPercent > 0
                           ? Math.round(
-                              (item.unitPrice *
-                                item.qty *
-                                item.discountPercent) /
-                                100,
+                              (item.unitPrice * item.qty * discountPct) / 100,
                             )
                           : 0;
                       const discountedTotal = item.total - discountAmt;
@@ -3554,6 +3739,12 @@ function OrderDetailModal({
                           <td className="px-3 py-2.5 text-gray-500">
                             {item.strength || "—"}
                           </td>
+                          <td className="px-3 py-2.5 text-center text-xs font-bold text-purple-700">
+                            {item.productType || "—"}
+                          </td>
+                          <td className="px-3 py-2.5 text-center text-xs text-gray-500">
+                            {item.packSize || "—"}
+                          </td>
                           <td className="px-3 py-2.5 text-center font-bold text-gray-700">
                             {item.qty}
                           </td>
@@ -3565,7 +3756,7 @@ function OrderDetailModal({
                           {hasDiscount && (
                             <td className="px-3 py-2.5 text-center font-bold text-amber-600">
                               {item.discountPercent > 0
-                                ? `${item.discountPercent}%`
+                                ? `${item.discountPercent / 10}%`
                                 : "—"}
                             </td>
                           )}
@@ -3690,6 +3881,8 @@ type OfficeOrderDetail = OfficeOrder & {
     medicineId: string;
     medicineName: string;
     strength: string;
+    packSize: string;
+    productType: string;
     qty: number;
     unitPrice: number;
     total: number;
@@ -3700,6 +3893,7 @@ type OfficeOrderDetail = OfficeOrder & {
   returnItems: Array<{ medicineId: string; returnedQty: number }>;
   returnReason: string;
   pharmacyCode: string;
+  pharmacyMasterCode: string;
 };
 
 // Helper to map raw order records to OfficeOrderDetail (outside component for stable ref)
@@ -3748,10 +3942,13 @@ function mapRawOrdersToDetail(
       const unitPrice = med ? Number(med.price) : 0;
       const qty = Number(line.quantity);
       const seed = MEDICINE_SEEDS.find((s) => s.name === med?.name);
+      const medCategory = seed?.category ?? inferCategory(med?.name ?? "");
       return {
         medicineId: String(line.medicineId),
         medicineName: med?.name ?? `Medicine #${line.medicineId}`,
         strength: med?.strength || seed?.strength || "",
+        packSize: med?.packSize || seed?.packSize || "",
+        productType: categoryToTypeLabel(medCategory),
         qty,
         unitPrice,
         total: unitPrice * qty,
@@ -3786,12 +3983,1394 @@ function mapRawOrdersToDetail(
       })),
       returnReason: (rec as any).returnReason ?? "",
       pharmacyCode: (rec as any).pharmacyCode ?? "",
+      pharmacyMasterCode: (pharm as any)?.code ?? "",
     };
   });
 }
 
+// ─── Daily Sale Statement Component ──────────────────────────────────────────
+
+type DailySaleStatementProps = {
+  allOrders: OfficeOrderDetail[];
+  allMedicines: Medicine[];
+};
+
+function DailySaleStatement({
+  allOrders,
+  allMedicines,
+}: DailySaleStatementProps) {
+  const today = new Date().toISOString().split("T")[0];
+  const firstOfMonth = new Date(
+    new Date().getFullYear(),
+    new Date().getMonth(),
+    1,
+  )
+    .toISOString()
+    .split("T")[0];
+
+  const [dateFrom, setDateFrom] = useState(firstOfMonth);
+  const [dateTo, setDateTo] = useState(today);
+  const [saleTab, setSaleTab] = useState<"all" | "deal" | "bonus">("all");
+
+  // Email mock state
+  type EmailModalState = { company: string; isSendAll: boolean } | null;
+  const [emailModal, setEmailModal] = useState<EmailModalState>(null);
+  const [emailAddresses, setEmailAddresses] = useState<Record<string, string>>(
+    () => {
+      try {
+        const raw = localStorage.getItem("medorder_company_emails");
+        return raw ? JSON.parse(raw) : {};
+      } catch {
+        return {};
+      }
+    },
+  );
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailSentCompanies, setEmailSentCompanies] = useState<Set<string>>(
+    new Set(),
+  );
+
+  function saveEmails(updated: Record<string, string>) {
+    setEmailAddresses(updated);
+    localStorage.setItem("medorder_company_emails", JSON.stringify(updated));
+  }
+
+  function handleMockSendEmail(companies: string[]) {
+    setEmailSending(true);
+    setTimeout(() => {
+      setEmailSending(false);
+      setEmailSentCompanies((prev) => {
+        const next = new Set(prev);
+        for (const c of companies) next.add(c);
+        return next;
+      });
+      setEmailModal(null);
+      toast.success(
+        companies.length === 1
+          ? `Email sent to ${companies[0]} representative (demo)`
+          : `Emails sent to all ${companies.length} companies (demo)`,
+        {
+          description: "Upgrade to Plus/Pro plan to enable real email sending.",
+        },
+      );
+    }, 1500);
+  }
+
+  // Get unique areas from orders
+  const areas = useMemo(() => {
+    const set = new Set<string>();
+    for (const o of allOrders) {
+      if (o.pharmacyArea?.trim()) set.add(o.pharmacyArea.trim());
+    }
+    return Array.from(set).sort();
+  }, [allOrders]);
+
+  // Filter orders by date range
+  const filteredOrders = useMemo(() => {
+    return allOrders.filter((o) => o.date >= dateFrom && o.date <= dateTo);
+  }, [allOrders, dateFrom, dateTo]);
+
+  // Group medicines by company
+  const companiesMap = useMemo(() => {
+    const map = new Map<string, Medicine[]>();
+    for (const med of allMedicines) {
+      const co = med.company || "Unknown";
+      if (!map.has(co)) map.set(co, []);
+      map.get(co)!.push(med);
+    }
+    return map;
+  }, [allMedicines]);
+
+  const companiesSorted = useMemo(
+    () => Array.from(companiesMap.keys()).sort(),
+    [companiesMap],
+  );
+
+  // Helper: get quarter for a date string
+  function getQuarter(dateStr: string): 1 | 2 | 3 | 4 {
+    const month = new Date(dateStr).getMonth(); // 0-indexed
+    if (month <= 2) return 1;
+    if (month <= 5) return 2;
+    if (month <= 8) return 3;
+    return 4;
+  }
+
+  // Helper: get last month date range
+  function getLastMonthRange(): { from: string; to: string } {
+    const now = new Date();
+    const firstOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+    return {
+      from: firstOfLastMonth.toISOString().split("T")[0],
+      to: lastOfLastMonth.toISOString().split("T")[0],
+    };
+  }
+
+  // Compute per-medicine stats
+  type MedicineStat = {
+    medicine: Medicine;
+    areaUnits: Record<string, number>; // area -> units
+    tradeRate: number;
+    netSaleUnits: number;
+    netSaleValue: number;
+    saleBonus: number;
+    dealCount: number;
+    todaySale: number;
+    todaySaleValue: number;
+    lastMonthSale: number;
+    lastMonthSaleValue: number;
+    q1Sale: number;
+    q1SaleValue: number;
+    q2Sale: number;
+    q2SaleValue: number;
+    q3Sale: number;
+    q3SaleValue: number;
+    q4Sale: number;
+    q4SaleValue: number;
+    dealAreaUnits: Record<string, number>;
+    bonusAreaUnits: Record<string, number>;
+  };
+
+  const lastMonthRange = getLastMonthRange();
+
+  function computeStats(medicines: Medicine[]): MedicineStat[] {
+    return medicines.map((med) => {
+      const stat: MedicineStat = {
+        medicine: med,
+        areaUnits: {},
+        tradeRate: med.price,
+        netSaleUnits: 0,
+        netSaleValue: 0,
+        saleBonus: 0,
+        dealCount: 0,
+        todaySale: 0,
+        todaySaleValue: 0,
+        lastMonthSale: 0,
+        lastMonthSaleValue: 0,
+        q1Sale: 0,
+        q1SaleValue: 0,
+        q2Sale: 0,
+        q2SaleValue: 0,
+        q3Sale: 0,
+        q3SaleValue: 0,
+        q4Sale: 0,
+        q4SaleValue: 0,
+        dealAreaUnits: {},
+        bonusAreaUnits: {},
+      };
+
+      for (const order of filteredOrders) {
+        const area = order.pharmacyArea?.trim() || "";
+        for (const item of order.items) {
+          if (String(item.medicineId) !== String(med.backendId)) continue;
+
+          const qty = item.qty;
+          const discPct = item.discountPercent / 10; // stored as percent * 10
+          const discAmt = (discPct / 100) * item.unitPrice * qty;
+          const netValue = item.unitPrice * qty - discAmt;
+
+          // All sales area units
+          stat.areaUnits[area] = (stat.areaUnits[area] || 0) + qty;
+          stat.netSaleUnits += qty;
+          stat.netSaleValue += netValue;
+          stat.saleBonus += item.bonusQty || 0;
+
+          if (item.discountPercent > 0) {
+            stat.dealCount += 1;
+            stat.dealAreaUnits[area] = (stat.dealAreaUnits[area] || 0) + qty;
+          }
+
+          if ((item.bonusQty || 0) > 0) {
+            stat.bonusAreaUnits[area] =
+              (stat.bonusAreaUnits[area] || 0) + (item.bonusQty || 0);
+          }
+
+          // Today sale
+          if (order.date === today) {
+            stat.todaySale += qty;
+            stat.todaySaleValue += netValue;
+          }
+
+          // Last month sale
+          if (
+            order.date >= lastMonthRange.from &&
+            order.date <= lastMonthRange.to
+          ) {
+            stat.lastMonthSale += qty;
+            stat.lastMonthSaleValue += netValue;
+          }
+
+          // Quarterly
+          const q = getQuarter(order.date);
+          if (q === 1) {
+            stat.q1Sale += qty;
+            stat.q1SaleValue += netValue;
+          } else if (q === 2) {
+            stat.q2Sale += qty;
+            stat.q2SaleValue += netValue;
+          } else if (q === 3) {
+            stat.q3Sale += qty;
+            stat.q3SaleValue += netValue;
+          } else {
+            stat.q4Sale += qty;
+            stat.q4SaleValue += netValue;
+          }
+        }
+      }
+
+      return stat;
+    });
+  }
+
+  // Helper: build company block HTML (for print/PDF)
+  function buildCompanyPrintHtml(
+    companyName: string,
+    stats: MedicineStat[],
+  ): string {
+    const areaHeaders = areas.map((a) => `<th>${a}</th>`).join("");
+
+    const rows = stats
+      .map((s) => {
+        const areasCells = areas
+          .map((a) => {
+            const units =
+              saleTab === "deal"
+                ? s.dealAreaUnits[a] || 0
+                : saleTab === "bonus"
+                  ? s.bonusAreaUnits[a] || 0
+                  : s.areaUnits[a] || 0;
+            return `<td>${units || "-"}</td>`;
+          })
+          .join("");
+
+        return `<tr>
+          <td class="product-col">${s.medicine.name}${s.medicine.strength ? ` ${s.medicine.strength}` : ""}</td>
+          ${areasCells}
+          <td>${s.tradeRate.toFixed(2)}</td>
+          <td>-</td><td>-</td><td>-</td>
+          <td>${s.netSaleUnits || "-"}</td>
+          <td>${s.saleBonus || "-"}</td>
+          <td>${s.dealCount || "-"}</td>
+          <td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>
+          <td>${s.todaySale || "-"}</td>
+          <td>${s.lastMonthSale || "-"}</td>
+          <td>${s.q1Sale || "-"}</td>
+          <td>${s.q2Sale || "-"}</td>
+          <td>${s.q3Sale || "-"}</td>
+          <td>${s.q4Sale || "-"}</td>
+        </tr>`;
+      })
+      .join("");
+
+    // Totals row — show Rs values for Today/LastMonth/Q1-Q4
+    const totals = {
+      areaUnits: areas.map((a) =>
+        stats.reduce(
+          (sum, s) =>
+            sum +
+            (saleTab === "deal"
+              ? s.dealAreaUnits[a] || 0
+              : saleTab === "bonus"
+                ? s.bonusAreaUnits[a] || 0
+                : s.areaUnits[a] || 0),
+          0,
+        ),
+      ),
+      netSaleUnits: stats.reduce((sum, s) => sum + s.netSaleUnits, 0),
+      saleBonus: stats.reduce((sum, s) => sum + s.saleBonus, 0),
+      dealCount: stats.reduce((sum, s) => sum + s.dealCount, 0),
+      todaySaleValue: stats.reduce((sum, s) => sum + s.todaySaleValue, 0),
+      lastMonthSaleValue: stats.reduce(
+        (sum, s) => sum + s.lastMonthSaleValue,
+        0,
+      ),
+      q1SaleValue: stats.reduce((sum, s) => sum + s.q1SaleValue, 0),
+      q2SaleValue: stats.reduce((sum, s) => sum + s.q2SaleValue, 0),
+      q3SaleValue: stats.reduce((sum, s) => sum + s.q3SaleValue, 0),
+      q4SaleValue: stats.reduce((sum, s) => sum + s.q4SaleValue, 0),
+    };
+
+    const totalAreaCells = totals.areaUnits
+      .map((u) => `<td><strong>${u || "-"}</strong></td>`)
+      .join("");
+
+    const fmtRs = (v: number) => (v > 0 ? `Rs. ${v.toFixed(0)}` : "-");
+
+    const totalsRow = `<tr style="background:#e8f0e8;font-weight:bold;">
+      <td class="product-col"><strong>TOTAL</strong></td>
+      ${totalAreaCells}
+      <td>-</td>
+      <td>-</td><td>-</td><td>-</td>
+      <td><strong>${totals.netSaleUnits || "-"}</strong></td>
+      <td><strong>${totals.saleBonus || "-"}</strong></td>
+      <td><strong>${totals.dealCount || "-"}</strong></td>
+      <td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>
+      <td><strong>${fmtRs(totals.todaySaleValue)}</strong></td>
+      <td><strong>${fmtRs(totals.lastMonthSaleValue)}</strong></td>
+      <td><strong>${fmtRs(totals.q1SaleValue)}</strong></td>
+      <td><strong>${fmtRs(totals.q2SaleValue)}</strong></td>
+      <td><strong>${fmtRs(totals.q3SaleValue)}</strong></td>
+      <td><strong>${fmtRs(totals.q4SaleValue)}</strong></td>
+    </tr>`;
+
+    return `
+    <div class="company-name">${companyName.toUpperCase()}</div>
+    <table>
+      <thead>
+        <tr>
+          <th class="product-col">Name of Product</th>
+          ${areaHeaders}
+          <th>Trade Rate</th>
+          <th>Opening Bal.</th>
+          <th>Recv Qty</th>
+          <th>Bonus Recv</th>
+          <th>Net Sale</th>
+          <th>Sale Bonus</th>
+          <th>Deal No.</th>
+          <th>Stock Trans.</th>
+          <th>Other Issues</th>
+          <th>Claims</th>
+          <th>Closing Tally</th>
+          <th>Closing Bonus</th>
+          <th>Today Sale (Rs)</th>
+          <th>Last Mon. Sale (Rs)</th>
+          <th>1st Qtr (Rs)</th>
+          <th>2nd Qtr (Rs)</th>
+          <th>3rd Qtr (Rs)</th>
+          <th>4th Qtr (Rs)</th>
+        </tr>
+      </thead>
+      <tbody>${rows}${totalsRow}</tbody>
+    </table>
+    `;
+  }
+
+  // Helper: wrap HTML body with full print document
+  function wrapPrintHtml(body: string, title: string): string {
+    return `<!DOCTYPE html><html><head><title>${title}</title>
+    <style>
+      body { font-family: Arial, sans-serif; font-size: 9px; margin: 8px; }
+      table { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
+      th, td { border: 1px solid #333; padding: 2px 4px; text-align: center; white-space: nowrap; }
+      th { background: #e8e8e8; font-weight: bold; }
+      .product-col { text-align: left; min-width: 120px; }
+      h2 { text-align: center; font-size: 16px; margin: 2px 0; font-weight: 900; letter-spacing: 1px; }
+      h3 { text-align: center; font-size: 11px; margin: 2px 0; }
+      h4 { text-align: center; font-size: 10px; margin: 2px 0; font-weight: normal; }
+      .company-name { text-align: center; font-size: 13px; font-weight: bold; background: #1e3a6e; color: white; padding: 5px; margin: 6px 0; letter-spacing: 1px; page-break-before: auto; }
+      .date-range { text-align: center; font-size: 9px; color: #444; margin: 2px 0; }
+      @media print { body { margin: 0; } .page-break { page-break-before: always; } }
+    </style></head><body>
+    <h2>MIAN MEDICINE DISTRIBUTORS</h2>
+    <h4>Opposite Quaid-e-Azam Ground, Old DHQ Road, Mandi Bahauddin</h4>
+    <h3>Area Wise Sales Statement</h3>
+    <div class="date-range">From: ${dateFrom} &nbsp;&nbsp; To: ${dateTo}</div>
+    ${body}
+    </body></html>`;
+  }
+
+  // Print a single company section
+  function printCompanySection(companyName: string, stats: MedicineStat[]) {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) return;
+    const body = buildCompanyPrintHtml(companyName, stats);
+    printWindow.document.write(
+      wrapPrintHtml(body, `Daily Sale Statement - ${companyName}`),
+    );
+    printWindow.document.close();
+    printWindow.print();
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900 font-heading">
+              Daily Sale Statement | روزانہ فروخت بیان
+            </h2>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Mian Medicine Distributors — Area Wise Sales
+            </p>
+          </div>
+          <div className="text-right text-xs text-gray-400">
+            <div className="font-semibold text-gray-600">
+              MIAN MEDICINE DISTRIBUTORS
+            </div>
+            <div>
+              Opposite Quaid-e-Azam Ground, Old DHQ Road, Mandi Bahauddin
+            </div>
+          </div>
+        </div>
+
+        {/* Controls */}
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2">
+            <label
+              htmlFor="dss-date-from"
+              className="text-xs font-semibold text-gray-500 uppercase tracking-wide"
+            >
+              From
+            </label>
+            <input
+              id="dss-date-from"
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="h-9 border border-gray-300 rounded-lg px-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label
+              htmlFor="dss-date-to"
+              className="text-xs font-semibold text-gray-500 uppercase tracking-wide"
+            >
+              To
+            </label>
+            <input
+              id="dss-date-to"
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="h-9 border border-gray-300 rounded-lg px-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+            {(["all", "deal", "bonus"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setSaleTab(tab)}
+                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors capitalize ${
+                  saleTab === tab
+                    ? "bg-white text-blue-700 shadow-sm font-semibold"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                {tab === "all"
+                  ? "All Sales"
+                  : tab === "deal"
+                    ? "Deal Sales"
+                    : "Bonus Sales"}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              const printWin = window.open("", "_blank");
+              if (!printWin) return;
+              let allBody = "";
+              for (const co of companiesSorted) {
+                const meds = companiesMap.get(co) ?? [];
+                const coStats = computeStats(meds);
+                allBody += buildCompanyPrintHtml(co, coStats);
+              }
+              printWin.document.write(
+                wrapPrintHtml(allBody, "Daily Sale Statement — All Companies"),
+              );
+              printWin.document.close();
+              printWin.print();
+            }}
+            disabled={companiesSorted.length === 0}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+          >
+            <Download size={14} />
+            Download All | سب ڈاؤنلوڈ
+          </button>
+          <button
+            type="button"
+            data-ocid="dss.send_all_email_button"
+            onClick={() => setEmailModal({ company: "", isSendAll: true })}
+            disabled={companiesSorted.length === 0}
+            className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+          >
+            <SendHorizonal size={14} />
+            Send All | سب بھیجیں
+          </button>
+          <div className="ml-auto text-xs text-gray-400">
+            {filteredOrders.length} orders in range • {allMedicines.length}{" "}
+            medicines
+          </div>
+        </div>
+      </div>
+
+      {/* Company sections */}
+      {companiesSorted.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-400">
+          <BarChart2 size={40} className="mx-auto mb-3 opacity-30" />
+          <p className="font-medium">
+            No medicines found. Add medicines via the Manage screen.
+          </p>
+        </div>
+      ) : (
+        companiesSorted.map((company) => {
+          const meds = companiesMap.get(company) ?? [];
+          const stats = computeStats(meds);
+
+          // Compute totals for this company
+          const totalNetUnits = stats.reduce((s, m) => s + m.netSaleUnits, 0);
+          const totalNetValue = stats.reduce((s, m) => s + m.netSaleValue, 0);
+          const totalBonus = stats.reduce((s, m) => s + m.saleBonus, 0);
+          const _totalToday = stats.reduce((s, m) => s + m.todaySale, 0);
+          const totalTodayValue = stats.reduce(
+            (s, m) => s + m.todaySaleValue,
+            0,
+          );
+          const _totalLastMonth = stats.reduce(
+            (s, m) => s + m.lastMonthSale,
+            0,
+          );
+          const totalLastMonthValue = stats.reduce(
+            (s, m) => s + m.lastMonthSaleValue,
+            0,
+          );
+          const _totalQ1 = stats.reduce((s, m) => s + m.q1Sale, 0);
+          const totalQ1Value = stats.reduce((s, m) => s + m.q1SaleValue, 0);
+          const _totalQ2 = stats.reduce((s, m) => s + m.q2Sale, 0);
+          const totalQ2Value = stats.reduce((s, m) => s + m.q2SaleValue, 0);
+          const _totalQ3 = stats.reduce((s, m) => s + m.q3Sale, 0);
+          const totalQ3Value = stats.reduce((s, m) => s + m.q3SaleValue, 0);
+          const _totalQ4 = stats.reduce((s, m) => s + m.q4Sale, 0);
+          const totalQ4Value = stats.reduce((s, m) => s + m.q4SaleValue, 0);
+
+          return (
+            <div
+              key={company}
+              className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden"
+            >
+              {/* Company header */}
+              <div className="bg-[#1e3a6e] text-white px-5 py-3 flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-semibold text-blue-200 uppercase tracking-wider mb-0.5">
+                    Company
+                  </div>
+                  <h3 className="text-lg font-bold tracking-wide uppercase">
+                    {company}
+                  </h3>
+                </div>
+                <div className="flex items-center gap-3 text-right">
+                  <div className="text-xs text-blue-200">
+                    <div>{meds.length} products</div>
+                    <div>Net: {totalNetUnits} units</div>
+                    <div className="font-semibold text-white">
+                      {formatCurrency(totalNetValue)}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => printCompanySection(company, stats)}
+                    className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 text-white border border-white/30 px-3 py-2 rounded-lg text-xs font-semibold transition-colors"
+                  >
+                    <Printer size={13} />
+                    Print Page
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => printCompanySection(company, stats)}
+                    className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-500 px-3 py-2 rounded-lg text-xs font-semibold transition-colors"
+                    title="Save as PDF via browser print dialog"
+                  >
+                    <Download size={13} />
+                    PDF ↓
+                  </button>
+                  <button
+                    type="button"
+                    data-ocid={`dss.company_email_button.${companiesSorted.indexOf(company) + 1}`}
+                    onClick={() => setEmailModal({ company, isSendAll: false })}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors border ${
+                      emailSentCompanies.has(company)
+                        ? "bg-green-600 border-green-500 text-white"
+                        : "bg-white/20 hover:bg-white/30 text-white border-white/30"
+                    }`}
+                    title="Send sale statement by email"
+                  >
+                    <Mail size={13} />
+                    {emailSentCompanies.has(company) ? "Sent ✓" : "Email"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Table */}
+              <div className="overflow-x-auto">
+                <table className="text-xs border-collapse w-full">
+                  <thead>
+                    <tr className="bg-gray-50 border-b-2 border-gray-300">
+                      <th className="text-left px-3 py-2 font-semibold text-gray-700 sticky left-0 bg-gray-50 z-10 border-r border-gray-200 min-w-[160px]">
+                        Name of Product
+                      </th>
+                      {areas.map((area) => (
+                        <th
+                          key={area}
+                          className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[50px] text-center"
+                        >
+                          {area}
+                        </th>
+                      ))}
+                      {areas.length === 0 && (
+                        <th className="px-2 py-2 text-gray-400 italic">
+                          No Areas
+                        </th>
+                      )}
+                      <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[65px] text-center">
+                        Trade Rate
+                      </th>
+                      <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center bg-gray-100">
+                        Open. Bal
+                      </th>
+                      <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center">
+                        Recv Qty
+                      </th>
+                      <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center">
+                        Bonus Recv
+                      </th>
+                      <th className="px-2 py-2 font-semibold text-blue-800 border-r border-gray-200 min-w-[55px] text-center bg-blue-50">
+                        Net Sale
+                      </th>
+                      <th className="px-2 py-2 font-semibold text-emerald-700 border-r border-gray-200 min-w-[55px] text-center bg-emerald-50">
+                        Sale Bonus
+                      </th>
+                      <th className="px-2 py-2 font-semibold text-amber-700 border-r border-gray-200 min-w-[50px] text-center bg-amber-50">
+                        Deal No.
+                      </th>
+                      <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center bg-gray-100">
+                        Stock Trans.
+                      </th>
+                      <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center bg-gray-100">
+                        Other Issues
+                      </th>
+                      <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center bg-gray-100">
+                        Claims
+                      </th>
+                      <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center bg-gray-100">
+                        Closing Tally
+                      </th>
+                      <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center bg-gray-100">
+                        Closing Bonus
+                      </th>
+                      <th className="px-2 py-2 font-semibold text-orange-700 border-r border-gray-200 min-w-[60px] text-center bg-orange-50">
+                        Today Sale
+                      </th>
+                      <th className="px-2 py-2 font-semibold text-purple-700 border-r border-gray-200 min-w-[65px] text-center bg-purple-50">
+                        Last Mon. Sale
+                      </th>
+                      <th className="px-2 py-2 font-semibold text-indigo-700 border-r border-gray-200 min-w-[50px] text-center bg-indigo-50">
+                        1st Qtr
+                      </th>
+                      <th className="px-2 py-2 font-semibold text-indigo-700 border-r border-gray-200 min-w-[50px] text-center bg-indigo-50">
+                        2nd Qtr
+                      </th>
+                      <th className="px-2 py-2 font-semibold text-indigo-700 border-r border-gray-200 min-w-[50px] text-center bg-indigo-50">
+                        3rd Qtr
+                      </th>
+                      <th className="px-2 py-2 font-semibold text-indigo-700 border-r border-gray-200 min-w-[50px] text-center bg-indigo-50">
+                        4th Qtr
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stats.map((s, idx) => {
+                      const getAreaVal = (area: string) =>
+                        saleTab === "deal"
+                          ? s.dealAreaUnits[area] || 0
+                          : saleTab === "bonus"
+                            ? s.bonusAreaUnits[area] || 0
+                            : s.areaUnits[area] || 0;
+
+                      return (
+                        <tr
+                          key={s.medicine.id}
+                          className={`border-b border-gray-100 hover:bg-blue-50/30 transition-colors ${idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"}`}
+                        >
+                          <td className="px-3 py-1.5 sticky left-0 bg-inherit z-10 border-r border-gray-200">
+                            <div className="font-medium text-gray-900">
+                              {s.medicine.name}
+                            </div>
+                            {s.medicine.strength && (
+                              <div className="text-gray-400 text-[10px]">
+                                {s.medicine.strength}
+                              </div>
+                            )}
+                          </td>
+                          {areas.map((area) => (
+                            <td
+                              key={area}
+                              className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-700"
+                            >
+                              {getAreaVal(area) || (
+                                <span className="text-gray-300">-</span>
+                              )}
+                            </td>
+                          ))}
+                          {areas.length === 0 && (
+                            <td className="px-2 py-1.5 text-center text-gray-300">
+                              -
+                            </td>
+                          )}
+                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-700">
+                            {s.tradeRate.toFixed(2)}
+                          </td>
+                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-gray-50">
+                            -
+                          </td>
+                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300">
+                            -
+                          </td>
+                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300">
+                            -
+                          </td>
+                          <td className="px-2 py-1.5 text-center border-r border-gray-100 font-semibold text-blue-700 bg-blue-50/50">
+                            {s.netSaleUnits || (
+                              <span className="text-gray-300">-</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5 text-center border-r border-gray-100 font-semibold text-emerald-700 bg-emerald-50/50">
+                            {s.saleBonus || (
+                              <span className="text-gray-300">-</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5 text-center border-r border-gray-100 font-semibold text-amber-700 bg-amber-50/50">
+                            {s.dealCount || (
+                              <span className="text-gray-300">-</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-gray-50">
+                            -
+                          </td>
+                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-gray-50">
+                            -
+                          </td>
+                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-gray-50">
+                            -
+                          </td>
+                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-gray-50">
+                            -
+                          </td>
+                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-gray-50">
+                            -
+                          </td>
+                          <td className="px-2 py-1.5 text-center border-r border-gray-100 font-semibold text-orange-700 bg-orange-50/50">
+                            {s.todaySale || (
+                              <span className="text-gray-300">-</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5 text-center border-r border-gray-100 font-semibold text-purple-700 bg-purple-50/50">
+                            {s.lastMonthSale || (
+                              <span className="text-gray-300">-</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-indigo-700 bg-indigo-50/50">
+                            {s.q1Sale || (
+                              <span className="text-gray-300">-</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-indigo-700 bg-indigo-50/50">
+                            {s.q2Sale || (
+                              <span className="text-gray-300">-</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-indigo-700 bg-indigo-50/50">
+                            {s.q3Sale || (
+                              <span className="text-gray-300">-</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-indigo-700 bg-indigo-50/50">
+                            {s.q4Sale || (
+                              <span className="text-gray-300">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+
+                    {/* Company Totals Row */}
+                    <tr className="border-t-2 border-[#1e3a6e] bg-[#1e3a6e]/5 font-bold">
+                      <td className="px-3 py-2 sticky left-0 bg-[#eef2f8] z-10 border-r border-gray-300 text-[#1e3a6e] uppercase tracking-wide">
+                        TOTAL
+                      </td>
+                      {areas.map((area) => (
+                        <td
+                          key={area}
+                          className="px-2 py-2 text-center border-r border-gray-200 text-[#1e3a6e]"
+                        >
+                          {stats.reduce(
+                            (sum, s) =>
+                              sum +
+                              (saleTab === "deal"
+                                ? s.dealAreaUnits[area] || 0
+                                : saleTab === "bonus"
+                                  ? s.bonusAreaUnits[area] || 0
+                                  : s.areaUnits[area] || 0),
+                            0,
+                          ) || (
+                            <span className="text-gray-300 font-normal">-</span>
+                          )}
+                        </td>
+                      ))}
+                      {areas.length === 0 && (
+                        <td className="px-2 py-2 text-center text-gray-300">
+                          -
+                        </td>
+                      )}
+                      <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-500">
+                        -
+                      </td>
+                      <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-300 bg-gray-50">
+                        -
+                      </td>
+                      <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-300">
+                        -
+                      </td>
+                      <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-300">
+                        -
+                      </td>
+                      <td className="px-2 py-2 text-center border-r border-gray-200 text-blue-800 bg-blue-100">
+                        {totalNetUnits || "-"}
+                      </td>
+                      <td className="px-2 py-2 text-center border-r border-gray-200 text-emerald-800 bg-emerald-100">
+                        {totalBonus || "-"}
+                      </td>
+                      <td className="px-2 py-2 text-center border-r border-gray-200 text-amber-800 bg-amber-100">
+                        {stats.reduce((sum, s) => sum + s.dealCount, 0) || "-"}
+                      </td>
+                      <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-300 bg-gray-50">
+                        -
+                      </td>
+                      <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-300 bg-gray-50">
+                        -
+                      </td>
+                      <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-300 bg-gray-50">
+                        -
+                      </td>
+                      <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-300 bg-gray-50">
+                        -
+                      </td>
+                      <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-300 bg-gray-50">
+                        -
+                      </td>
+                      <td className="px-2 py-2 text-center border-r border-gray-200 text-orange-800 bg-orange-100 text-[10px]">
+                        {totalTodayValue > 0
+                          ? `Rs. ${totalTodayValue.toFixed(0)}`
+                          : "-"}
+                      </td>
+                      <td className="px-2 py-2 text-center border-r border-gray-200 text-purple-800 bg-purple-100 text-[10px]">
+                        {totalLastMonthValue > 0
+                          ? `Rs. ${totalLastMonthValue.toFixed(0)}`
+                          : "-"}
+                      </td>
+                      <td className="px-2 py-2 text-center border-r border-gray-200 text-indigo-800 bg-indigo-100 text-[10px]">
+                        {totalQ1Value > 0
+                          ? `Rs. ${totalQ1Value.toFixed(0)}`
+                          : "-"}
+                      </td>
+                      <td className="px-2 py-2 text-center border-r border-gray-200 text-indigo-800 bg-indigo-100 text-[10px]">
+                        {totalQ2Value > 0
+                          ? `Rs. ${totalQ2Value.toFixed(0)}`
+                          : "-"}
+                      </td>
+                      <td className="px-2 py-2 text-center border-r border-gray-200 text-indigo-800 bg-indigo-100 text-[10px]">
+                        {totalQ3Value > 0
+                          ? `Rs. ${totalQ3Value.toFixed(0)}`
+                          : "-"}
+                      </td>
+                      <td className="px-2 py-2 text-center border-r border-gray-200 text-indigo-800 bg-indigo-100 text-[10px]">
+                        {totalQ4Value > 0
+                          ? `Rs. ${totalQ4Value.toFixed(0)}`
+                          : "-"}
+                      </td>
+                    </tr>
+
+                    {/* Net Value row */}
+                    <tr className="bg-[#eef2f8] border-b border-gray-300">
+                      <td className="px-3 py-1.5 sticky left-0 bg-[#eef2f8] z-10 border-r border-gray-300 text-[#1e3a6e] font-semibold text-[10px] uppercase">
+                        Net Value
+                      </td>
+                      {areas.map((area) => (
+                        <td
+                          key={area}
+                          className="px-2 py-1.5 text-center border-r border-gray-200 text-[10px] text-gray-400"
+                        >
+                          -
+                        </td>
+                      ))}
+                      {areas.length === 0 && (
+                        <td className="px-2 py-1.5 text-center text-gray-300">
+                          -
+                        </td>
+                      )}
+                      <td
+                        className="px-2 py-1.5 text-center border-r border-gray-200 text-gray-400 text-[10px]"
+                        colSpan={3}
+                      >
+                        -
+                      </td>
+                      <td
+                        className="px-2 py-1.5 text-center border-r border-gray-200 font-bold text-blue-800 bg-blue-50"
+                        colSpan={2}
+                      >
+                        {formatCurrency(totalNetValue)}
+                      </td>
+                      <td
+                        className="px-2 py-1.5 text-center border-r border-gray-200 text-gray-400 text-[10px]"
+                        colSpan={14}
+                      >
+                        -
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })
+      )}
+
+      {/* Email Mock Modal */}
+      {emailModal !== null && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          data-ocid="dss.email_modal"
+        >
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+            {/* Modal Header */}
+            <div className="bg-purple-600 text-white px-5 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Mail size={18} />
+                <h3 className="font-bold text-base">
+                  {emailModal.isSendAll
+                    ? "Send All Companies | سب کمپنیاں"
+                    : `Email — ${emailModal.company}`}
+                </h3>
+              </div>
+              <button
+                type="button"
+                data-ocid="dss.email_modal_close_button"
+                onClick={() => setEmailModal(null)}
+                className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Demo notice */}
+            <div className="bg-amber-50 border-b border-amber-200 px-5 py-2.5 flex items-start gap-2">
+              <span className="text-amber-600 text-lg leading-none mt-0.5">
+                ⚠
+              </span>
+              <p className="text-xs text-amber-700 font-medium">
+                Demo Mode — Emails will not actually be sent. Upgrade to
+                Plus/Pro plan to enable real email sending.
+                <br />
+                <span className="text-amber-500">
+                  ڈیمو موڈ — اصل ای میل نہیں بھیجی جائے گی۔ اپ گریڈ کریں۔
+                </span>
+              </p>
+            </div>
+
+            <div className="px-5 py-4 space-y-4">
+              {emailModal.isSendAll ? (
+                /* Send All: list all companies with email inputs */
+                <div className="space-y-3 max-h-64 overflow-y-auto">
+                  <p className="text-sm text-gray-600">
+                    Enter recipient email for each company:
+                  </p>
+                  {companiesSorted.map((co, coIdx) => (
+                    <div key={co} className="flex items-center gap-2">
+                      <label
+                        htmlFor={`dss-email-${coIdx}`}
+                        className="text-xs font-semibold text-gray-700 w-32 shrink-0 truncate"
+                      >
+                        {co}
+                      </label>
+                      <input
+                        id={`dss-email-${coIdx}`}
+                        type="email"
+                        data-ocid={`dss.email_input.${coIdx + 1}`}
+                        placeholder="email@company.com"
+                        value={emailAddresses[co] ?? ""}
+                        onChange={(e) =>
+                          saveEmails({
+                            ...emailAddresses,
+                            [co]: e.target.value,
+                          })
+                        }
+                        className="flex-1 h-8 text-xs border border-gray-300 rounded-md px-2 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                /* Single company */
+                <div className="space-y-2">
+                  <label
+                    htmlFor="dss-single-email"
+                    className="text-sm font-semibold text-gray-700 block"
+                  >
+                    Recipient Email | وصول کنندہ ای میل
+                  </label>
+                  <input
+                    id="dss-single-email"
+                    type="email"
+                    data-ocid="dss.single_email_input"
+                    placeholder="representative@company.com"
+                    value={emailAddresses[emailModal.company] ?? ""}
+                    onChange={(e) =>
+                      saveEmails({
+                        ...emailAddresses,
+                        [emailModal.company]: e.target.value,
+                      })
+                    }
+                    className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                  />
+                  <p className="text-xs text-gray-400">
+                    Sale statement for <strong>{emailModal.company}</strong> (
+                    {dateFrom} to {dateTo}) will be attached as PDF.
+                  </p>
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div className="flex items-center gap-3 pt-1">
+                <button
+                  type="button"
+                  data-ocid="dss.email_modal_cancel_button"
+                  onClick={() => setEmailModal(null)}
+                  className="flex-1 h-10 rounded-lg border border-gray-300 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+                >
+                  Cancel | منسوخ
+                </button>
+                <button
+                  type="button"
+                  data-ocid="dss.email_modal_send_button"
+                  disabled={emailSending}
+                  onClick={() => {
+                    const companies = emailModal.isSendAll
+                      ? companiesSorted
+                      : [emailModal.company];
+                    handleMockSendEmail(companies);
+                  }}
+                  className="flex-1 h-10 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:opacity-60 text-white text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
+                >
+                  {emailSending ? (
+                    <>
+                      <Loader2 size={15} className="animate-spin" />
+                      Sending...
+                    </>
+                  ) : (
+                    <>
+                      <SendHorizonal size={15} />
+                      {emailModal.isSendAll
+                        ? "Send All | سب بھیجیں"
+                        : "Send | بھیجیں"}
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Grand Total footer */}
+      {companiesSorted.length > 0 && (
+        <div className="bg-[#1e3a6e] text-white rounded-xl px-5 py-4 flex items-center justify-between">
+          <div>
+            <div className="text-xs font-semibold text-blue-200 uppercase tracking-wider">
+              Grand Total — All Companies
+            </div>
+            <div className="text-2xl font-bold mt-0.5">
+              {allMedicines.length === 0
+                ? "0 units"
+                : (() => {
+                    let total = 0;
+                    for (const co of companiesSorted) {
+                      const meds = companiesMap.get(co) ?? [];
+                      for (const s of computeStats(meds)) {
+                        total += s.netSaleUnits;
+                      }
+                    }
+                    return `${total} units sold`;
+                  })()}
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-xs font-semibold text-blue-200 uppercase tracking-wider">
+              Net Value
+            </div>
+            <div className="text-2xl font-bold mt-0.5">
+              {(() => {
+                let totalVal = 0;
+                for (const co of companiesSorted) {
+                  const meds = companiesMap.get(co) ?? [];
+                  for (const s of computeStats(meds)) {
+                    totalVal += s.netSaleValue;
+                  }
+                }
+                return formatCurrency(totalVal);
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Payments View ────────────────────────────────────────────────────────────
+
+type PaymentDayRecord = { collected: number; credit: number };
+
+function PaymentsView({
+  orders,
+  historyOrders,
+  setPaymentsClearedAt,
+}: {
+  orders: OfficeOrderDetail[];
+  historyOrders: OfficeOrderDetail[];
+  paymentsClearedAt: string | null;
+  setPaymentsClearedAt: (v: string | null) => void;
+}) {
+  const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
+
+  // Auto midnight reset on mount and every 60 seconds
+  useEffect(() => {
+    function checkMidnightReset() {
+      const todayDateStr = new Date().toISOString().split("T")[0];
+      const lastPaymentDay = localStorage.getItem("medorder_last_payment_day");
+      if (lastPaymentDay !== todayDateStr) {
+        const midnight = new Date(`${todayDateStr}T00:00:00`).toISOString();
+        localStorage.setItem("medorder_payments_cleared_at", midnight);
+        localStorage.setItem("medorder_last_payment_day", todayDateStr);
+        setPaymentsClearedAt(midnight);
+      }
+    }
+    checkMidnightReset();
+    const interval = setInterval(checkMidnightReset, 60_000);
+    return () => clearInterval(interval);
+  }, [setPaymentsClearedAt]);
+
+  // Compute daily data from all orders and merge with persisted history
+  const paymentHistory = useMemo<Record<string, PaymentDayRecord>>(() => {
+    // Read existing stored data
+    let stored: Record<string, PaymentDayRecord> = {};
+    try {
+      const raw = localStorage.getItem("medorder_payment_history");
+      if (raw) stored = JSON.parse(raw);
+    } catch {
+      /* ignore */
+    }
+
+    // Compute from current orders
+    const computed: Record<string, PaymentDayRecord> = {};
+    for (const o of [...orders, ...historyOrders]) {
+      const day = o.date; // YYYY-MM-DD
+      if (!computed[day]) computed[day] = { collected: 0, credit: 0 };
+      computed[day].collected += o.paymentReceived;
+      const balance = o.totalAmount - o.paymentReceived;
+      computed[day].credit += balance > 0 ? balance : 0;
+    }
+
+    // Merge stored + computed (computed takes precedence for same days)
+    const merged: Record<string, PaymentDayRecord> = { ...stored, ...computed };
+
+    // Prune entries older than 1 year
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    const cutoff = oneYearAgo.toISOString().split("T")[0];
+    for (const key of Object.keys(merged)) {
+      if (key < cutoff) delete merged[key];
+    }
+
+    // Persist merged back
+    try {
+      localStorage.setItem("medorder_payment_history", JSON.stringify(merged));
+    } catch {
+      /* ignore */
+    }
+
+    return merged;
+  }, [orders, historyOrders]);
+
+  // Group by month (YYYY-MM)
+  const monthlyData = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        days: Array<{ date: string } & PaymentDayRecord>;
+        totalCollected: number;
+        totalCredit: number;
+      }
+    >();
+    const sortedDays = Object.keys(paymentHistory).sort().reverse();
+    for (const day of sortedDays) {
+      const month = day.slice(0, 7); // YYYY-MM
+      if (!map.has(month))
+        map.set(month, { days: [], totalCollected: 0, totalCredit: 0 });
+      const rec = paymentHistory[day];
+      const entry = map.get(month)!;
+      entry.days.push({ date: day, ...rec });
+      entry.totalCollected += rec.collected;
+      entry.totalCredit += rec.credit;
+    }
+    // Return sorted newest first, max 12 months
+    return Array.from(map.entries()).slice(0, 12);
+  }, [paymentHistory]);
+
+  function monthLabel(ym: string): string {
+    const [year, month] = ym.split("-");
+    const d = new Date(Number(year), Number(month) - 1, 1);
+    return d.toLocaleDateString("en-PK", { month: "long", year: "numeric" });
+  }
+
+  const grandTotalCollected = monthlyData.reduce(
+    (sum, [, m]) => sum + m.totalCollected,
+    0,
+  );
+  const grandTotalCredit = monthlyData.reduce(
+    (sum, [, m]) => sum + m.totalCredit,
+    0,
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900 font-heading">
+            Payments | ادائیگیاں
+          </h2>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Monthly &amp; daily payment collection history — 1 year data
+          </p>
+        </div>
+      </div>
+
+      {/* Grand totals */}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+          <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wide mb-1">
+            Grand Total Collected | کل وصول
+          </p>
+          <p className="text-2xl font-bold text-emerald-700 font-heading">
+            {formatCurrency(grandTotalCollected)}
+          </p>
+        </div>
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+          <p className="text-xs font-semibold text-red-600 uppercase tracking-wide mb-1">
+            Grand Total Credit | کل باقی
+          </p>
+          <p className="text-2xl font-bold text-red-700 font-heading">
+            {formatCurrency(grandTotalCredit)}
+          </p>
+        </div>
+      </div>
+
+      {/* Monthly list */}
+      {monthlyData.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-400">
+          <CreditCard size={36} className="mx-auto mb-3 opacity-30" />
+          <p className="font-medium">No payment data yet</p>
+          <p className="text-xs mt-1">
+            Deliver orders and record payments to see history here
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {monthlyData.map(([month, data]) => (
+            <div
+              key={month}
+              className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden"
+            >
+              {/* Month header row */}
+              <button
+                type="button"
+                onClick={() =>
+                  setExpandedMonth(expandedMonth === month ? null : month)
+                }
+                className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`w-2 h-2 rounded-full ${expandedMonth === month ? "bg-blue-500" : "bg-gray-300"}`}
+                  />
+                  <span className="font-bold text-gray-900 font-heading">
+                    {monthLabel(month)}
+                  </span>
+                  <span className="text-xs text-gray-400">
+                    {data.days.length} day(s)
+                  </span>
+                </div>
+                <div className="flex items-center gap-6 text-sm">
+                  <span className="text-emerald-700 font-semibold">
+                    ✓ {formatCurrency(data.totalCollected)}
+                  </span>
+                  <span className="text-red-600 font-semibold">
+                    ✗ {formatCurrency(data.totalCredit)}
+                  </span>
+                  <ChevronDown
+                    size={14}
+                    className={`text-gray-400 transition-transform ${expandedMonth === month ? "rotate-180" : ""}`}
+                  />
+                </div>
+              </button>
+
+              {/* Day rows (expanded) */}
+              {expandedMonth === month && (
+                <div className="border-t border-gray-100">
+                  <div className="grid grid-cols-4 gap-2 px-5 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide bg-gray-50 border-b border-gray-100">
+                    <div>Date</div>
+                    <div className="text-right">Collected | وصول</div>
+                    <div className="text-right">Credit | باقی</div>
+                    <div className="text-right">Balance</div>
+                  </div>
+                  {data.days.map((day) => {
+                    const balance = day.collected - day.credit;
+                    return (
+                      <div
+                        key={day.date}
+                        className="grid grid-cols-4 gap-2 px-5 py-3 text-sm border-b border-gray-50 last:border-0 hover:bg-gray-50/50"
+                      >
+                        <div className="font-medium text-gray-700">
+                          {formatDate(day.date)}
+                        </div>
+                        <div className="text-right font-semibold text-emerald-700">
+                          {formatCurrency(day.collected)}
+                        </div>
+                        <div className="text-right font-semibold text-red-600">
+                          {formatCurrency(day.credit)}
+                        </div>
+                        <div
+                          className={`text-right font-bold ${balance >= 0 ? "text-emerald-600" : "text-red-600"}`}
+                        >
+                          {formatCurrency(Math.abs(balance))}
+                          <span className="text-[10px] ml-1 font-normal">
+                            {balance >= 0 ? "(net)" : "(deficit)"}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Office Dashboard ─────────────────────────────────────────────────────────
+
 function OfficeDashboard() {
   const { actor, isFetching: isActorFetching } = useActor();
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [paymentsClearedAt, setPaymentsClearedAt] = useState<string | null>(
+    () => {
+      return localStorage.getItem("medorder_payments_cleared_at");
+    },
+  );
   const [orders, setOrders] = useState<OfficeOrderDetail[]>([]);
   const [historyOrders, setHistoryOrders] = useState<OfficeOrderDetail[]>([]);
   const [ordersWithLines, setOrdersWithLines] = useState<OfficeOrderDetail[]>(
@@ -3806,8 +5385,44 @@ function OfficeDashboard() {
   const [updatingId, setUpdatingId] = useState<bigint | null>(null);
   const [isConfirmingAll, setIsConfirmingAll] = useState(false);
   const [activeView, setActiveView] = useState<
-    "orders" | "history" | "inventory" | "purchasing" | "add-order"
+    | "orders"
+    | "history"
+    | "inventory"
+    | "purchasing"
+    | "add-order"
+    | "payments"
+    | "daily-sale-statement"
+    | "customer-wise-sales"
+    | "add-customer"
   >("orders");
+  const [allCustomers, setAllCustomers] = useState<Customer[]>([]);
+  // Customer form state
+  const [custName, setCustName] = useState("");
+  const [custType, setCustType] = useState<CustomerType>(CustomerType.pharmacy);
+  const [custContact, setCustContact] = useState("");
+  const [custAddress, setCustAddress] = useState("");
+  const [custArea, setCustArea] = useState("");
+  const [custGroup, setCustGroup] = useState("");
+  const [custCode, setCustCode] = useState("");
+  const [isAddingCustomer, setIsAddingCustomer] = useState(false);
+  const [deletingCustomerId, setDeletingCustomerId] = useState<bigint | null>(
+    null,
+  );
+  const [confirmDeleteCustomerId, setConfirmDeleteCustomerId] = useState<
+    bigint | null
+  >(null);
+  // Customer wise sales filter state
+  const [cwsTab, setCwsTab] = useState<
+    "allover" | "company" | "group" | "area" | "product"
+  >("allover");
+  const [cwsDateFrom, setCwsDateFrom] = useState(
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .split("T")[0],
+  );
+  const [cwsDateTo, setCwsDateTo] = useState(
+    new Date().toISOString().split("T")[0],
+  );
   const [allPharmacies, setAllPharmacies] = useState<
     Array<{ id: bigint; name: string; location: string }>
   >([]);
@@ -3828,6 +5443,14 @@ function OfficeDashboard() {
   const [isSubmittingNewOrder, setIsSubmittingNewOrder] = useState(false);
   const [newOrderStaffName, setNewOrderStaffName] = useState("");
   const [newOrderStaffCode, setNewOrderStaffCode] = useState("");
+  const [newOrderPharmacySearch, setNewOrderPharmacySearch] = useState("");
+  const [newOrderPharmacyDropdownOpen, setNewOrderPharmacyDropdownOpen] =
+    useState(false);
+  const [newOrderMedicineSearch, setNewOrderMedicineSearch] = useState<
+    Record<string, string>
+  >({});
+  const [newOrderMedicineDropdownOpen, setNewOrderMedicineDropdownOpen] =
+    useState<Record<string, boolean>>({});
   const [purchases, setPurchases] = useState<
     Array<{
       id: bigint;
@@ -3839,6 +5462,7 @@ function OfficeDashboard() {
       packSize: string;
       companyName: string;
       timestamp: bigint;
+      medicineType: string;
     }>
   >([]);
   const [isLoadingPurchases, setIsLoadingPurchases] = useState(false);
@@ -3850,6 +5474,7 @@ function OfficeDashboard() {
   const [purchasePrice, setPurchasePrice] = useState("");
   const [purchasePackSize, setPurchasePackSize] = useState("");
   const [purchaseCompanyName, setPurchaseCompanyName] = useState("");
+  const [purchaseMedicineType, setPurchaseMedicineType] = useState("Tablet");
   const [isAddingPurchase, setIsAddingPurchase] = useState(false);
   const [deletingPurchaseId, setDeletingPurchaseId] = useState<bigint | null>(
     null,
@@ -3861,6 +5486,17 @@ function OfficeDashboard() {
     null,
   );
   const [backendError, setBackendError] = useState<string | null>(null);
+  const [printedOrderIds, setPrintedOrderIds] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem("medorder_printed_orders");
+      return stored ? new Set<string>(JSON.parse(stored)) : new Set<string>();
+    } catch {
+      return new Set<string>();
+    }
+  });
+  const [selectedForReprint, setSelectedForReprint] = useState<Set<string>>(
+    new Set(),
+  );
 
   const loadAllData = useCallback(async () => {
     if (!actor || isActorFetching) return;
@@ -3899,6 +5535,9 @@ function OfficeDashboard() {
           unit: seed?.unit ?? "unit",
           price: Number(m.price),
           packSize: m.packSize || seed?.packSize || "",
+          genericName: m.genericName || "",
+          batchNo: m.batchNo || "",
+          medicineType: m.medicineType || "",
         };
       });
       setAllMedicines(mappedMedicines);
@@ -3968,15 +5607,20 @@ function OfficeDashboard() {
 
   async function handleConfirmAll() {
     if (!actor) return;
-    const pendingOrders = orders.filter((o) => o.status === "pending");
-    if (pendingOrders.length === 0) {
-      toast.info("No pending orders to confirm");
+    // Skip orders already confirmed OR with return items (need manual review)
+    const ordersToConfirm = orders.filter(
+      (o) => o.status === "pending" && (o.returnItems ?? []).length === 0,
+    );
+    if (ordersToConfirm.length === 0) {
+      toast.info(
+        "No pending orders to confirm (returned orders need manual confirmation)",
+      );
       return;
     }
     setIsConfirmingAll(true);
     try {
       await Promise.all(
-        pendingOrders.map((o) =>
+        ordersToConfirm.map((o) =>
           actor.updateOrderStatus(
             o.backendId,
             mapLocalStatusToBackend("confirmed"),
@@ -3984,7 +5628,7 @@ function OfficeDashboard() {
         ),
       );
       toast.success(
-        `${pendingOrders.length} orders confirmed | ${pendingOrders.length} آرڈر تصدیق ہو گئے`,
+        `${ordersToConfirm.length} orders confirmed | ${ordersToConfirm.length} آرڈر تصدیق ہو گئے`,
       );
       await loadAllData();
     } catch (e: unknown) {
@@ -4000,7 +5644,9 @@ function OfficeDashboard() {
     setIsLoadingPurchases(true);
     try {
       const raw = await actor.getPurchases();
-      setPurchases(raw);
+      setPurchases(
+        raw.map((p) => ({ ...p, medicineType: p.medicineType || "" })),
+      );
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Unknown error";
       toast.error(`Error loading purchases: ${msg}`);
@@ -4014,6 +5660,87 @@ function OfficeDashboard() {
       loadPurchases();
     }
   }, [activeView, actor, loadPurchases]);
+
+  const loadCustomers = useCallback(async () => {
+    if (!actor) return;
+    try {
+      const raw = await actor.getCustomers();
+      const mapped: Customer[] = raw.map((c) => ({
+        id: String(c.id),
+        backendId: c.id,
+        name: c.name,
+        customerType: c.customerType,
+        address: c.address,
+        area: c.area,
+        contactNo: c.contactNo,
+        groupName: c.groupName,
+        code: c.code,
+      }));
+      setAllCustomers(mapped);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error loading customers: ${msg}`);
+    }
+  }, [actor]);
+
+  useEffect(() => {
+    if (
+      (activeView === "add-customer" || activeView === "customer-wise-sales") &&
+      actor
+    ) {
+      loadCustomers();
+    }
+  }, [activeView, actor, loadCustomers]);
+
+  async function handleAddCustomer() {
+    if (!actor) return;
+    if (!custName.trim()) {
+      toast.error("Please enter customer name");
+      return;
+    }
+    setIsAddingCustomer(true);
+    try {
+      await actor.addCustomer(
+        custName.trim(),
+        custType,
+        custAddress.trim(),
+        custArea.trim(),
+        custContact.trim(),
+        custGroup.trim(),
+        custCode.trim(),
+      );
+      toast.success(`Customer "${custName.trim()}" add ho gaya!`);
+      setCustName("");
+      setCustType(CustomerType.pharmacy);
+      setCustContact("");
+      setCustAddress("");
+      setCustArea("");
+      setCustGroup("");
+      setCustCode("");
+      await loadCustomers();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error adding customer: ${msg}`);
+    } finally {
+      setIsAddingCustomer(false);
+    }
+  }
+
+  async function handleDeleteCustomer(id: bigint) {
+    if (!actor) return;
+    setDeletingCustomerId(id);
+    try {
+      await actor.deleteCustomer(id);
+      toast.success("Customer delete ho gaya!");
+      setConfirmDeleteCustomerId(null);
+      await loadCustomers();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error deleting customer: ${msg}`);
+    } finally {
+      setDeletingCustomerId(null);
+    }
+  }
 
   async function handleAddPurchase() {
     if (!actor) return;
@@ -4049,6 +5776,7 @@ function OfficeDashboard() {
         BigInt(Math.round(price)),
         purchasePackSize.trim(),
         purchaseCompanyName.trim(),
+        purchaseMedicineType,
       );
       toast.success(
         `Purchase record added for "${purchaseProductName.trim()}"!`,
@@ -4060,6 +5788,7 @@ function OfficeDashboard() {
       setPurchasePrice("");
       setPurchasePackSize("");
       setPurchaseCompanyName("");
+      setPurchaseMedicineType("Tablet");
       await loadPurchases();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Unknown error";
@@ -4093,8 +5822,9 @@ function OfficeDashboard() {
         medicineId: line.medicineId,
         quantity: BigInt(Math.round(Number.parseFloat(line.qty) || 1)),
         bonusQty: BigInt(Math.round(Number.parseFloat(line.bonus) || 0)),
+        // Store as * 10 to support decimals (11.5% → 115); display as / 10
         discountPercent: BigInt(
-          Math.round(Number.parseFloat(line.discount) || 0),
+          Math.round((Number.parseFloat(line.discount) || 0) * 10),
         ),
       }));
       await actor.createOrder(
@@ -4209,6 +5939,14 @@ function OfficeDashboard() {
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen((v) => !v)}
+              className="w-9 h-9 rounded-xl bg-white/15 hover:bg-white/25 transition-colors flex items-center justify-center shrink-0"
+              aria-label="Toggle sidebar"
+            >
+              <Menu size={18} />
+            </button>
             <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
               <Package size={22} />
             </div>
@@ -4248,19 +5986,24 @@ function OfficeDashboard() {
 
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
-        <aside className="w-56 bg-white border-r border-gray-200 flex flex-col py-4 shrink-0 overflow-y-auto">
-          <nav className="space-y-1 px-3">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-2 mb-2">
-              Orders | آرڈر
-            </p>
+        <aside
+          className={`${sidebarOpen ? "w-56" : "w-14"} bg-white border-r border-gray-200 flex flex-col py-4 shrink-0 overflow-y-auto transition-all duration-200`}
+        >
+          <nav className="space-y-1 px-2">
+            {sidebarOpen && (
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-2 mb-2">
+                Orders | آرڈر
+              </p>
+            )}
             <button
               type="button"
               onClick={() => setActiveView("orders")}
-              className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "orders" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"}`}
+              title="Active Orders"
+              className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "orders" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
             >
-              <Package size={16} />
-              <span>Active Orders</span>
-              {stats.total > 0 && (
+              <Package size={16} className="shrink-0" />
+              {sidebarOpen && <span>Active Orders</span>}
+              {sidebarOpen && stats.total > 0 && (
                 <span
                   className={`ml-auto text-xs px-1.5 py-0.5 rounded-full font-semibold ${activeView === "orders" ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-500"}`}
                 >
@@ -4271,41 +6014,92 @@ function OfficeDashboard() {
             <button
               type="button"
               onClick={() => setActiveView("history")}
-              className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "history" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"}`}
+              title="History"
+              className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "history" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
             >
-              <History size={16} />
-              <span>History | تاریخ</span>
+              <History size={16} className="shrink-0" />
+              {sidebarOpen && <span>History | تاریخ</span>}
             </button>
             <div className="pt-3 border-t border-gray-100 mt-3">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-2 mb-2">
-                Management | انتظام
-              </p>
+              {sidebarOpen && (
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-2 mb-2">
+                  Management | انتظام
+                </p>
+              )}
               <button
                 type="button"
                 onClick={() => setActiveView("inventory")}
-                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "inventory" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"}`}
+                title="Inventory"
+                className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "inventory" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
               >
-                <Warehouse size={16} />
-                <span>Inventory | انوینٹری</span>
+                <Warehouse size={16} className="shrink-0" />
+                {sidebarOpen && <span>Inventory | انوینٹری</span>}
               </button>
               <button
                 type="button"
                 onClick={() => {
                   setActiveView("purchasing");
                 }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "purchasing" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"}`}
+                title="Purchasing"
+                className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "purchasing" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
               >
-                <ShoppingBag size={16} />
-                <span>Purchasing | خریداری</span>
+                <ShoppingBag size={16} className="shrink-0" />
+                {sidebarOpen && <span>Purchasing | خریداری</span>}
               </button>
               <button
                 type="button"
                 onClick={() => setActiveView("add-order")}
-                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "add-order" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"}`}
+                title="Add Order"
+                className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "add-order" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
               >
-                <Plus size={16} />
-                <span>Add Order | آرڈر شامل</span>
+                <Plus size={16} className="shrink-0" />
+                {sidebarOpen && <span>Add Order | آرڈر شامل</span>}
               </button>
+              <button
+                type="button"
+                onClick={() => setActiveView("payments")}
+                title="Payments"
+                className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "payments" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
+              >
+                <CreditCard size={16} className="shrink-0" />
+                {sidebarOpen && <span>Payments | ادائیگیاں</span>}
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveView("daily-sale-statement")}
+                title="Daily Sale Statement"
+                className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "daily-sale-statement" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
+              >
+                <BarChart2 size={16} className="shrink-0" />
+                {sidebarOpen && (
+                  <span>Daily Sale Statement | روزانہ فروخت</span>
+                )}
+              </button>
+              <div className="pt-3 border-t border-gray-100 mt-3">
+                {sidebarOpen && (
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-2 mb-2">
+                    Customers | کسٹمرز
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setActiveView("customer-wise-sales")}
+                  title="Customer Wise Sales"
+                  className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "customer-wise-sales" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
+                >
+                  <User size={16} className="shrink-0" />
+                  {sidebarOpen && <span>Customer Wise Sales | کسٹمر سیلز</span>}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveView("add-customer")}
+                  title="Add Customer"
+                  className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "add-customer" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
+                >
+                  <Plus size={16} className="shrink-0" />
+                  {sidebarOpen && <span>Add Customer | کسٹمر شامل کریں</span>}
+                </button>
+              </div>
             </div>
           </nav>
         </aside>
@@ -4425,23 +6219,77 @@ function OfficeDashboard() {
                       )}
                     </button>
 
-                    {/* Print All */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const printWin = window.open("", "_blank");
-                        if (!printWin) return;
-                        const html = buildPrintHtml(filteredWithLines);
-                        printWin.document.write(html);
-                        printWin.document.close();
-                        printWin.print();
-                      }}
-                      disabled={filtered.length === 0}
-                      className="flex items-center gap-2 bg-gray-600 hover:bg-gray-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
-                    >
-                      <Printer size={14} />
-                      Print All | سب پرنٹ
-                    </button>
+                    {/* Print Selected */}
+                    {selectedForReprint.size > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const toPrint = filteredWithLines.filter((o) =>
+                            selectedForReprint.has(o.orderId),
+                          );
+                          if (toPrint.length === 0) return;
+                          const printWin = window.open("", "_blank");
+                          if (!printWin) return;
+                          const html = buildPrintHtml(toPrint);
+                          printWin.document.write(html);
+                          printWin.document.close();
+                          printWin.print();
+                          setSelectedForReprint(new Set());
+                        }}
+                        className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                      >
+                        <Printer size={14} />
+                        Print Selected ({selectedForReprint.size}) | منتخب
+                      </button>
+                    )}
+                    {/* Print New */}
+                    {(() => {
+                      const newOrders = filteredWithLines.filter(
+                        (o) => !printedOrderIds.has(o.orderId),
+                      );
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (newOrders.length === 0) {
+                              toast.info(
+                                "All filtered orders already printed. Select specific orders to re-print.",
+                              );
+                              return;
+                            }
+                            const printWin = window.open("", "_blank");
+                            if (!printWin) return;
+                            const html = buildPrintHtml(newOrders);
+                            printWin.document.write(html);
+                            printWin.document.close();
+                            printWin.print();
+                            const newPrinted = new Set(printedOrderIds);
+                            for (const o of newOrders) {
+                              newPrinted.add(o.orderId);
+                            }
+                            setPrintedOrderIds(newPrinted);
+                            try {
+                              localStorage.setItem(
+                                "medorder_printed_orders",
+                                JSON.stringify(Array.from(newPrinted)),
+                              );
+                            } catch {
+                              // ignore
+                            }
+                          }}
+                          disabled={filtered.length === 0}
+                          className="flex items-center gap-2 bg-gray-600 hover:bg-gray-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                        >
+                          <Printer size={14} />
+                          Print New | نئے پرنٹ
+                          {newOrders.length > 0 && (
+                            <span className="bg-white/25 text-white text-xs px-1.5 py-0.5 rounded-full">
+                              {newOrders.length}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -4465,6 +6313,9 @@ function OfficeDashboard() {
                     <table className="w-full">
                       <thead>
                         <tr className="bg-gray-50 border-b border-gray-200">
+                          <th className="text-center px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider w-10">
+                            ✓
+                          </th>
                           <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                             Order ID
                           </th>
@@ -4493,16 +6344,51 @@ function OfficeDashboard() {
                       </thead>
                       <tbody className="divide-y divide-gray-100">
                         {filtered.map((order, idx) => {
+                          const isPrinted = printedOrderIds.has(order.orderId);
+                          const isSelectedForReprint = selectedForReprint.has(
+                            order.orderId,
+                          );
                           return (
                             <tr
                               key={String(order.backendId)}
-                              className={`cursor-pointer hover:bg-blue-50/60 transition-colors ${idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"}`}
+                              className={`cursor-pointer hover:bg-blue-50/60 transition-colors ${idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"} ${isPrinted ? "opacity-80" : ""}`}
                               onClick={() => setSelectedOrder(order)}
                               onKeyDown={(e) =>
                                 e.key === "Enter" && setSelectedOrder(order)
                               }
                               tabIndex={0}
                             >
+                              <td
+                                className="px-3 py-3 text-center"
+                                onClick={(e) => e.stopPropagation()}
+                                onKeyDown={(e) => e.stopPropagation()}
+                              >
+                                {isPrinted && (
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelectedForReprint}
+                                    onChange={(e) => {
+                                      setSelectedForReprint((prev) => {
+                                        const next = new Set(prev);
+                                        if (e.target.checked) {
+                                          next.add(order.orderId);
+                                        } else {
+                                          next.delete(order.orderId);
+                                        }
+                                        return next;
+                                      });
+                                    }}
+                                    className="w-4 h-4 accent-orange-500 cursor-pointer"
+                                    title="Select for reprint"
+                                    aria-label={`Select ${order.orderId} for reprint`}
+                                  />
+                                )}
+                                {isPrinted && !isSelectedForReprint && (
+                                  <span className="block text-[10px] text-emerald-600 font-semibold mt-0.5">
+                                    ✓ printed
+                                  </span>
+                                )}
+                              </td>
                               <td className="px-4 py-3 text-sm font-mono font-semibold text-blue-700">
                                 {order.orderId}
                               </td>
@@ -4803,6 +6689,15 @@ function OfficeDashboard() {
                               Medicine Name
                             </th>
                             <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                              Generic Name | جنیرک
+                            </th>
+                            <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                              Batch # | بیچ
+                            </th>
+                            <th className="text-center px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                              Type | قسم
+                            </th>
+                            <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                               Strength
                             </th>
                             <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
@@ -4830,9 +6725,23 @@ function OfficeDashboard() {
                                   <span className="font-semibold text-sm text-gray-900">
                                     {med.name}
                                   </span>
-                                  <span className="ml-2 text-xs capitalize text-gray-400">
-                                    {med.category}
-                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-sm text-gray-600 italic">
+                                  {med.genericName || "—"}
+                                </td>
+                                <td className="px-4 py-3 text-sm font-mono text-gray-700">
+                                  {med.batchNo || "—"}
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  {med.medicineType ? (
+                                    <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full font-semibold">
+                                      {med.medicineType}
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs capitalize text-gray-400">
+                                      {med.category}
+                                    </span>
+                                  )}
                                 </td>
                                 <td className="px-4 py-3 text-sm text-gray-600">
                                   {med.strength || "—"}
@@ -4994,7 +6903,7 @@ function OfficeDashboard() {
                         className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
                       />
                     </div>
-                    <div className="md:col-span-2">
+                    <div>
                       <label
                         htmlFor="pur-company-name"
                         className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
@@ -5010,6 +6919,32 @@ function OfficeDashboard() {
                         disabled={isAddingPurchase}
                         className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
                       />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="pur-medicine-type"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Medicine Type | قسم
+                      </label>
+                      <select
+                        id="pur-medicine-type"
+                        value={purchaseMedicineType}
+                        onChange={(e) =>
+                          setPurchaseMedicineType(e.target.value)
+                        }
+                        disabled={isAddingPurchase}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
+                      >
+                        <option value="Tablet">Tablet | گولی</option>
+                        <option value="Syrup">Syrup | شربت</option>
+                        <option value="Injection">Injection | انجکشن</option>
+                        <option value="Capsule">Capsule | کیپسول</option>
+                        <option value="Drop">Drop | قطرے</option>
+                        <option value="Cream">Cream | کریم</option>
+                        <option value="Sachet">Sachet | سیشے</option>
+                        <option value="Other">Other | دیگر</option>
+                      </select>
                     </div>
                     <div className="flex items-end">
                       <button
@@ -5066,6 +7001,9 @@ function OfficeDashboard() {
                           <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                             Batch # | بیچ
                           </th>
+                          <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Type | قسم
+                          </th>
                           <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                             Company | کمپنی
                           </th>
@@ -5110,6 +7048,17 @@ function OfficeDashboard() {
                               </td>
                               <td className="px-4 py-3 text-sm font-mono text-gray-700">
                                 {purchase.batchNo}
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                {purchase.medicineType ? (
+                                  <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full font-semibold">
+                                    {purchase.medicineType}
+                                  </span>
+                                ) : (
+                                  <span className="text-xs text-gray-400">
+                                    —
+                                  </span>
+                                )}
                               </td>
                               <td className="px-4 py-3 text-sm text-gray-700">
                                 {purchase.companyName}
@@ -5235,35 +7184,107 @@ function OfficeDashboard() {
                     </div>
                   </div>
 
-                  {/* Pharmacy select */}
-                  <div>
+                  {/* Pharmacy searchable select */}
+                  <div className="relative">
                     <label
-                      htmlFor="new-order-pharmacy"
+                      htmlFor="new-order-pharmacy-search"
                       className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
                     >
                       Pharmacy | فارمیسی *
                     </label>
-                    <select
-                      id="new-order-pharmacy"
-                      value={
-                        newOrderPharmacyId ? String(newOrderPharmacyId) : ""
-                      }
-                      onChange={(e) =>
-                        setNewOrderPharmacyId(
-                          e.target.value ? BigInt(e.target.value) : null,
-                        )
-                      }
-                      className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    >
-                      <option value="">
-                        Select pharmacy... | فارمیسی منتخب کریں
-                      </option>
-                      {allPharmacies.map((p) => (
-                        <option key={String(p.id)} value={String(p.id)}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="relative">
+                      <Search
+                        size={14}
+                        className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+                      />
+                      <input
+                        id="new-order-pharmacy-search"
+                        type="text"
+                        value={
+                          newOrderPharmacyId && !newOrderPharmacyDropdownOpen
+                            ? (allPharmacies.find(
+                                (p) => p.id === newOrderPharmacyId,
+                              )?.name ?? newOrderPharmacySearch)
+                            : newOrderPharmacySearch
+                        }
+                        onChange={(e) => {
+                          setNewOrderPharmacySearch(e.target.value);
+                          setNewOrderPharmacyDropdownOpen(true);
+                          if (!e.target.value) setNewOrderPharmacyId(null);
+                        }}
+                        onFocus={() => {
+                          setNewOrderPharmacySearch("");
+                          setNewOrderPharmacyDropdownOpen(true);
+                        }}
+                        placeholder="Search pharmacy... | فارمیسی تلاش کریں"
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg pl-9 pr-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        autoComplete="off"
+                      />
+                      {newOrderPharmacyId && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewOrderPharmacyId(null);
+                            setNewOrderPharmacySearch("");
+                          }}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                          aria-label="Clear pharmacy"
+                        >
+                          <X size={14} />
+                        </button>
+                      )}
+                    </div>
+                    {newOrderPharmacyDropdownOpen && (
+                      <div className="absolute z-20 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {allPharmacies
+                          .filter((p) =>
+                            newOrderPharmacySearch
+                              ? p.name
+                                  .toLowerCase()
+                                  .includes(
+                                    newOrderPharmacySearch.toLowerCase(),
+                                  )
+                              : true,
+                          )
+                          .map((p) => (
+                            <button
+                              type="button"
+                              key={String(p.id)}
+                              onClick={() => {
+                                setNewOrderPharmacyId(p.id);
+                                setNewOrderPharmacySearch("");
+                                setNewOrderPharmacyDropdownOpen(false);
+                              }}
+                              className={`w-full text-left px-3 py-2.5 text-sm hover:bg-blue-50 transition-colors ${newOrderPharmacyId === p.id ? "bg-blue-50 text-blue-700 font-semibold" : "text-gray-900"}`}
+                            >
+                              {p.name}
+                            </button>
+                          ))}
+                        {allPharmacies.filter((p) =>
+                          newOrderPharmacySearch
+                            ? p.name
+                                .toLowerCase()
+                                .includes(newOrderPharmacySearch.toLowerCase())
+                            : true,
+                        ).length === 0 && (
+                          <div className="px-3 py-3 text-sm text-gray-400 text-center">
+                            No pharmacies found
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {/* Backdrop to close dropdown */}
+                    {newOrderPharmacyDropdownOpen && (
+                      <div
+                        className="fixed inset-0 z-10"
+                        onClick={() => setNewOrderPharmacyDropdownOpen(false)}
+                        onKeyDown={(e) =>
+                          e.key === "Escape" &&
+                          setNewOrderPharmacyDropdownOpen(false)
+                        }
+                        aria-hidden="true"
+                      />
+                    )}
                   </div>
 
                   {/* Medicine rows */}
@@ -5315,40 +7336,146 @@ function OfficeDashboard() {
                             key={line._key}
                             className="grid grid-cols-12 gap-2 items-center"
                           >
-                            <div className="col-span-5">
-                              <select
-                                value={String(line.medicineId)}
-                                onChange={(e) => {
-                                  const med = allMedicines.find(
-                                    (m) =>
-                                      String(m.backendId) === e.target.value,
-                                  );
-                                  if (med) {
-                                    setNewOrderLines((prev) =>
-                                      prev.map((l) =>
-                                        l._key === line._key
-                                          ? {
-                                              ...l,
-                                              medicineId: med.backendId,
-                                              medicineName: med.name,
-                                            }
-                                          : l,
-                                      ),
-                                    );
+                            <div className="col-span-5 relative">
+                              <div className="relative">
+                                <Search
+                                  size={12}
+                                  className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+                                />
+                                <input
+                                  type="text"
+                                  value={
+                                    newOrderMedicineDropdownOpen[line._key]
+                                      ? (newOrderMedicineSearch[line._key] ??
+                                        "")
+                                      : line.medicineName
                                   }
-                                }}
-                                className="w-full h-9 text-sm border border-gray-300 rounded-lg px-2 bg-white text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                              >
-                                {allMedicines.map((m) => (
-                                  <option
-                                    key={String(m.backendId)}
-                                    value={String(m.backendId)}
-                                  >
-                                    {m.name}
-                                    {m.strength ? ` (${m.strength})` : ""}
-                                  </option>
-                                ))}
-                              </select>
+                                  onChange={(e) => {
+                                    setNewOrderMedicineSearch((prev) => ({
+                                      ...prev,
+                                      [line._key]: e.target.value,
+                                    }));
+                                    setNewOrderMedicineDropdownOpen((prev) => ({
+                                      ...prev,
+                                      [line._key]: true,
+                                    }));
+                                  }}
+                                  onFocus={() => {
+                                    setNewOrderMedicineSearch((prev) => ({
+                                      ...prev,
+                                      [line._key]: "",
+                                    }));
+                                    setNewOrderMedicineDropdownOpen((prev) => ({
+                                      ...prev,
+                                      [line._key]: true,
+                                    }));
+                                  }}
+                                  placeholder="Search medicine..."
+                                  className="w-full h-9 text-sm border border-gray-300 rounded-lg pl-7 pr-2 bg-white text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                  autoComplete="off"
+                                />
+                              </div>
+                              {newOrderMedicineDropdownOpen[line._key] && (
+                                <>
+                                  <div className="absolute z-20 top-full mt-0.5 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                                    {allMedicines
+                                      .filter((m) => {
+                                        const q = (
+                                          newOrderMedicineSearch[line._key] ??
+                                          ""
+                                        ).toLowerCase();
+                                        if (!q) return true;
+                                        return (
+                                          m.name.toLowerCase().includes(q) ||
+                                          m.company.toLowerCase().includes(q) ||
+                                          m.strength.toLowerCase().includes(q)
+                                        );
+                                      })
+                                      .map((m) => (
+                                        <button
+                                          type="button"
+                                          key={String(m.backendId)}
+                                          onClick={() => {
+                                            setNewOrderLines((prev) =>
+                                              prev.map((l) =>
+                                                l._key === line._key
+                                                  ? {
+                                                      ...l,
+                                                      medicineId: m.backendId,
+                                                      medicineName: m.name,
+                                                    }
+                                                  : l,
+                                              ),
+                                            );
+                                            setNewOrderMedicineDropdownOpen(
+                                              (prev) => ({
+                                                ...prev,
+                                                [line._key]: false,
+                                              }),
+                                            );
+                                            setNewOrderMedicineSearch(
+                                              (prev) => ({
+                                                ...prev,
+                                                [line._key]: "",
+                                              }),
+                                            );
+                                          }}
+                                          className={`w-full text-left px-2 py-2 text-xs hover:bg-blue-50 transition-colors ${line.medicineId === m.backendId ? "bg-blue-50 text-blue-700 font-semibold" : "text-gray-900"}`}
+                                        >
+                                          <span className="font-medium">
+                                            {m.name}
+                                          </span>
+                                          {m.strength && (
+                                            <span className="text-gray-400 ml-1">
+                                              ({m.strength})
+                                            </span>
+                                          )}
+                                          {m.company && (
+                                            <span className="text-gray-400 ml-1 text-[10px]">
+                                              · {m.company}
+                                            </span>
+                                          )}
+                                        </button>
+                                      ))}
+                                    {allMedicines.filter((m) => {
+                                      const q = (
+                                        newOrderMedicineSearch[line._key] ?? ""
+                                      ).toLowerCase();
+                                      if (!q) return true;
+                                      return (
+                                        m.name.toLowerCase().includes(q) ||
+                                        m.company.toLowerCase().includes(q) ||
+                                        m.strength.toLowerCase().includes(q)
+                                      );
+                                    }).length === 0 && (
+                                      <div className="px-2 py-2 text-xs text-gray-400 text-center">
+                                        No medicines found
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div
+                                    className="fixed inset-0 z-10"
+                                    onClick={() =>
+                                      setNewOrderMedicineDropdownOpen(
+                                        (prev) => ({
+                                          ...prev,
+                                          [line._key]: false,
+                                        }),
+                                      )
+                                    }
+                                    onKeyDown={(e) =>
+                                      e.key === "Escape" &&
+                                      setNewOrderMedicineDropdownOpen(
+                                        (prev) => ({
+                                          ...prev,
+                                          [line._key]: false,
+                                        }),
+                                      )
+                                    }
+                                    aria-hidden="true"
+                                  />
+                                </>
+                              )}
                             </div>
                             <div className="col-span-2">
                               <input
@@ -5468,6 +7595,1032 @@ function OfficeDashboard() {
               </div>
             )}
 
+            {/* Payments View */}
+            {activeView === "payments" && (
+              <PaymentsView
+                orders={orders}
+                historyOrders={historyOrders}
+                paymentsClearedAt={paymentsClearedAt}
+                setPaymentsClearedAt={(v) => {
+                  setPaymentsClearedAt(v);
+                  if (v)
+                    localStorage.setItem("medorder_payments_cleared_at", v);
+                  else localStorage.removeItem("medorder_payments_cleared_at");
+                }}
+              />
+            )}
+
+            {/* Daily Sale Statement */}
+            {activeView === "daily-sale-statement" && (
+              <DailySaleStatement
+                allOrders={[...ordersWithLines, ...historyOrders]}
+                allMedicines={allMedicines}
+              />
+            )}
+
+            {/* Customer Wise Sales */}
+            {activeView === "customer-wise-sales" && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900 font-heading">
+                    Customer Wise Sales | کسٹمر وائز سیلز
+                  </h2>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    Track sales by customer, area, company, group, or product
+                  </p>
+                </div>
+
+                {/* Date Range + Filter Tabs */}
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+                  <div className="flex flex-wrap items-center gap-4 mb-4">
+                    <div className="flex items-center gap-2">
+                      <label
+                        htmlFor="cws-date-from"
+                        className="text-xs font-semibold text-gray-600 uppercase tracking-wide"
+                      >
+                        From | سے
+                      </label>
+                      <input
+                        id="cws-date-from"
+                        type="date"
+                        value={cwsDateFrom}
+                        onChange={(e) => setCwsDateFrom(e.target.value)}
+                        className="h-9 text-sm border border-gray-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        data-ocid="cws.date_from_input"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label
+                        htmlFor="cws-date-to"
+                        className="text-xs font-semibold text-gray-600 uppercase tracking-wide"
+                      >
+                        To | تک
+                      </label>
+                      <input
+                        id="cws-date-to"
+                        type="date"
+                        value={cwsDateTo}
+                        onChange={(e) => setCwsDateTo(e.target.value)}
+                        className="h-9 text-sm border border-gray-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        data-ocid="cws.date_to_input"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      {
+                        key: "allover" as const,
+                        label: "All Over",
+                        urdu: "سب",
+                      },
+                      {
+                        key: "company" as const,
+                        label: "Company Wise",
+                        urdu: "کمپنی",
+                      },
+                      {
+                        key: "group" as const,
+                        label: "Group Wise",
+                        urdu: "گروپ",
+                      },
+                      {
+                        key: "area" as const,
+                        label: "Area Wise",
+                        urdu: "علاقہ",
+                      },
+                      {
+                        key: "product" as const,
+                        label: "Product Wise",
+                        urdu: "پروڈکٹ",
+                      },
+                    ].map((tab) => (
+                      <button
+                        key={tab.key}
+                        type="button"
+                        data-ocid={`cws.${tab.key}_tab`}
+                        onClick={() => setCwsTab(tab.key)}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${cwsTab === tab.key ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+                      >
+                        {tab.label} | {tab.urdu}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Customer Wise Sales Data Table */}
+                {(() => {
+                  const allOrdersForCws = [
+                    ...ordersWithLines,
+                    ...historyOrders,
+                  ];
+                  const filteredCwsOrders = allOrdersForCws.filter(
+                    (o) => o.date >= cwsDateFrom && o.date <= cwsDateTo,
+                  );
+
+                  if (cwsTab === "allover") {
+                    // Group by pharmacy
+                    const pharmMap = new Map<
+                      string,
+                      {
+                        name: string;
+                        area: string;
+                        units: number;
+                        value: number;
+                      }
+                    >();
+                    for (const o of filteredCwsOrders) {
+                      if (!pharmMap.has(o.pharmacyName)) {
+                        pharmMap.set(o.pharmacyName, {
+                          name: o.pharmacyName,
+                          area: o.pharmacyArea,
+                          units: 0,
+                          value: 0,
+                        });
+                      }
+                      const entry = pharmMap.get(o.pharmacyName)!;
+                      for (const item of o.items) {
+                        entry.units += item.qty;
+                        const discPct = item.discountPercent / 10;
+                        entry.value +=
+                          item.unitPrice * item.qty * (1 - discPct / 100);
+                      }
+                    }
+                    const rows = Array.from(pharmMap.values()).sort(
+                      (a, b) => b.value - a.value,
+                    );
+                    return (
+                      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                        <div className="px-5 py-3 border-b border-gray-200 bg-gray-50">
+                          <h3 className="font-bold text-gray-900">
+                            All Over — All Pharmacies | تمام فارمیسیاں
+                          </h3>
+                        </div>
+                        {rows.length === 0 ? (
+                          <div
+                            className="text-center py-12 text-gray-400"
+                            data-ocid="cws.allover_empty_state"
+                          >
+                            <User
+                              size={32}
+                              className="mx-auto mb-2 opacity-40"
+                            />
+                            <p>No sales data in selected date range</p>
+                          </div>
+                        ) : (
+                          <table className="w-full">
+                            <thead>
+                              <tr className="bg-gray-50 border-b border-gray-100">
+                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  #
+                                </th>
+                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Pharmacy | فارمیسی
+                                </th>
+                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Area | علاقہ
+                                </th>
+                                <th className="text-center px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Units | یونٹس
+                                </th>
+                                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Value (Rs) | قدر
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {rows.map((row, idx) => (
+                                <tr
+                                  key={row.name}
+                                  data-ocid={`cws.allover_item.${idx + 1}`}
+                                  className={
+                                    idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"
+                                  }
+                                >
+                                  <td className="px-4 py-2.5 text-sm text-gray-500">
+                                    {idx + 1}
+                                  </td>
+                                  <td className="px-4 py-2.5 font-semibold text-sm text-gray-900">
+                                    {row.name}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-sm text-gray-600">
+                                    {row.area || "—"}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-sm text-center font-bold text-gray-700">
+                                    {row.units}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-sm text-right font-bold text-blue-700">
+                                    {formatCurrency(row.value)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            <tfoot>
+                              <tr className="border-t-2 border-blue-200 bg-blue-50">
+                                <td
+                                  colSpan={3}
+                                  className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right"
+                                >
+                                  Total
+                                </td>
+                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-center">
+                                  {rows.reduce((s, r) => s + r.units, 0)}
+                                </td>
+                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right">
+                                  {formatCurrency(
+                                    rows.reduce((s, r) => s + r.value, 0),
+                                  )}
+                                </td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  if (cwsTab === "company") {
+                    const coMap = new Map<
+                      string,
+                      { units: number; value: number }
+                    >();
+                    for (const o of filteredCwsOrders) {
+                      for (const item of o.items) {
+                        const med = allMedicines.find(
+                          (m) => String(m.backendId) === item.medicineId,
+                        );
+                        const co = med?.company || "Unknown";
+                        if (!coMap.has(co))
+                          coMap.set(co, { units: 0, value: 0 });
+                        const entry = coMap.get(co)!;
+                        entry.units += item.qty;
+                        const discPct = item.discountPercent / 10;
+                        entry.value +=
+                          item.unitPrice * item.qty * (1 - discPct / 100);
+                      }
+                    }
+                    const rows = Array.from(coMap.entries()).sort(
+                      ([, a], [, b]) => b.value - a.value,
+                    );
+                    return (
+                      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                        <div className="px-5 py-3 border-b border-gray-200 bg-gray-50">
+                          <h3 className="font-bold text-gray-900">
+                            Company Wise Sales | کمپنی وائز سیلز
+                          </h3>
+                        </div>
+                        {rows.length === 0 ? (
+                          <div
+                            className="text-center py-12 text-gray-400"
+                            data-ocid="cws.company_empty_state"
+                          >
+                            <Building2
+                              size={32}
+                              className="mx-auto mb-2 opacity-40"
+                            />
+                            <p>No data in selected date range</p>
+                          </div>
+                        ) : (
+                          <table className="w-full">
+                            <thead>
+                              <tr className="bg-gray-50 border-b border-gray-100">
+                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  #
+                                </th>
+                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Company | کمپنی
+                                </th>
+                                <th className="text-center px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Units | یونٹس
+                                </th>
+                                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Value (Rs) | قدر
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {rows.map(([co, data], idx) => (
+                                <tr
+                                  key={co}
+                                  data-ocid={`cws.company_item.${idx + 1}`}
+                                  className={
+                                    idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"
+                                  }
+                                >
+                                  <td className="px-4 py-2.5 text-sm text-gray-500">
+                                    {idx + 1}
+                                  </td>
+                                  <td className="px-4 py-2.5 font-semibold text-sm text-gray-900">
+                                    {co}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-sm text-center font-bold text-gray-700">
+                                    {data.units}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-sm text-right font-bold text-blue-700">
+                                    {formatCurrency(data.value)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            <tfoot>
+                              <tr className="border-t-2 border-blue-200 bg-blue-50">
+                                <td
+                                  colSpan={2}
+                                  className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right"
+                                >
+                                  Total
+                                </td>
+                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-center">
+                                  {rows.reduce((s, [, d]) => s + d.units, 0)}
+                                </td>
+                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right">
+                                  {formatCurrency(
+                                    rows.reduce((s, [, d]) => s + d.value, 0),
+                                  )}
+                                </td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  if (cwsTab === "group") {
+                    const groupMap = new Map<
+                      string,
+                      { units: number; value: number }
+                    >();
+                    for (const o of filteredCwsOrders) {
+                      // Find customer with matching pharmacy name
+                      const cust = allCustomers.find(
+                        (c) =>
+                          c.name.toLowerCase() ===
+                            o.pharmacyName.toLowerCase() ||
+                          c.area.toLowerCase() === o.pharmacyArea.toLowerCase(),
+                      );
+                      const group = cust?.groupName || "Ungrouped";
+                      if (!groupMap.has(group))
+                        groupMap.set(group, { units: 0, value: 0 });
+                      const entry = groupMap.get(group)!;
+                      for (const item of o.items) {
+                        entry.units += item.qty;
+                        const discPct = item.discountPercent / 10;
+                        entry.value +=
+                          item.unitPrice * item.qty * (1 - discPct / 100);
+                      }
+                    }
+                    const rows = Array.from(groupMap.entries()).sort(
+                      ([, a], [, b]) => b.value - a.value,
+                    );
+                    return (
+                      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                        <div className="px-5 py-3 border-b border-gray-200 bg-gray-50">
+                          <h3 className="font-bold text-gray-900">
+                            Group Wise Sales | گروپ وائز سیلز
+                          </h3>
+                        </div>
+                        {rows.length === 0 ? (
+                          <div
+                            className="text-center py-12 text-gray-400"
+                            data-ocid="cws.group_empty_state"
+                          >
+                            <Layers
+                              size={32}
+                              className="mx-auto mb-2 opacity-40"
+                            />
+                            <p>No data in selected date range</p>
+                          </div>
+                        ) : (
+                          <table className="w-full">
+                            <thead>
+                              <tr className="bg-gray-50 border-b border-gray-100">
+                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  #
+                                </th>
+                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Group | گروپ
+                                </th>
+                                <th className="text-center px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Units | یونٹس
+                                </th>
+                                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Value (Rs) | قدر
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {rows.map(([group, data], idx) => (
+                                <tr
+                                  key={group}
+                                  data-ocid={`cws.group_item.${idx + 1}`}
+                                  className={
+                                    idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"
+                                  }
+                                >
+                                  <td className="px-4 py-2.5 text-sm text-gray-500">
+                                    {idx + 1}
+                                  </td>
+                                  <td className="px-4 py-2.5 font-semibold text-sm text-gray-900">
+                                    {group}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-sm text-center font-bold text-gray-700">
+                                    {data.units}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-sm text-right font-bold text-blue-700">
+                                    {formatCurrency(data.value)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            <tfoot>
+                              <tr className="border-t-2 border-blue-200 bg-blue-50">
+                                <td
+                                  colSpan={2}
+                                  className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right"
+                                >
+                                  Total
+                                </td>
+                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-center">
+                                  {rows.reduce((s, [, d]) => s + d.units, 0)}
+                                </td>
+                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right">
+                                  {formatCurrency(
+                                    rows.reduce((s, [, d]) => s + d.value, 0),
+                                  )}
+                                </td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  if (cwsTab === "area") {
+                    const areaMap = new Map<
+                      string,
+                      { units: number; value: number }
+                    >();
+                    for (const o of filteredCwsOrders) {
+                      const area = o.pharmacyArea || "Unknown";
+                      if (!areaMap.has(area))
+                        areaMap.set(area, { units: 0, value: 0 });
+                      const entry = areaMap.get(area)!;
+                      for (const item of o.items) {
+                        entry.units += item.qty;
+                        const discPct = item.discountPercent / 10;
+                        entry.value +=
+                          item.unitPrice * item.qty * (1 - discPct / 100);
+                      }
+                    }
+                    const rows = Array.from(areaMap.entries()).sort(
+                      ([, a], [, b]) => b.value - a.value,
+                    );
+                    return (
+                      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                        <div className="px-5 py-3 border-b border-gray-200 bg-gray-50">
+                          <h3 className="font-bold text-gray-900">
+                            Area Wise Sales | علاقہ وائز سیلز
+                          </h3>
+                        </div>
+                        {rows.length === 0 ? (
+                          <div
+                            className="text-center py-12 text-gray-400"
+                            data-ocid="cws.area_empty_state"
+                          >
+                            <MapPin
+                              size={32}
+                              className="mx-auto mb-2 opacity-40"
+                            />
+                            <p>No data in selected date range</p>
+                          </div>
+                        ) : (
+                          <table className="w-full">
+                            <thead>
+                              <tr className="bg-gray-50 border-b border-gray-100">
+                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  #
+                                </th>
+                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Area | علاقہ
+                                </th>
+                                <th className="text-center px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Units | یونٹس
+                                </th>
+                                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Value (Rs) | قدر
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {rows.map(([area, data], idx) => (
+                                <tr
+                                  key={area}
+                                  data-ocid={`cws.area_item.${idx + 1}`}
+                                  className={
+                                    idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"
+                                  }
+                                >
+                                  <td className="px-4 py-2.5 text-sm text-gray-500">
+                                    {idx + 1}
+                                  </td>
+                                  <td className="px-4 py-2.5 font-semibold text-sm text-gray-900">
+                                    {area}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-sm text-center font-bold text-gray-700">
+                                    {data.units}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-sm text-right font-bold text-blue-700">
+                                    {formatCurrency(data.value)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            <tfoot>
+                              <tr className="border-t-2 border-blue-200 bg-blue-50">
+                                <td
+                                  colSpan={2}
+                                  className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right"
+                                >
+                                  Total
+                                </td>
+                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-center">
+                                  {rows.reduce((s, [, d]) => s + d.units, 0)}
+                                </td>
+                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right">
+                                  {formatCurrency(
+                                    rows.reduce((s, [, d]) => s + d.value, 0),
+                                  )}
+                                </td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  if (cwsTab === "product") {
+                    const prodMap = new Map<
+                      string,
+                      {
+                        name: string;
+                        company: string;
+                        units: number;
+                        value: number;
+                      }
+                    >();
+                    for (const o of filteredCwsOrders) {
+                      for (const item of o.items) {
+                        const med = allMedicines.find(
+                          (m) => String(m.backendId) === item.medicineId,
+                        );
+                        const key = item.medicineName;
+                        if (!prodMap.has(key))
+                          prodMap.set(key, {
+                            name: item.medicineName,
+                            company: med?.company || "Unknown",
+                            units: 0,
+                            value: 0,
+                          });
+                        const entry = prodMap.get(key)!;
+                        entry.units += item.qty;
+                        const discPct = item.discountPercent / 10;
+                        entry.value +=
+                          item.unitPrice * item.qty * (1 - discPct / 100);
+                      }
+                    }
+                    const rows = Array.from(prodMap.values()).sort(
+                      (a, b) => b.value - a.value,
+                    );
+                    return (
+                      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                        <div className="px-5 py-3 border-b border-gray-200 bg-gray-50">
+                          <h3 className="font-bold text-gray-900">
+                            Product Wise Sales | پروڈکٹ وائز سیلز
+                          </h3>
+                        </div>
+                        {rows.length === 0 ? (
+                          <div
+                            className="text-center py-12 text-gray-400"
+                            data-ocid="cws.product_empty_state"
+                          >
+                            <Package
+                              size={32}
+                              className="mx-auto mb-2 opacity-40"
+                            />
+                            <p>No data in selected date range</p>
+                          </div>
+                        ) : (
+                          <table className="w-full">
+                            <thead>
+                              <tr className="bg-gray-50 border-b border-gray-100">
+                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  #
+                                </th>
+                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Product | پروڈکٹ
+                                </th>
+                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Company | کمپنی
+                                </th>
+                                <th className="text-center px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Units | یونٹس
+                                </th>
+                                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Value (Rs) | قدر
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {rows.map((row, idx) => (
+                                <tr
+                                  key={row.name}
+                                  data-ocid={`cws.product_item.${idx + 1}`}
+                                  className={
+                                    idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"
+                                  }
+                                >
+                                  <td className="px-4 py-2.5 text-sm text-gray-500">
+                                    {idx + 1}
+                                  </td>
+                                  <td className="px-4 py-2.5 font-semibold text-sm text-gray-900">
+                                    {row.name}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-sm text-gray-600">
+                                    {row.company}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-sm text-center font-bold text-gray-700">
+                                    {row.units}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-sm text-right font-bold text-blue-700">
+                                    {formatCurrency(row.value)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            <tfoot>
+                              <tr className="border-t-2 border-blue-200 bg-blue-50">
+                                <td
+                                  colSpan={3}
+                                  className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right"
+                                >
+                                  Total
+                                </td>
+                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-center">
+                                  {rows.reduce((s, r) => s + r.units, 0)}
+                                </td>
+                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right">
+                                  {formatCurrency(
+                                    rows.reduce((s, r) => s + r.value, 0),
+                                  )}
+                                </td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  return null;
+                })()}
+              </div>
+            )}
+
+            {/* Add Customer */}
+            {activeView === "add-customer" && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900 font-heading">
+                    Add Customer | کسٹمر شامل کریں
+                  </h2>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    Doctors, medical stores, and pharmacies manage karein
+                  </p>
+                </div>
+
+                {/* Add Customer Form */}
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+                  <h3 className="font-bold text-gray-900 font-heading mb-4 flex items-center gap-2">
+                    <Plus size={16} className="text-blue-600" />
+                    New Customer | نیا کسٹمر
+                  </h3>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    <div className="md:col-span-2">
+                      <label
+                        htmlFor="cust-name"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Name | نام *
+                      </label>
+                      <input
+                        id="cust-name"
+                        type="text"
+                        data-ocid="add_customer.name_input"
+                        value={custName}
+                        onChange={(e) => setCustName(e.target.value)}
+                        placeholder="e.g. Dr. Ahmed Ali / Al-Shifa Medical"
+                        disabled={isAddingCustomer}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="cust-type"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Customer Type | قسم *
+                      </label>
+                      <select
+                        id="cust-type"
+                        data-ocid="add_customer.type_select"
+                        value={custType}
+                        onChange={(e) =>
+                          setCustType(e.target.value as CustomerType)
+                        }
+                        disabled={isAddingCustomer}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
+                      >
+                        <option value={CustomerType.doctor}>
+                          Doctor | ڈاکٹر
+                        </option>
+                        <option value={CustomerType.medicalStore}>
+                          Medical Store | میڈیکل اسٹور
+                        </option>
+                        <option value={CustomerType.pharmacy}>
+                          Pharmacy | فارمیسی
+                        </option>
+                      </select>
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="cust-contact"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Contact | رابطہ
+                      </label>
+                      <input
+                        id="cust-contact"
+                        type="text"
+                        data-ocid="add_customer.contact_input"
+                        value={custContact}
+                        onChange={(e) => setCustContact(e.target.value)}
+                        placeholder="e.g. 0300-1234567"
+                        disabled={isAddingCustomer}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="cust-area"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Area | علاقہ
+                      </label>
+                      <input
+                        id="cust-area"
+                        type="text"
+                        data-ocid="add_customer.area_input"
+                        value={custArea}
+                        onChange={(e) => setCustArea(e.target.value)}
+                        placeholder="e.g. MBD, Phalia"
+                        disabled={isAddingCustomer}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="cust-group"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Group Name | گروپ نام
+                      </label>
+                      <input
+                        id="cust-group"
+                        type="text"
+                        data-ocid="add_customer.group_input"
+                        value={custGroup}
+                        onChange={(e) => setCustGroup(e.target.value)}
+                        placeholder="e.g. Retail, Wholesale"
+                        disabled={isAddingCustomer}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="cust-code"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Code | کوڈ
+                      </label>
+                      <input
+                        id="cust-code"
+                        type="text"
+                        data-ocid="add_customer.code_input"
+                        value={custCode}
+                        onChange={(e) => setCustCode(e.target.value)}
+                        placeholder="e.g. CU-001"
+                        disabled={isAddingCustomer}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label
+                        htmlFor="cust-address"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Address | پتہ
+                      </label>
+                      <input
+                        id="cust-address"
+                        type="text"
+                        data-ocid="add_customer.address_input"
+                        value={custAddress}
+                        onChange={(e) => setCustAddress(e.target.value)}
+                        placeholder="e.g. Shop 5, Main Bazar"
+                        disabled={isAddingCustomer}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
+                      />
+                    </div>
+                    <div className="flex items-end">
+                      <button
+                        type="button"
+                        data-ocid="add_customer.submit_button"
+                        onClick={handleAddCustomer}
+                        disabled={isAddingCustomer}
+                        className="w-full h-10 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold text-sm rounded-lg transition-colors"
+                      >
+                        {isAddingCustomer ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <Plus size={14} />
+                        )}
+                        {isAddingCustomer
+                          ? "Adding..."
+                          : "Add Customer | شامل کریں"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Customers List */}
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                  <div className="px-5 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+                    <h3 className="font-bold text-gray-900">
+                      Customers List | کسٹمر لسٹ ({allCustomers.length})
+                    </h3>
+                  </div>
+                  {allCustomers.length === 0 ? (
+                    <div
+                      className="text-center py-16 text-gray-400"
+                      data-ocid="add_customer.empty_state"
+                    >
+                      <User size={36} className="mx-auto mb-3 opacity-30" />
+                      <p className="font-medium">
+                        No customers yet | ابھی کوئی کسٹمر نہیں
+                      </p>
+                      <p className="text-xs mt-1">
+                        Use the form above to add doctors, stores, and
+                        pharmacies
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-gray-100">
+                      {allCustomers.map((cust, idx) => {
+                        const typeConfig = {
+                          [CustomerType.doctor]: {
+                            label: "Doctor",
+                            urdu: "ڈاکٹر",
+                            color: "bg-blue-100 text-blue-700",
+                            icon: <Stethoscope size={12} />,
+                          },
+                          [CustomerType.medicalStore]: {
+                            label: "Medical Store",
+                            urdu: "میڈیکل اسٹور",
+                            color: "bg-green-100 text-green-700",
+                            icon: <Store size={12} />,
+                          },
+                          [CustomerType.pharmacy]: {
+                            label: "Pharmacy",
+                            urdu: "فارمیسی",
+                            color: "bg-purple-100 text-purple-700",
+                            icon: <Building2 size={12} />,
+                          },
+                        };
+                        const cfg =
+                          typeConfig[cust.customerType] ||
+                          typeConfig[CustomerType.pharmacy];
+                        return (
+                          <div
+                            key={cust.id}
+                            data-ocid={`add_customer.item.${idx + 1}`}
+                            className="flex items-start justify-between gap-3 px-5 py-4 hover:bg-gray-50/50"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-semibold text-sm text-gray-900">
+                                  {cust.name}
+                                </span>
+                                <span
+                                  className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold ${cfg.color}`}
+                                >
+                                  {cfg.icon}
+                                  {cfg.label}
+                                </span>
+                                {cust.code && (
+                                  <span className="text-xs font-mono bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
+                                    {cust.code}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-3 mt-1 flex-wrap">
+                                {cust.area && (
+                                  <span className="text-xs text-gray-500 flex items-center gap-1">
+                                    <MapPin size={10} />
+                                    {cust.area}
+                                  </span>
+                                )}
+                                {cust.contactNo && (
+                                  <span className="text-xs text-gray-500 flex items-center gap-1">
+                                    <Phone size={10} />
+                                    {cust.contactNo}
+                                  </span>
+                                )}
+                                {cust.groupName && (
+                                  <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full">
+                                    {cust.groupName}
+                                  </span>
+                                )}
+                              </div>
+                              {cust.address && (
+                                <p className="text-xs text-gray-400 mt-0.5">
+                                  {cust.address}
+                                </p>
+                              )}
+                            </div>
+                            <div className="shrink-0">
+                              {confirmDeleteCustomerId === cust.backendId ? (
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    data-ocid={`add_customer.confirm_button.${idx + 1}`}
+                                    onClick={() =>
+                                      handleDeleteCustomer(cust.backendId)
+                                    }
+                                    disabled={
+                                      deletingCustomerId === cust.backendId
+                                    }
+                                    className="flex items-center gap-1 bg-red-500 hover:bg-red-600 text-white text-xs px-2 py-1 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                                  >
+                                    {deletingCustomerId === cust.backendId ? (
+                                      <Loader2
+                                        size={10}
+                                        className="animate-spin"
+                                      />
+                                    ) : null}
+                                    Yes
+                                  </button>
+                                  <button
+                                    type="button"
+                                    data-ocid={`add_customer.cancel_button.${idx + 1}`}
+                                    onClick={() =>
+                                      setConfirmDeleteCustomerId(null)
+                                    }
+                                    className="text-xs px-2 py-1 rounded-lg border border-gray-300 font-semibold hover:bg-gray-50 transition-colors"
+                                    disabled={
+                                      deletingCustomerId === cust.backendId
+                                    }
+                                  >
+                                    No
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  data-ocid={`add_customer.delete_button.${idx + 1}`}
+                                  onClick={() =>
+                                    setConfirmDeleteCustomerId(cust.backendId)
+                                  }
+                                  className="flex items-center gap-1 text-red-500 hover:text-red-700 hover:bg-red-50 text-xs px-2 py-1 rounded-lg transition-colors"
+                                  disabled={
+                                    deletingCustomerId === cust.backendId
+                                  }
+                                >
+                                  <Trash2 size={12} />
+                                  Delete
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Footer */}
             <div className="text-center py-3 text-xs text-gray-400">
               © {new Date().getFullYear()}. Built with ♥ using{" "}
@@ -5503,6 +8656,7 @@ type DeliveryOrder = {
   pharmacyName: string;
   pharmacyAddress: string;
   pharmacyArea: string;
+  date: string;
   itemCount: number;
   totalAmount: number;
   status: OrderStatus;
@@ -5525,9 +8679,15 @@ type DeliveryOrder = {
 function DeliveryDashboard() {
   const { actor, isFetching: isActorFetching } = useActor();
   const [pendingOrders, setPendingOrders] = useState<DeliveryOrder[]>([]);
+  const [allOrders, setAllOrders] = useState<DeliveryOrder[]>([]);
   const [deliveredThisSession, setDeliveredThisSession] = useState<
     DeliveryOrder[]
   >([]);
+  const [paymentsClearedAt, setPaymentsClearedAt] = useState<string | null>(
+    () => {
+      return localStorage.getItem("medorder_payments_cleared_at");
+    },
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [markingId, setMarkingId] = useState<bigint | null>(null);
   const [backendError, setBackendError] = useState<string | null>(null);
@@ -5540,9 +8700,6 @@ function DeliveryDashboard() {
   const [paymentAmount, setPaymentAmount] = useState<Record<string, string>>(
     {},
   );
-  const [pharmacyCodeInput, setPharmacyCodeInput] = useState<
-    Record<string, string>
-  >({});
   const [isSavingReturn, setIsSavingReturn] = useState(false);
 
   const loadData = useCallback(async () => {
@@ -5562,6 +8719,9 @@ function DeliveryDashboard() {
         (rec) => {
           const pharm = pharmacyMap.get(String(rec.pharmacyId));
           const { address, area } = parseLocation(pharm?.location ?? "");
+          const date = new Date(Number(rec.timestamp / BigInt(1_000_000)))
+            .toISOString()
+            .split("T")[0];
           const items = rec.orderLines.map((line: any) => {
             const med = medicineMap.get(String(line.medicineId));
             const unitPrice = med ? Number(med.price) : 0;
@@ -5586,6 +8746,7 @@ function DeliveryDashboard() {
             pharmacyName: pharm?.name ?? `Pharmacy #${rec.pharmacyId}`,
             pharmacyAddress: address,
             pharmacyArea: area,
+            date,
             itemCount,
             totalAmount,
             status: mapBackendStatus(rec.status),
@@ -5601,9 +8762,27 @@ function DeliveryDashboard() {
         },
       );
 
+      setAllOrders(mapped); // all orders regardless of status
       const confirmed = mapped.filter((o) => o.status === "confirmed");
       confirmed.sort((a, b) => b.orderId.localeCompare(a.orderId));
       setPendingOrders(confirmed);
+
+      // Auto midnight reset: if today's date differs from stored date, update clearedAt to midnight today
+      const todayDateStr = new Date().toISOString().split("T")[0];
+      const lastPaymentDay = localStorage.getItem("medorder_last_payment_day");
+      if (lastPaymentDay !== todayDateStr) {
+        // New day — auto reset: set paymentsClearedAt to midnight of today
+        const midnight = new Date(`${todayDateStr}T00:00:00`).toISOString();
+        localStorage.setItem("medorder_payments_cleared_at", midnight);
+        localStorage.setItem("medorder_last_payment_day", todayDateStr);
+        setPaymentsClearedAt(midnight);
+      } else {
+        // Re-sync cleared timestamp from localStorage in case office cleared it
+        const latestCleared = localStorage.getItem(
+          "medorder_payments_cleared_at",
+        );
+        setPaymentsClearedAt(latestCleared);
+      }
       setBackendError(null);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Unknown error";
@@ -5622,13 +8801,11 @@ function DeliveryDashboard() {
     if (!actor) return;
     setMarkingId(order.backendId);
     try {
-      // Save payment and pharmacy code if entered before marking delivered
+      // Save payment if entered before marking delivered
       const payment = Number(
         paymentAmount[order.orderId] ?? order.paymentReceived ?? 0,
       );
-      const pharmCode =
-        pharmacyCodeInput[order.orderId] ?? order.pharmacyCode ?? "";
-      if (payment > 0 || pharmCode) {
+      if (payment > 0) {
         await (actor as any).updateOrderPaymentAndReturn(
           order.backendId,
           BigInt(Math.round(payment)),
@@ -5637,7 +8814,7 @@ function DeliveryDashboard() {
             returnedQty: BigInt(ri.returnedQty),
           })),
           order.returnReason,
-          pharmCode,
+          "",
         );
       }
       await actor.updateOrderStatus(
@@ -5671,13 +8848,12 @@ function DeliveryDashboard() {
           returnedQty: BigInt(item.qty),
         }));
       const payment = Number(paymentAmount[returnModalOrder.orderId] ?? 0);
-      const pharmCode = pharmacyCodeInput[returnModalOrder.orderId] ?? "";
       await (actor as any).updateOrderPaymentAndReturn(
         returnModalOrder.backendId,
         BigInt(Math.round(payment)),
         returnItems,
         returnReason,
-        pharmCode,
+        "",
       );
       toast.success("Return aur payment save ho gaya!");
       setReturnModalOrder(null);
@@ -5747,13 +8923,6 @@ function DeliveryDashboard() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <a
-              href="/office"
-              className="flex items-center gap-1 bg-white/15 hover:bg-white/25 transition-colors px-2.5 py-1.5 rounded-lg text-xs font-medium"
-            >
-              <Package size={12} />
-              Office View
-            </a>
             <button
               type="button"
               onClick={loadData}
@@ -5772,6 +8941,54 @@ function DeliveryDashboard() {
       </header>
 
       <div className="max-w-sm mx-auto px-4 py-5 space-y-5">
+        {/* Summary Stats Bar — always shown, persists until office clears */}
+        {!isLoading && (
+          <div className="grid grid-cols-2 gap-3">
+            {(() => {
+              const clearedAt = paymentsClearedAt
+                ? new Date(paymentsClearedAt)
+                : null;
+              const ordersForSummary = allOrders.filter((o) => {
+                if (!clearedAt) return true;
+                return new Date(o.date) >= clearedAt;
+              });
+              const totalCollected = ordersForSummary.reduce((sum, order) => {
+                const received = Number(
+                  paymentAmount[order.orderId] ?? order.paymentReceived ?? 0,
+                );
+                return sum + received;
+              }, 0);
+              const totalCredit = ordersForSummary.reduce((sum, order) => {
+                const received = Number(
+                  paymentAmount[order.orderId] ?? order.paymentReceived ?? 0,
+                );
+                const balance = order.totalAmount - received;
+                return sum + (balance > 0 ? balance : 0);
+              }, 0);
+              return (
+                <>
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5">
+                    <p className="text-xs text-emerald-600 font-semibold uppercase tracking-wide mb-1">
+                      Total Collected | کل وصول
+                    </p>
+                    <p className="text-lg font-bold text-emerald-700 font-heading">
+                      {formatCurrency(totalCollected)}
+                    </p>
+                  </div>
+                  <div className="bg-red-50 border border-red-200 rounded-xl p-3.5">
+                    <p className="text-xs text-red-600 font-semibold uppercase tracking-wide mb-1">
+                      Total Credit | کل باقی
+                    </p>
+                    <p className="text-lg font-bold text-red-700 font-heading">
+                      {formatCurrency(totalCredit)}
+                    </p>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        )}
+
         {/* Pending Deliveries */}
         <div>
           <h2 className="font-bold text-gray-800 font-heading mb-3 flex items-center gap-2">
@@ -5833,59 +9050,32 @@ function DeliveryDashboard() {
 
                   {/* Payment & Return Section */}
                   <div className="mt-3 space-y-2">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label
-                          htmlFor={`pharm-code-${order.orderId}`}
-                          className="text-xs text-gray-500 font-medium block mb-1"
-                        >
-                          Pharmacy Code | فارمیسی کوڈ
-                        </label>
-                        <input
-                          id={`pharm-code-${order.orderId}`}
-                          type="text"
-                          value={
-                            pharmacyCodeInput[order.orderId] ??
-                            order.pharmacyCode ??
-                            ""
-                          }
-                          onChange={(e) =>
-                            setPharmacyCodeInput((prev) => ({
-                              ...prev,
-                              [order.orderId]: e.target.value,
-                            }))
-                          }
-                          placeholder="Code..."
-                          className="w-full h-9 text-sm border border-gray-300 rounded-lg px-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
-                      </div>
-                      <div>
-                        <label
-                          htmlFor={`payment-${order.orderId}`}
-                          className="text-xs text-gray-500 font-medium block mb-1"
-                        >
-                          Received | موصول (Rs)
-                        </label>
-                        <input
-                          id={`payment-${order.orderId}`}
-                          type="number"
-                          min="0"
-                          value={
-                            paymentAmount[order.orderId] ??
-                            (order.paymentReceived > 0
-                              ? String(order.paymentReceived)
-                              : "")
-                          }
-                          onChange={(e) =>
-                            setPaymentAmount((prev) => ({
-                              ...prev,
-                              [order.orderId]: e.target.value,
-                            }))
-                          }
-                          placeholder="0"
-                          className="w-full h-9 text-sm border border-gray-300 rounded-lg px-2 focus:outline-none focus:ring-1 focus:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                        />
-                      </div>
+                    <div>
+                      <label
+                        htmlFor={`payment-${order.orderId}`}
+                        className="text-xs text-gray-500 font-medium block mb-1"
+                      >
+                        Received | موصول (Rs)
+                      </label>
+                      <input
+                        id={`payment-${order.orderId}`}
+                        type="number"
+                        min="0"
+                        value={
+                          paymentAmount[order.orderId] ??
+                          (order.paymentReceived > 0
+                            ? String(order.paymentReceived)
+                            : "")
+                        }
+                        onChange={(e) =>
+                          setPaymentAmount((prev) => ({
+                            ...prev,
+                            [order.orderId]: e.target.value,
+                          }))
+                        }
+                        placeholder="0"
+                        className="w-full h-9 text-sm border border-gray-300 rounded-lg px-2 focus:outline-none focus:ring-1 focus:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
                     </div>
                     {/* Balance display */}
                     {(() => {
@@ -6274,7 +9464,7 @@ function MobileApp() {
           // Seed backend
           await Promise.all(
             PHARMACY_SEEDS.map((s) =>
-              actor.addPharmacy(s.name, s.contact, s.location),
+              actor.addPharmacy(s.name, s.contact, s.location, ""),
             ),
           );
           // Reload after seeding
@@ -6290,6 +9480,7 @@ function MobileApp() {
               contactNo: p.contact,
               lastOrderDate: null,
               isVisited: false,
+              code: p.code || "",
             };
           });
         } else {
@@ -6304,6 +9495,7 @@ function MobileApp() {
               contactNo: p.contact,
               lastOrderDate: null,
               isVisited: false,
+              code: p.code || "",
             };
           });
         }
@@ -6320,6 +9512,9 @@ function MobileApp() {
                 s.company,
                 s.strength,
                 s.packSize,
+                "",
+                "",
+                categoryToTypeLabel(s.category),
               ),
             ),
           );
@@ -6337,6 +9532,9 @@ function MobileApp() {
               unit: seed?.unit ?? "unit",
               price: Number(m.price),
               packSize: m.packSize || seed?.packSize || "",
+              genericName: m.genericName || "",
+              batchNo: m.batchNo || "",
+              medicineType: m.medicineType || "",
             };
           });
         } else {
@@ -6352,6 +9550,9 @@ function MobileApp() {
               unit: seed?.unit ?? "unit",
               price: Number(m.price),
               packSize: m.packSize || seed?.packSize || "",
+              genericName: m.genericName || "",
+              batchNo: m.batchNo || "",
+              medicineType: m.medicineType || "",
             };
           });
         }

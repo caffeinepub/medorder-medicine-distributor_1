@@ -11,6 +11,7 @@ export type Time = bigint;
 export interface Pharmacy {
     id: bigint;
     contact: string;
+    code: string;
     name: string;
     location: string;
 }
@@ -39,6 +40,7 @@ export interface PurchaseRecord {
     quantity: bigint;
     batchNo: string;
     price: bigint;
+    medicineType: string;
 }
 export interface Medicine {
     id: bigint;
@@ -47,7 +49,10 @@ export interface Medicine {
     description: string;
     company: string;
     strength: string;
+    genericName: string;
+    batchNo: string;
     price: bigint;
+    medicineType: string;
 }
 export interface MedicineItem {
     discountPercent: bigint;
@@ -55,9 +60,25 @@ export interface MedicineItem {
     quantity: bigint;
     medicineId: bigint;
 }
+export interface Customer {
+    id: bigint;
+    customerType: CustomerType;
+    area: string;
+    code: string;
+    name: string;
+    address: string;
+    timestamp: Time;
+    contactNo: string;
+    groupName: string;
+}
 export interface ReturnItem {
     medicineId: bigint;
     returnedQty: bigint;
+}
+export enum CustomerType {
+    doctor = "doctor",
+    medicalStore = "medicalStore",
+    pharmacy = "pharmacy"
 }
 export enum OrderStatus {
     pending = "pending",
@@ -65,15 +86,18 @@ export enum OrderStatus {
     confirmed = "confirmed"
 }
 export interface backendInterface {
-    addMedicine(name: string, price: bigint, description: string, company: string, strength: string, packSize: string): Promise<bigint>;
-    addPharmacy(name: string, contact: string, location: string): Promise<bigint>;
-    addPurchase(productName: string, genericName: string, batchNo: string, quantity: bigint, price: bigint, packSize: string, companyName: string): Promise<bigint>;
+    addCustomer(name: string, customerType: CustomerType, address: string, area: string, contactNo: string, groupName: string, code: string): Promise<bigint>;
+    addMedicine(name: string, price: bigint, description: string, company: string, strength: string, packSize: string, genericName: string, batchNo: string, medicineType: string): Promise<bigint>;
+    addPharmacy(name: string, contact: string, location: string, code: string): Promise<bigint>;
+    addPurchase(productName: string, genericName: string, batchNo: string, quantity: bigint, price: bigint, packSize: string, companyName: string, medicineType: string): Promise<bigint>;
     createOrder(pharmacyId: bigint, orderLines: Array<MedicineItem>, staffName: string, staffCode: string): Promise<bigint>;
+    deleteCustomer(id: bigint): Promise<boolean>;
     deleteMedicine(id: bigint): Promise<boolean>;
     deletePharmacy(id: bigint): Promise<boolean>;
     deletePurchase(id: bigint): Promise<boolean>;
     getActiveOrders(): Promise<Array<OrderRecord>>;
     getAllStaffOrders(): Promise<Array<OrderRecord>>;
+    getCustomers(): Promise<Array<Customer>>;
     getHistoryOrders(): Promise<Array<OrderRecord>>;
     getMedicines(): Promise<Array<Medicine>>;
     getOrder(orderId: bigint): Promise<OrderRecord | null>;

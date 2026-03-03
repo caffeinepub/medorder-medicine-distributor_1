@@ -2,45 +2,60 @@
 
 ## Current State
 
-Full-stack medicine distributor app with 3 dashboards:
-- **Staff App** (`/`): Mobile login, dashboard, pharmacy list, order-taking with manual quantity, cart sheet with bonus/discount, order history, manage (pharmacies/medicines)
-- **Office Dashboard** (`/office`): PC-layout, tab bar (Active Orders, History, Inventory, Purchasing), order detail modal with invoice print, confirm all, print all
-- **Delivery Dashboard** (`/delivery`): Confirmed orders, payment input, return items modal, mark delivered
-
-Invoice print uses `buildPrintHtml()` with MIAN MEDICINE DISTRIBUTOR header, tax line, items table.
+Full-stack medicine distribution app with:
+- Staff mobile app (login, order taking, order history, manage)
+- Office Dashboard (/office) with: active orders, history, inventory, purchasing, add-order, payments, daily sale statement
+- Delivery Dashboard (/delivery) with payment recording, return items
+- Backend stores: staff, pharmacies, medicines, orders, purchases
+- Medicine model: id, name, price, description, company, strength, packSize
+- PurchaseRecord model: id, productName, genericName, batchNo, quantity, price, packSize, companyName, timestamp
+- Payments view in Office sidebar shows monthly/daily payment history with "Clear Today's Payments" button
+- Inventory view in Office shows medicines grouped by company
 
 ## Requested Changes (Diff)
 
 ### Add
-- **Office Dashboard**: Left-side vertical menu bar (sidebar) showing all options — Active Orders, History, Inventory, Purchasing — replacing the current top tab bar. Orders section stays as main content area.
-- **Office Dashboard**: "Add New Order" form/modal accessible from the sidebar menu, where office staff can select pharmacy, add medicines with qty/bonus/discount, and submit an order.
-- **Staff Order-Taking**: Bonus Qty and Disc% input fields displayed directly on each medicine card (alongside the quantity field), so booker can set them without opening cart sheet.
-- **Delivery Dashboard**: Remove the "Invoice # | انوائس" block/label from order cards (it was showing orderId as a separate labeled block). The orderId is already visible as small text.
-- **Invoice print & modal**: In the items table, for each item that has discountPercent > 0, calculate discount amount = (unitPrice × qty × discountPercent / 100), show it as a separate column or deduct from total column. The "Total" for that item = unitPrice × qty − discount amount.
+
+1. **Customer backend type**: New `Customer` record with fields: id, name, customerType (#doctor | #medicalStore | #pharmacy), address, area, contactNo, groupName, code, timestamp
+2. **Backend methods**: addCustomer, deleteCustomer, getCustomers
+3. **Medicine backend fields**: Add `genericName: Text`, `batchNo: Text`, `medicineType: Text` (tablet/syrup/injection/capsule/drop/cream/sachet/other)
+4. **PurchaseRecord backend field**: Add `medicineType: Text`
+5. **Office sidebar item**: "Customer Wise Sales | کسٹمر وائز سیلز" - new view
+6. **Customer Wise Sales view**: date range filter + filter tabs: All Over / Company Wise / Group Wise / Area Wise / Product Wise. Data linked to daily sale statement order records. Shows pharmacy/customer names, total units sold, total value.
+7. **Office sidebar item**: "Add Customer | کسٹمر شامل کریں" - new view
+8. **Add Customer view**: Form to add Doctors, Medical Stores, Pharmacies with fields: name, type (Doctor/Medical Store/Pharmacy), contact, address, area, group name, code. List of existing customers with delete.
+9. **Auto-reset payments at midnight**: Delivery dashboard payment summary auto-resets at midnight (12am). Previous day payments move to historical record with their date. Current day payments start fresh.
 
 ### Modify
-- **Quantity fields** (both medicine card in order-taking AND cart sheet): Change `type="number"` inputs to accept decimals by removing `step` restriction and allowing float values. Store qty as float (not integer). In `handleSubmitOrder`, multiply qty by 1000 and pass as BigInt (or keep as is if backend supports float-like bigint). Display with up to 2 decimal places.
-- **Invoice items table**: Modify "Total" column to show discounted total. Add "Disc Amt" or show deduction clearly.
-- **Office Dashboard layout**: Replace horizontal tab pills with a vertical left sidebar navigation.
+
+1. **Inventory (office)**: Add `Generic Name`, `Batch#`, `Type` columns to medicine list display
+2. **Medicine add form (Manage screen, staff)**: Add `Generic Name`, `Batch#`, `Type` fields - stored in medicine `description` field encoded as JSON: `{"genericName":"...","batchNo":"...","type":"..."}`
+3. **Purchasing tab (office)**: Add `Medicine Type` field to add purchase form and display in table
+4. **Payments view (office)**: Remove "Clear Today's Payments" button. Auto-reset logic: at midnight, previous day payments freeze in history under previous date. Current day shows fresh. The midnight check is frontend-based using localStorage timestamp.
+5. **Delivery dashboard**: Payment summary bars show only current day payments (since last midnight). Previous day data visible in historical record with date labels.
 
 ### Remove
-- **Delivery Dashboard order cards**: Remove the separate `<span className="text-xs font-mono text-gray-400 ..."> {order.orderId}</span>` labeled "Invoice #" block from the card header area (top-right). The order reference is still visible in delivered section.
+
+1. "Clear Today's Payments" button from PaymentsView component
 
 ## Implementation Plan
 
-1. **OrderTakingScreen** — Add bonus/discount inputs directly on medicine card (below qty field), same styling as cart sheet inputs. These update `bonusDiscountMap` state already present.
+### Backend (main.mo)
+- Add `Customer` type with fields: id, name, customerType (variant), address, area, contactNo, groupName, code, timestamp
+- Add `customers` map and `nextCustomerId` counter
+- Add `addCustomer`, `deleteCustomer`, `getCustomers` methods
+- Update `Medicine` type: add `genericName: Text`, `batchNo: Text`, `medicineType: Text`
+- Update `addMedicine` to accept 3 new params
+- Update `PurchaseRecord` type: add `medicineType: Text`
+- Update `addPurchase` to accept `medicineType`
 
-2. **Quantity decimal support** — Change quantity inputs (medicine card + cart sheet) to accept decimal values. Parse as `parseFloat` instead of `Number` for integer assumption. Submit to backend: multiply by 100 and pass as BigInt(Math.round(qty * 100)), OR keep qty as-is but display with toFixed(2). Since backend uses bigint for quantity, store as `Math.round(qty * 100)` and divide by 100 on display. Simplest: allow decimal input, Math.round on submit (acceptable for medicine quantities).
-
-3. **Delivery Dashboard** — In the order card header, remove the `<span>` that shows `{order.orderId}` as the top-right label with font-mono styling.
-
-4. **Invoice** — In `buildPrintHtml()` and `OrderDetailModal` items table:
-   - For each item: `discountAmt = item.unitPrice * item.qty * item.discountPercent / 100`
-   - `discountedTotal = item.total - discountAmt`
-   - Show "Disc Amt" column if any item has discount, showing the deducted amount
-   - "Total" column shows `discountedTotal`
-   - Grand total sums `discountedTotal` values
-
-5. **Office Dashboard sidebar** — Replace the horizontal tab pills `<div className="flex items-center gap-1 bg-white border ...">` with a two-column layout: left sidebar (fixed width ~220px) with vertical nav links (Active Orders, History, Inventory, Purchasing, Add Order), right content area shows the selected view.
-
-6. **Office Dashboard Add Order** — New view in sidebar "Add Order | آرڈر شامل کریں". Form: pharmacy dropdown (from loaded pharmacies), medicine rows (select medicine + qty + bonus + discount), notes, submit button that calls `actor.createOrder()`.
+### Frontend
+- Update `backend.d.ts` to match new backend types
+- **Inventory (office)**: Show genericName, batchNo, medicineType in medicine cards (parse from description JSON for older medicines)
+- **Manage > Add Medicine form**: Add genericName, batchNo, type (select) fields
+- **Purchasing tab**: Add medicineType field in form and table column
+- **PaymentsView**: Remove "Clear Today's Payments" button. Add midnight auto-reset: store last-cleared date in localStorage; on component mount and every minute, check if current date != last-cleared date, if so auto-reset
+- **Delivery dashboard payment bars**: Only show payments from current calendar day (after midnight)
+- **Office sidebar**: Add "Customer Wise Sales" and "Add Customer" items
+- **Customer Wise Sales view**: Date range picker, filter tabs (All Over/Company Wise/Group Wise/Area Wise/Product Wise), table linked to orders data showing pharmacy/customer names with units + value totals
+- **Add Customer view**: Form + list for managing Doctors, Medical Stores, Pharmacies as customers with type field

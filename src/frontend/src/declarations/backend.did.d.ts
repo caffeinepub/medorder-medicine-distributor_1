@@ -10,6 +10,20 @@ import type { ActorMethod } from '@icp-sdk/core/agent';
 import type { IDL } from '@icp-sdk/core/candid';
 import type { Principal } from '@icp-sdk/core/principal';
 
+export interface Customer {
+  'id' : bigint,
+  'customerType' : CustomerType,
+  'area' : string,
+  'code' : string,
+  'name' : string,
+  'address' : string,
+  'timestamp' : Time,
+  'contactNo' : string,
+  'groupName' : string,
+}
+export type CustomerType = { 'doctor' : null } |
+  { 'medicalStore' : null } |
+  { 'pharmacy' : null };
 export interface Medicine {
   'id' : bigint,
   'packSize' : string,
@@ -17,7 +31,10 @@ export interface Medicine {
   'description' : string,
   'company' : string,
   'strength' : string,
+  'genericName' : string,
+  'batchNo' : string,
   'price' : bigint,
+  'medicineType' : string,
 }
 export interface MedicineItem {
   'discountPercent' : bigint,
@@ -46,6 +63,7 @@ export type OrderStatus = { 'pending' : null } |
 export interface Pharmacy {
   'id' : bigint,
   'contact' : string,
+  'code' : string,
   'name' : string,
   'location' : string,
 }
@@ -59,28 +77,35 @@ export interface PurchaseRecord {
   'quantity' : bigint,
   'batchNo' : string,
   'price' : bigint,
+  'medicineType' : string,
 }
 export interface ReturnItem { 'medicineId' : bigint, 'returnedQty' : bigint }
 export type Time = bigint;
 export interface _SERVICE {
-  'addMedicine' : ActorMethod<
-    [string, bigint, string, string, string, string],
+  'addCustomer' : ActorMethod<
+    [string, CustomerType, string, string, string, string, string],
     bigint
   >,
-  'addPharmacy' : ActorMethod<[string, string, string], bigint>,
+  'addMedicine' : ActorMethod<
+    [string, bigint, string, string, string, string, string, string, string],
+    bigint
+  >,
+  'addPharmacy' : ActorMethod<[string, string, string, string], bigint>,
   'addPurchase' : ActorMethod<
-    [string, string, string, bigint, bigint, string, string],
+    [string, string, string, bigint, bigint, string, string, string],
     bigint
   >,
   'createOrder' : ActorMethod<
     [bigint, Array<MedicineItem>, string, string],
     bigint
   >,
+  'deleteCustomer' : ActorMethod<[bigint], boolean>,
   'deleteMedicine' : ActorMethod<[bigint], boolean>,
   'deletePharmacy' : ActorMethod<[bigint], boolean>,
   'deletePurchase' : ActorMethod<[bigint], boolean>,
   'getActiveOrders' : ActorMethod<[], Array<OrderRecord>>,
   'getAllStaffOrders' : ActorMethod<[], Array<OrderRecord>>,
+  'getCustomers' : ActorMethod<[], Array<Customer>>,
   'getHistoryOrders' : ActorMethod<[], Array<OrderRecord>>,
   'getMedicines' : ActorMethod<[], Array<Medicine>>,
   'getOrder' : ActorMethod<[bigint], [] | [OrderRecord]>,

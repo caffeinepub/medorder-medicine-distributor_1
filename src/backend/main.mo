@@ -3,11 +3,11 @@ import Map "mo:core/Map";
 import Order "mo:core/Order";
 import Time "mo:core/Time";
 import Principal "mo:core/Principal";
+import Migration "migration";
 
+// Persistent storage migration API
 
-
-// Apply persistent storage migration
-
+(with migration = Migration.run)
 actor {
   type Staff = {
     name : Text;
@@ -19,6 +19,25 @@ actor {
     name : Text;
     contact : Text;
     location : Text;
+    code : Text;
+  };
+
+  type CustomerType = {
+    #doctor;
+    #medicalStore;
+    #pharmacy;
+  };
+
+  type Customer = {
+    id : Nat;
+    name : Text;
+    customerType : CustomerType;
+    address : Text;
+    area : Text;
+    contactNo : Text;
+    groupName : Text;
+    code : Text;
+    timestamp : Time.Time;
   };
 
   type Medicine = {
@@ -29,6 +48,9 @@ actor {
     company : Text;
     strength : Text;
     packSize : Text;
+    genericName : Text;
+    batchNo : Text;
+    medicineType : Text;
   };
 
   type MedicineItem = {
@@ -74,6 +96,7 @@ actor {
     price : Nat;
     packSize : Text;
     companyName : Text;
+    medicineType : Text;
     timestamp : Time.Time;
   };
 
@@ -145,9 +168,18 @@ actor {
     };
   };
 
+  module Customer {
+    public func compareById(c1 : Customer, c2 : Customer) : Order.Order {
+      if (c1.id < c2.id) { #less } else if (c1.id > c2.id) {
+        #greater;
+      } else { #equal };
+    };
+  };
+
   // Persistent storage
   let staff = Map.empty<Principal, Staff>();
   let pharmacies = Map.empty<Nat, Pharmacy>();
+  let customers = Map.empty<Nat, Customer>();
   let medicines = Map.empty<Nat, Medicine>();
   let orders = Map.empty<Nat, OrderRecord>();
   let purchases = Map.empty<Nat, PurchaseRecord>();
@@ -156,6 +188,7 @@ actor {
   var nextMedicineId = 0;
   var nextOrderId = 0;
   var nextPurchaseId = 0;
+  var nextCustomerId = 0;
 
   // Time constants (in nanoseconds)
   let fortyEightHoursInNanoseconds : Int = 48 * 60 * 60 * 1_000_000_000;
@@ -175,7 +208,7 @@ actor {
   };
 
   // Pharmacy Management
-  public shared ({ caller }) func addPharmacy(name : Text, contact : Text, location : Text) : async Nat {
+  public shared ({ caller }) func addPharmacy(name : Text, contact : Text, location : Text, code : Text) : async Nat {
     let id = nextPharmacyId;
     nextPharmacyId += 1;
 
@@ -184,6 +217,7 @@ actor {
       name;
       contact;
       location;
+      code;
     };
 
     pharmacies.add(id, pharmacy);
@@ -200,6 +234,45 @@ actor {
     pharmacies.values().toArray().sort();
   };
 
+  // Customer Management
+  public shared ({ caller }) func addCustomer(
+    name : Text,
+    customerType : CustomerType,
+    address : Text,
+    area : Text,
+    contactNo : Text,
+    groupName : Text,
+    code : Text,
+  ) : async Nat {
+    let id = nextCustomerId;
+    nextCustomerId += 1;
+
+    let customer : Customer = {
+      id;
+      name;
+      customerType;
+      address;
+      area;
+      contactNo;
+      groupName;
+      code;
+      timestamp = Time.now();
+    };
+
+    customers.add(id, customer);
+    id;
+  };
+
+  public shared ({ caller }) func deleteCustomer(id : Nat) : async Bool {
+    let result = customers.containsKey(id);
+    customers.remove(id);
+    result;
+  };
+
+  public query ({ caller }) func getCustomers() : async [Customer] {
+    customers.values().toArray().sort(Customer.compareById);
+  };
+
   // Medicine Management
   public shared ({ caller }) func addMedicine(
     name : Text,
@@ -208,6 +281,9 @@ actor {
     company : Text,
     strength : Text,
     packSize : Text,
+    genericName : Text,
+    batchNo : Text,
+    medicineType : Text,
   ) : async Nat {
     let id = nextMedicineId;
     nextMedicineId += 1;
@@ -220,6 +296,9 @@ actor {
       company;
       strength;
       packSize;
+      genericName;
+      batchNo;
+      medicineType;
     };
 
     medicines.add(id, medicine);
@@ -354,6 +433,7 @@ actor {
     price : Nat,
     packSize : Text,
     companyName : Text,
+    medicineType : Text,
   ) : async Nat {
     let id = nextPurchaseId;
     nextPurchaseId += 1;
@@ -367,6 +447,7 @@ actor {
       price;
       packSize;
       companyName;
+      medicineType;
       timestamp = Time.now();
     };
 
