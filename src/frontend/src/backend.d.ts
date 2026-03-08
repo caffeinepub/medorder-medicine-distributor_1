@@ -42,6 +42,7 @@ export interface PurchaseRecord {
     price: bigint;
     medicineType: string;
 }
+export type Principal = Principal;
 export interface Medicine {
     id: bigint;
     packSize: string;
@@ -55,6 +56,9 @@ export interface Medicine {
     medicineType: string;
 }
 export interface MedicineItem {
+    distributionDiscount: bigint;
+    companyDiscount: bigint;
+    netRate: bigint;
     discountPercent: bigint;
     bonusQty: bigint;
     quantity: bigint;
@@ -90,6 +94,7 @@ export interface backendInterface {
     addMedicine(name: string, price: bigint, description: string, company: string, strength: string, packSize: string, genericName: string, batchNo: string, medicineType: string): Promise<bigint>;
     addPharmacy(name: string, contact: string, location: string, code: string): Promise<bigint>;
     addPurchase(productName: string, genericName: string, batchNo: string, quantity: bigint, price: bigint, packSize: string, companyName: string, medicineType: string): Promise<bigint>;
+    adjustInventoryStock(medicineId: bigint, delta: bigint): Promise<boolean>;
     createOrder(pharmacyId: bigint, orderLines: Array<MedicineItem>, staffName: string, staffCode: string): Promise<bigint>;
     deleteCustomer(id: bigint): Promise<boolean>;
     deleteMedicine(id: bigint): Promise<boolean>;
@@ -99,12 +104,16 @@ export interface backendInterface {
     getAllStaffOrders(): Promise<Array<OrderRecord>>;
     getCustomers(): Promise<Array<Customer>>;
     getHistoryOrders(): Promise<Array<OrderRecord>>;
+    getInventoryStock(): Promise<Array<[bigint, bigint]>>;
     getMedicines(): Promise<Array<Medicine>>;
     getOrder(orderId: bigint): Promise<OrderRecord | null>;
     getPharmacies(): Promise<Array<Pharmacy>>;
     getPurchases(): Promise<Array<PurchaseRecord>>;
     getStaffOrders(staffId: Principal): Promise<Array<OrderRecord>>;
     registerStaff(name: string, password: string): Promise<boolean>;
+    setInventoryStock(medicineId: bigint, qty: bigint): Promise<boolean>;
+    updateOrderLines(orderId: bigint, pharmacyId: bigint, orderLines: Array<MedicineItem>, notes: string): Promise<boolean>;
     updateOrderPaymentAndReturn(orderId: bigint, paymentReceived: bigint, returnItems: Array<ReturnItem>, returnReason: string, pharmacyCode: string): Promise<boolean>;
     updateOrderStatus(orderId: bigint, newStatus: OrderStatus): Promise<boolean>;
+    verifyPassword(name: string, password: string): Promise<boolean>;
 }

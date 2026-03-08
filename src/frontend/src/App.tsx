@@ -26,6 +26,7 @@ import {
   MapPin,
   Menu,
   Package,
+  Pencil,
   Phone,
   PillIcon,
   Plus,
@@ -43,6 +44,8 @@ import {
   Truck,
   User,
   Warehouse,
+  Wifi,
+  WifiOff,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
@@ -53,6 +56,138 @@ import type {
 } from "./backend";
 import { OrderStatus as BackendOrderStatusEnum, CustomerType } from "./backend";
 import { useActor } from "./hooks/useActor";
+
+// ─── Extended Customer Type (includes Hospital which maps to Doctor) ──────────
+type ExtendedCustomerType = CustomerType | "hospital";
+function toBackendCustomerType(t: ExtendedCustomerType): CustomerType {
+  if (t === "hospital") return CustomerType.doctor;
+  return t;
+}
+
+// ─── Auth Types & User Database ──────────────────────────────────────────────
+
+type UserRole = "admin" | "staff" | "delivery";
+
+type AppUser = {
+  username: string;
+  password: string;
+  role: UserRole;
+  displayName: string;
+};
+
+const USER_DB: AppUser[] = [
+  // Admin
+  {
+    username: "admin",
+    password: "Admin@123",
+    role: "admin",
+    displayName: "Office Admin",
+  },
+  // Staff/Bookers
+  {
+    username: "booker1",
+    password: "Staff@123",
+    role: "staff",
+    displayName: "Booker One",
+  },
+  {
+    username: "booker2",
+    password: "Staff@123",
+    role: "staff",
+    displayName: "Booker Two",
+  },
+  {
+    username: "booker3",
+    password: "Staff@123",
+    role: "staff",
+    displayName: "Booker Three",
+  },
+  {
+    username: "booker4",
+    password: "Staff@123",
+    role: "staff",
+    displayName: "Booker Four",
+  },
+  {
+    username: "booker5",
+    password: "Staff@123",
+    role: "staff",
+    displayName: "Booker Five",
+  },
+  // Delivery boys
+  {
+    username: "delivery1",
+    password: "Del@123",
+    role: "delivery",
+    displayName: "Delivery One",
+  },
+  {
+    username: "delivery2",
+    password: "Del@123",
+    role: "delivery",
+    displayName: "Delivery Two",
+  },
+  {
+    username: "delivery3",
+    password: "Del@123",
+    role: "delivery",
+    displayName: "Delivery Three",
+  },
+];
+
+const SESSION_KEY = "medorder_session";
+const CUSTOM_USERS_KEY = "medorder_custom_users";
+
+function getCustomUsers(): AppUser[] {
+  try {
+    const stored = localStorage.getItem(CUSTOM_USERS_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+}
+
+function getAllUsers(): AppUser[] {
+  return [...USER_DB, ...getCustomUsers()];
+}
+
+function lookupUser(username: string, password: string): AppUser | null {
+  const all = getAllUsers();
+  return (
+    all.find(
+      (u) =>
+        u.username.toLowerCase() === username.toLowerCase() &&
+        u.password === password,
+    ) ?? null
+  );
+}
+
+type SessionData = { username: string; role: UserRole; displayName: string };
+
+function getSession(): SessionData | null {
+  try {
+    const stored = localStorage.getItem(SESSION_KEY);
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    return null;
+  }
+}
+
+function setSession(data: SessionData) {
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(data));
+  } catch {
+    /* ignore */
+  }
+}
+
+function clearSession() {
+  try {
+    localStorage.removeItem(SESSION_KEY);
+  } catch {
+    /* ignore */
+  }
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -117,6 +252,9 @@ type OrderItem = {
   total: number;
   bonusQty?: number;
   discountPercent?: number;
+  distributionDiscount?: number;
+  companyDiscount?: number;
+  manualNetRate?: number;
 };
 
 type OrderStatus = "pending" | "confirmed" | "delivered";
@@ -151,6 +289,7 @@ type Screen =
 
 type AppState = {
   currentStaff: Staff | null;
+  currentRole: UserRole | null;
   screen: Screen;
   orders: Order[];
   cart: CartItem[];
@@ -158,7 +297,7 @@ type AppState = {
 };
 
 type Action =
-  | { type: "LOGIN"; staff: Staff }
+  | { type: "LOGIN"; staff: Staff; role: UserRole }
   | { type: "LOGOUT" }
   | { type: "NAVIGATE"; screen: Screen }
   | { type: "ADD_TO_CART"; medicine: Medicine }
@@ -567,6 +706,7 @@ function categoryToTypeLabel(cat: Category): string {
 
 const initialState: AppState = {
   currentStaff: null,
+  currentRole: null,
   screen: { name: "login" },
   orders: [],
   cart: [],
@@ -579,12 +719,14 @@ function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         currentStaff: action.staff,
+        currentRole: action.role,
         screen: { name: "dashboard" },
       };
     case "LOGOUT":
       return {
         ...state,
         currentStaff: null,
+        currentRole: null,
         screen: { name: "login" },
         cart: [],
         orders: [],
@@ -740,11 +882,21 @@ function SideDrawer({
   onClose,
   navigate,
   dispatch,
+  isOfflineMode,
+  onToggleOfflineMode,
+  pendingOfflineCount,
+  onSync,
+  isSyncing,
 }: {
   open: boolean;
   onClose: () => void;
   navigate: (s: Screen) => void;
   dispatch: React.Dispatch<Action>;
+  isOfflineMode?: boolean;
+  onToggleOfflineMode?: () => void;
+  pendingOfflineCount?: number;
+  onSync?: () => void;
+  isSyncing?: boolean;
 }) {
   const navItems = [
     {
@@ -838,11 +990,86 @@ function SideDrawer({
           ))}
         </div>
 
+        {/* Offline mode toggle */}
+        {onToggleOfflineMode && (
+          <div className="border-t border-border px-4 py-3">
+            <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold mb-2">
+              Connectivity | کنیکٹیوٹی
+            </p>
+            <button
+              type="button"
+              data-ocid="drawer.offline_toggle"
+              onClick={onToggleOfflineMode}
+              className={`w-full flex items-center gap-3 py-2.5 px-3 rounded-xl transition-colors text-left ${isOfflineMode ? "bg-amber-50 text-amber-700 border border-amber-200" : "hover:bg-muted text-foreground"}`}
+            >
+              {isOfflineMode ? (
+                <WifiOff size={17} className="text-amber-600" />
+              ) : (
+                <Wifi size={17} className="text-green-600" />
+              )}
+              <div className="flex-1">
+                <div className="text-sm font-medium">
+                  {isOfflineMode ? "Offline Mode ON" : "Offline Mode"}
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  {isOfflineMode
+                    ? "Orders saved locally"
+                    : "Tap to work offline"}
+                </div>
+              </div>
+              <div
+                className={`w-9 h-5 rounded-full flex items-center transition-colors ${isOfflineMode ? "bg-amber-400 justify-end" : "bg-gray-300 justify-start"} px-0.5`}
+              >
+                <div className="w-4 h-4 bg-white rounded-full shadow" />
+              </div>
+            </button>
+            {isOfflineMode && (pendingOfflineCount ?? 0) > 0 && onSync && (
+              <button
+                type="button"
+                data-ocid="drawer.sync_button"
+                onClick={() => {
+                  onSync();
+                  onClose();
+                }}
+                disabled={isSyncing}
+                className="mt-2 w-full flex items-center justify-center gap-2 py-2 px-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-semibold rounded-xl transition-colors"
+              >
+                {isSyncing ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <RefreshCw size={14} />
+                )}
+                Sync {pendingOfflineCount} Order(s)
+              </button>
+            )}
+            {!isOfflineMode && (pendingOfflineCount ?? 0) > 0 && onSync && (
+              <button
+                type="button"
+                data-ocid="drawer.sync_button"
+                onClick={() => {
+                  onSync();
+                  onClose();
+                }}
+                disabled={isSyncing}
+                className="mt-2 w-full flex items-center justify-center gap-2 py-2 px-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-semibold rounded-xl transition-colors"
+              >
+                {isSyncing ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <RefreshCw size={14} />
+                )}
+                Sync {pendingOfflineCount} Pending Order(s)
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Logout at bottom */}
         <div className="border-t border-border p-4 pb-8">
           <button
             type="button"
             onClick={() => {
+              clearSession();
               dispatch({ type: "LOGOUT" });
               onClose();
             }}
@@ -864,34 +1091,49 @@ function SideDrawer({
 
 function LoginScreen({
   dispatch,
-  actor,
+  onRoleLogin,
 }: {
   dispatch: React.Dispatch<Action>;
-  actor: backendInterface | null;
+  onRoleLogin?: (role: UserRole, username: string, displayName: string) => void;
 }) {
-  const [name, setName] = useState("Ahmed Ali");
-  const [id, setId] = useState("SA-001");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   async function handleLogin() {
-    if (!name.trim() || !id.trim()) {
-      setError("Please enter both name and Staff ID");
+    if (!username.trim() || !password.trim()) {
+      setError(
+        "Please enter username and password | براہ کرم یوزر نیم اور پاس ورڈ درج کریں",
+      );
       return;
     }
     setIsLoggingIn(true);
     try {
-      // Register staff in background — swallow "already exists" errors
-      if (actor) {
-        try {
-          await actor.registerStaff(name.trim(), "staff123");
-        } catch {
-          // Already registered — ignore
-        }
+      const user = lookupUser(username.trim(), password.trim());
+      if (!user) {
+        setError("Invalid username or password | غلط یوزر نیم یا پاس ورڈ");
+        return;
       }
+      // Save session for persistence
+      const sessionData: SessionData = {
+        username: user.username,
+        role: user.role,
+        displayName: user.displayName,
+      };
+      setSession(sessionData);
+
+      if (onRoleLogin) {
+        onRoleLogin(user.role, user.username, user.displayName);
+        return;
+      }
+
+      // For staff role: dispatch LOGIN to reducer
       dispatch({
         type: "LOGIN",
-        staff: { id: id.trim(), name: name.trim(), area: "Lahore" },
+        staff: { id: user.username, name: user.displayName, area: "" },
+        role: user.role,
       });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Login failed";
@@ -901,80 +1143,179 @@ function LoginScreen({
     }
   }
 
+  const roleBadgeColors: Record<UserRole, string> = {
+    admin: "bg-purple-100 text-purple-700",
+    staff: "bg-blue-100 text-blue-700",
+    delivery: "bg-emerald-100 text-emerald-700",
+  };
+  const roleLabels: Record<UserRole, string> = {
+    admin: "Admin",
+    staff: "Staff / Booker",
+    delivery: "Delivery",
+  };
+
   return (
-    <div className="min-h-dvh flex flex-col bg-gradient-to-br from-[oklch(0.38_0.19_255)] to-[oklch(0.28_0.22_270)]">
-      {/* Top decorative area */}
-      <div className="flex-1 flex flex-col items-center justify-center px-6 pt-12 pb-6">
+    <div
+      className="min-h-dvh flex flex-col"
+      style={{
+        background:
+          "linear-gradient(145deg, oklch(0.22 0.14 260) 0%, oklch(0.15 0.08 250) 100%)",
+      }}
+    >
+      {/* Background decorative circles */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div
+          className="absolute -top-20 -right-20 w-64 h-64 rounded-full opacity-10"
+          style={{ background: "oklch(0.65 0.2 255)" }}
+        />
+        <div
+          className="absolute -bottom-10 -left-16 w-48 h-48 rounded-full opacity-10"
+          style={{ background: "oklch(0.6 0.18 200)" }}
+        />
+      </div>
+
+      <div className="relative flex-1 flex flex-col items-center justify-center px-5 pt-12 pb-6">
         {/* Logo */}
         <div className="mb-8 flex flex-col items-center">
-          <div className="w-20 h-20 rounded-2xl bg-white/15 backdrop-blur flex items-center justify-center mb-4 shadow-lg">
+          <div
+            className="w-20 h-20 rounded-2xl flex items-center justify-center mb-4 shadow-2xl"
+            style={{ background: "oklch(0.42 0.18 255)" }}
+          >
             <Package size={40} className="text-white" />
           </div>
           <h1 className="text-3xl font-bold text-white font-heading tracking-tight">
             MedOrder
           </h1>
-          <p className="text-white/75 text-sm mt-1">
-            Medicine Distributor App | میڈیسن ڈسٹریبیوٹر
+          <p className="text-white/60 text-sm mt-1 text-center">
+            Mian Medicine Distributors
+            <br />
+            <span className="text-xs">میڈیسن ڈسٹریبیوٹر — مندی بہاؤالدین</span>
           </p>
         </div>
 
-        {/* Card */}
-        <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl p-6">
-          <h2 className="text-xl font-bold text-foreground mb-1 font-heading">
-            Staff Login | لاگ ان
-          </h2>
-          <p className="text-muted-foreground text-sm mb-5">
-            Enter your credentials to continue
-          </p>
+        {/* Login Card */}
+        <div
+          className="w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden"
+          style={{ background: "oklch(0.98 0 0)" }}
+        >
+          {/* Card header strip */}
+          <div
+            className="px-6 py-4"
+            style={{ background: "oklch(0.42 0.18 255)" }}
+          >
+            <h2 className="text-lg font-bold text-white font-heading">
+              Login | لاگ ان
+            </h2>
+            <p className="text-white/70 text-xs mt-0.5">
+              Enter your credentials to access your dashboard
+            </p>
+          </div>
 
-          <div className="space-y-4">
+          <div className="p-6 space-y-4">
+            {/* Username */}
             <div>
               <label
-                htmlFor="staff-name"
-                className="text-sm font-medium text-foreground mb-1.5 block"
+                htmlFor="login-username"
+                className="text-sm font-semibold text-gray-700 mb-1.5 block"
               >
-                Staff Name | نام
+                Username | یوزر نیم
               </label>
               <Input
-                id="staff-name"
-                value={name}
+                id="login-username"
+                value={username}
                 onChange={(e) => {
-                  setName(e.target.value);
+                  setUsername(e.target.value);
                   setError("");
                 }}
-                placeholder="e.g. Ahmed Ali"
-                className="h-11"
+                placeholder="Enter your username"
+                className="h-11 text-sm"
                 onKeyDown={(e) => e.key === "Enter" && handleLogin()}
                 disabled={isLoggingIn}
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="staff-id"
-                className="text-sm font-medium text-foreground mb-1.5 block"
-              >
-                Staff ID | آئی ڈی
-              </label>
-              <Input
-                id="staff-id"
-                value={id}
-                onChange={(e) => {
-                  setId(e.target.value);
-                  setError("");
-                }}
-                placeholder="e.g. SA-001"
-                className="h-11"
-                onKeyDown={(e) => e.key === "Enter" && handleLogin()}
-                disabled={isLoggingIn}
+                autoComplete="username"
+                data-ocid="login.input"
               />
             </div>
 
-            {error && <p className="text-destructive text-sm">{error}</p>}
+            {/* Password */}
+            <div>
+              <label
+                htmlFor="login-password"
+                className="text-sm font-semibold text-gray-700 mb-1.5 block"
+              >
+                Password | پاس ورڈ
+              </label>
+              <div className="relative">
+                <Input
+                  id="login-password"
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setError("");
+                  }}
+                  placeholder="Enter your password"
+                  className="h-11 text-sm pr-10"
+                  onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+                  disabled={isLoggingIn}
+                  autoComplete="current-password"
+                  data-ocid="login.password.input"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                  tabIndex={-1}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? (
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      aria-hidden="true"
+                    >
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                      <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                      <line x1="1" y1="1" x2="23" y2="23" />
+                    </svg>
+                  ) : (
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      aria-hidden="true"
+                    >
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            </div>
 
+            {/* Error */}
+            {error && (
+              <div
+                className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5"
+                data-ocid="login.error_state"
+              >
+                <X size={14} className="shrink-0" />
+                {error}
+              </div>
+            )}
+
+            {/* Login Button */}
             <Button
               onClick={handleLogin}
-              className="w-full h-11 text-base font-semibold"
+              className="w-full h-11 text-sm font-bold tracking-wide"
               disabled={isLoggingIn}
+              data-ocid="login.submit_button"
               style={{
                 background:
                   "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
@@ -989,16 +1330,34 @@ function LoginScreen({
                 "Login | لاگ ان"
               )}
             </Button>
+
+            {/* Role hint */}
+            <div className="pt-1 border-t border-gray-100">
+              <p className="text-[10px] text-gray-400 text-center mb-2">
+                System will redirect based on your role | سسٹم آپ کے کردار کے
+                مطابق ری ڈائریکٹ کرے گا
+              </p>
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                {(["admin", "staff", "delivery"] as UserRole[]).map((r) => (
+                  <span
+                    key={r}
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${roleBadgeColors[r]}`}
+                  >
+                    {roleLabels[r]}
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
       {/* Footer */}
-      <div className="text-center py-4 text-white/50 text-xs pb-8">
-        © {new Date().getFullYear()}. Built with love using{" "}
+      <div className="relative text-center py-4 text-white/30 text-xs pb-8">
+        © {new Date().getFullYear()}. Built with ♥ using{" "}
         <a
           href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(window.location.hostname)}`}
-          className="underline text-white/70"
+          className="underline text-white/50"
           target="_blank"
           rel="noopener noreferrer"
         >
@@ -1018,6 +1377,9 @@ function DashboardScreen({
   isLoadingData,
   onRefreshOrders,
   onOpenMenu,
+  isOfflineMode,
+  pendingOfflineCount,
+  actor,
 }: {
   state: AppState;
   dispatch: React.Dispatch<Action>;
@@ -1025,6 +1387,9 @@ function DashboardScreen({
   isLoadingData: boolean;
   onRefreshOrders: () => void;
   onOpenMenu: () => void;
+  isOfflineMode?: boolean;
+  pendingOfflineCount?: number;
+  actor: backendInterface | null;
 }) {
   const todayStr = new Date().toISOString().split("T")[0];
   const todayOrders = state.orders.filter((o) => o.date === todayStr);
@@ -1033,6 +1398,91 @@ function DashboardScreen({
     (o) => o.status === "pending",
   ).length;
   const recentOrders = state.orders.slice(0, 3);
+  const [isConfirmingAllToday, setIsConfirmingAllToday] = useState(false);
+
+  const todayPendingOrders = todayOrders.filter((o) => o.status === "pending");
+
+  async function handleConfirmAllToday() {
+    if (!actor) return;
+    const toConfirm = todayPendingOrders.filter(
+      (o) => o.backendId !== null && (o.returnItems ?? []).length === 0,
+    );
+    if (toConfirm.length === 0) {
+      toast.info("No pending orders to confirm for today");
+      return;
+    }
+    setIsConfirmingAllToday(true);
+    try {
+      await Promise.all(
+        toConfirm.map((o) =>
+          o.backendId !== null
+            ? actor.updateOrderStatus(
+                o.backendId,
+                mapLocalStatusToBackend("confirmed"),
+              )
+            : Promise.resolve(),
+        ),
+      );
+      for (const o of toConfirm) {
+        dispatch({ type: "UPDATE_STATUS", orderId: o.id, status: "confirmed" });
+      }
+      toast.success(
+        `${toConfirm.length} today's orders confirmed | ${toConfirm.length} آج کے آرڈر تصدیق ہو گئے`,
+      );
+      onRefreshOrders();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error confirming orders: ${msg}`);
+    } finally {
+      setIsConfirmingAllToday(false);
+    }
+  }
+
+  const username = state.currentStaff?.id ?? "";
+  const locationAskedKey = `medorder_location_asked_${username}`;
+  const [locationAsked, setLocationAsked] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(locationAskedKey);
+    } catch {
+      return null;
+    }
+  });
+  const locationEnabled = locationAsked === "yes";
+  useLocationTracking(username, "staff", locationEnabled);
+
+  function handleAllowLocation() {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        try {
+          localStorage.setItem(locationAskedKey, "yes");
+          localStorage.setItem(
+            `medorder_location_${username}`,
+            JSON.stringify({
+              username,
+              role: "staff",
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+              accuracy: pos.coords.accuracy,
+              updatedAt: new Date().toISOString(),
+            }),
+          );
+        } catch {
+          /* ignore */
+        }
+        setLocationAsked("yes");
+      },
+      () => {
+        try {
+          localStorage.setItem(locationAskedKey, "denied");
+        } catch {
+          /* ignore */
+        }
+        setLocationAsked("denied");
+      },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  }
 
   return (
     <div className="pb-6">
@@ -1061,6 +1511,55 @@ function DashboardScreen({
           </div>
         </div>
       </div>
+
+      {/* Offline banner */}
+      {isOfflineMode && (
+        <div className="flex items-center gap-2.5 bg-amber-500 text-white px-4 py-2.5 text-sm font-medium">
+          <WifiOff size={15} className="shrink-0" />
+          <span className="flex-1">
+            Offline Mode — orders saved locally
+            {(pendingOfflineCount ?? 0) > 0
+              ? ` (${pendingOfflineCount} pending)`
+              : ""}
+          </span>
+        </div>
+      )}
+
+      {/* Location permission banner */}
+      {!locationAsked && (
+        <div
+          className="flex items-center gap-3 bg-blue-600 text-white px-4 py-2.5 text-sm"
+          data-ocid="dashboard.location_banner"
+        >
+          <MapPin size={15} className="shrink-0 opacity-80" />
+          <span className="flex-1 text-xs">
+            Share your location for real-time tracking | اپنی جگہ شیئر کریں
+          </span>
+          <button
+            type="button"
+            data-ocid="dashboard.location_allow_button"
+            onClick={handleAllowLocation}
+            className="bg-white text-blue-600 text-xs font-semibold px-2.5 py-1 rounded-lg shrink-0"
+          >
+            Allow | اجازت
+          </button>
+          <button
+            type="button"
+            data-ocid="dashboard.location_later_button"
+            onClick={() => {
+              try {
+                localStorage.setItem(locationAskedKey, "later");
+              } catch {
+                /* ignore */
+              }
+              setLocationAsked("later");
+            }}
+            className="bg-white/20 text-white text-xs font-semibold px-2.5 py-1 rounded-lg shrink-0"
+          >
+            Later | بعد میں
+          </button>
+        </div>
+      )}
 
       <div className="px-4 pt-4 space-y-4">
         {/* Stat Cards */}
@@ -1132,6 +1631,27 @@ function DashboardScreen({
             <div className="text-white/70 text-xs">آرڈر تاریخ</div>
           </button>
         </div>
+
+        {/* Confirm All Today's Orders */}
+        {todayPendingOrders.length > 0 && (
+          <button
+            type="button"
+            data-ocid="dashboard.confirm_all_today_button"
+            onClick={handleConfirmAllToday}
+            disabled={isConfirmingAllToday}
+            className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white rounded-2xl p-3.5 font-semibold text-sm transition-colors"
+          >
+            {isConfirmingAllToday ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <CheckCircle2 size={16} />
+            )}
+            Confirm All Today's Orders | آج کے سب آرڈر تصدیق کریں
+            <span className="bg-white/25 text-white text-xs px-2 py-0.5 rounded-full font-bold">
+              {todayPendingOrders.length}
+            </span>
+          </button>
+        )}
 
         {/* Recent Orders */}
         <div>
@@ -1387,6 +1907,39 @@ function PharmacyListScreen({
   );
 }
 
+// ─── Stock helpers (localStorage-backed) ────────────────────────────────────
+
+function getStock(backendId: bigint): number | null {
+  try {
+    const raw = localStorage.getItem(`medorder_stock_${backendId}`);
+    return raw !== null && raw !== "" ? Number(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function setStock(backendId: bigint, qty: number) {
+  try {
+    localStorage.setItem(`medorder_stock_${backendId}`, String(qty));
+  } catch {
+    /* ignore */
+  }
+}
+
+function deductStock(lines: Array<{ backendId: bigint; qty: number }>) {
+  for (const line of lines) {
+    const cur = getStock(line.backendId);
+    if (cur !== null) setStock(line.backendId, Math.max(0, cur - line.qty));
+  }
+}
+
+function restoreStock(lines: Array<{ backendId: bigint; qty: number }>) {
+  for (const line of lines) {
+    const cur = getStock(line.backendId);
+    if (cur !== null) setStock(line.backendId, cur + line.qty);
+  }
+}
+
 // ─── Order Taking Screen ──────────────────────────────────────────────────────
 
 function OrderTakingScreen({
@@ -1397,6 +1950,8 @@ function OrderTakingScreen({
   medicines,
   onOrderSubmitted,
   actor,
+  isOfflineMode,
+  onSaveOfflineOrder,
 }: {
   state: AppState;
   dispatch: React.Dispatch<Action>;
@@ -1405,6 +1960,8 @@ function OrderTakingScreen({
   medicines: Medicine[];
   onOrderSubmitted: () => void;
   actor: backendInterface | null;
+  isOfflineMode?: boolean;
+  onSaveOfflineOrder?: (order: Order) => void;
 }) {
   const pharmacy = pharmacies.find((p) => p.id === pharmacyId);
   const [search, setSearch] = useState("");
@@ -1413,11 +1970,28 @@ function OrderTakingScreen({
   const [notes, setNotes] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [bonusDiscountMap, setBonusDiscountMap] = useState<
-    Record<string, { bonus: number; discount: number }>
+    Record<
+      string,
+      {
+        bonus: number;
+        discount: number;
+        distDisc: number;
+        compDisc: number;
+        netRate: number | null;
+      }
+    >
   >({});
 
   function getBonusDiscount(medicineId: string) {
-    return bonusDiscountMap[medicineId] ?? { bonus: 0, discount: 0 };
+    return (
+      bonusDiscountMap[medicineId] ?? {
+        bonus: 0,
+        discount: 0,
+        distDisc: 0,
+        compDisc: 0,
+        netRate: null,
+      }
+    );
   }
 
   function updateBonus(medicineId: string, bonus: number) {
@@ -1427,10 +2001,32 @@ function OrderTakingScreen({
     }));
   }
 
-  function updateDiscount(medicineId: string, discount: number) {
+  function updateDistDisc(medicineId: string, distDisc: number) {
     setBonusDiscountMap((prev) => ({
       ...prev,
-      [medicineId]: { ...getBonusDiscount(medicineId), discount },
+      [medicineId]: {
+        ...getBonusDiscount(medicineId),
+        distDisc,
+        netRate: null,
+      },
+    }));
+  }
+
+  function updateCompDisc(medicineId: string, compDisc: number) {
+    setBonusDiscountMap((prev) => ({
+      ...prev,
+      [medicineId]: {
+        ...getBonusDiscount(medicineId),
+        compDisc,
+        netRate: null,
+      },
+    }));
+  }
+
+  function updateNetRate(medicineId: string, val: number | null) {
+    setBonusDiscountMap((prev) => ({
+      ...prev,
+      [medicineId]: { ...getBonusDiscount(medicineId), netRate: val },
     }));
   }
 
@@ -1478,6 +2074,53 @@ function OrderTakingScreen({
     }
     if (!pharmacy) return;
 
+    const items: OrderItem[] = state.cart.map((ci) => {
+      const bd = getBonusDiscount(ci.medicine.id);
+      const distDisc = bd.distDisc ?? 0;
+      const compDisc = bd.compDisc ?? 0;
+      const manualNetRate = bd.netRate;
+      return {
+        medicineId: ci.medicine.id,
+        medicineName: ci.medicine.name,
+        company: ci.medicine.company,
+        strength: ci.medicine.strength,
+        qty: ci.qty,
+        unitPrice: ci.medicine.price,
+        total: ci.medicine.price * ci.qty,
+        bonusQty: bd.bonus ?? 0,
+        discountPercent: 0,
+        distributionDiscount: Math.round(distDisc * 10),
+        companyDiscount: Math.round(compDisc * 10),
+        manualNetRate: manualNetRate !== null ? manualNetRate : undefined,
+      };
+    });
+
+    // Offline mode: save locally
+    if (isOfflineMode) {
+      const offlineOrder: Order = {
+        id: `OFFLINE-${Date.now()}`,
+        backendId: null,
+        pharmacyId: pharmacy.id,
+        pharmacyName: pharmacy.name,
+        pharmacyArea: pharmacy.area,
+        staffId: state.currentStaff?.id ?? "",
+        staffName: state.currentStaff?.name ?? "",
+        date: new Date().toISOString().split("T")[0],
+        items,
+        notes,
+        status: "pending",
+        totalAmount: cartTotal,
+      };
+      dispatch({ type: "SUBMIT_ORDER", order: offlineOrder });
+      onSaveOfflineOrder?.(offlineOrder);
+      setShowCart(false);
+      toast.success(
+        `Order saved offline for ${pharmacy.name}! Sync when online.`,
+      );
+      dispatch({ type: "NAVIGATE", screen: { name: "dashboard" } });
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       if (!actor) {
@@ -1486,17 +2129,25 @@ function OrderTakingScreen({
       }
 
       // Build order lines using backend IDs (with bonus/discount)
-      // discountPercent stored as integer * 10 to support decimals (e.g. 11.5% → stored as 115)
-      const orderLines = state.cart.map((ci) => ({
-        medicineId: ci.medicine.backendId,
-        quantity: BigInt(Math.round(ci.qty)),
-        bonusQty: BigInt(
-          Math.round(bonusDiscountMap[ci.medicine.id]?.bonus ?? 0),
-        ),
-        discountPercent: BigInt(
-          Math.round((bonusDiscountMap[ci.medicine.id]?.discount ?? 0) * 10),
-        ),
-      }));
+      // distributionDiscount/companyDiscount stored as integer * 10 to support decimals
+      // netRate stored as * 100 (paise) to preserve decimals
+      const orderLines = state.cart.map((ci) => {
+        const bd = getBonusDiscount(ci.medicine.id);
+        const distDisc = bd.distDisc ?? 0;
+        const compDisc = bd.compDisc ?? 0;
+        const autoNetRate =
+          ci.medicine.price * (1 - (distDisc + compDisc) / 100);
+        const manualNetRate = bd.netRate;
+        return {
+          medicineId: ci.medicine.backendId,
+          quantity: BigInt(Math.round(ci.qty)),
+          bonusQty: BigInt(Math.round(bd.bonus ?? 0)),
+          discountPercent: BigInt(0),
+          distributionDiscount: BigInt(Math.round(distDisc * 10)),
+          companyDiscount: BigInt(Math.round(compDisc * 10)),
+          netRate: BigInt(Math.round((manualNetRate ?? autoNetRate) * 100)),
+        };
+      });
 
       // Create order in backend
       const returnedId = await actor.createOrder(
@@ -1507,21 +2158,6 @@ function OrderTakingScreen({
       );
 
       const orderId = `ORD-${returnedId}`;
-
-      const items: OrderItem[] = state.cart.map((ci) => ({
-        medicineId: ci.medicine.id,
-        medicineName: ci.medicine.name,
-        company: ci.medicine.company,
-        strength: ci.medicine.strength,
-        qty: ci.qty,
-        unitPrice: ci.medicine.price,
-        total: ci.medicine.price * ci.qty,
-        bonusQty: bonusDiscountMap[ci.medicine.id]?.bonus ?? 0,
-        // Store as * 10 to support decimals (11.5% → 115); display as / 10
-        discountPercent: Math.round(
-          (bonusDiscountMap[ci.medicine.id]?.discount ?? 0) * 10,
-        ),
-      }));
 
       const order: Order = {
         id: orderId,
@@ -1538,6 +2174,24 @@ function OrderTakingScreen({
         totalAmount: cartTotal,
       };
 
+      // Deduct stock for ordered items (localStorage)
+      deductStock(
+        state.cart.map((ci) => ({
+          backendId: ci.medicine.backendId,
+          qty: Math.round(ci.qty),
+        })),
+      );
+      // Sync inventory deduction to backend (fire-and-forget, don't block)
+      Promise.all(
+        state.cart.map((ci) =>
+          actor
+            .adjustInventoryStock(
+              ci.medicine.backendId,
+              BigInt(-Math.round(ci.qty)),
+            )
+            .catch(() => {}),
+        ),
+      );
       dispatch({ type: "SUBMIT_ORDER", order });
       setShowCart(false);
       toast.success(`Order submitted for ${pharmacy.name}!`);
@@ -1637,11 +2291,30 @@ function OrderTakingScreen({
         ) : (
           filteredMeds.map((med) => {
             const qty = getQty(med.id);
-            const stockRaw = localStorage.getItem(
-              `medorder_stock_${med.backendId}`,
-            );
-            const stockQty =
-              stockRaw !== null && stockRaw !== "" ? Number(stockRaw) : null;
+            const stockQty = getStock(med.backendId);
+            // Compute stock badge props
+            const stockBadge = (() => {
+              if (stockQty === null) return null;
+              if (stockQty === 0)
+                return { text: "Out of Stock", cls: "bg-red-100 text-red-700" };
+              if (qty > 0 && qty > stockQty)
+                return {
+                  text: `Over stock! (has: ${stockQty})`,
+                  cls: "bg-red-100 text-red-700",
+                };
+              if (qty > 0)
+                return {
+                  text: `After: ${stockQty - qty} left`,
+                  cls: "bg-emerald-100 text-emerald-700",
+                };
+              return {
+                text: `Stock: ${stockQty}`,
+                cls:
+                  stockQty > 10
+                    ? "bg-emerald-100 text-emerald-700"
+                    : "bg-amber-100 text-amber-700",
+              };
+            })();
             return (
               <div
                 key={med.id}
@@ -1656,15 +2329,11 @@ function OrderTakingScreen({
                       <span className="text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full">
                         {med.strength}
                       </span>
-                      {stockQty !== null && (
+                      {stockBadge && (
                         <span
-                          className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                            stockQty > 0
-                              ? "bg-emerald-100 text-emerald-700"
-                              : "bg-amber-100 text-amber-700"
-                          }`}
+                          className={`text-xs px-2 py-0.5 rounded-full font-semibold ${stockBadge.cls}`}
                         >
-                          Stock: {stockQty}
+                          {stockBadge.text}
                         </span>
                       )}
                     </div>
@@ -1741,7 +2410,7 @@ function OrderTakingScreen({
                         </label>
                         <label className="flex items-center gap-1">
                           <span className="text-[9px] text-amber-600 font-medium">
-                            Disc%
+                            Dist%
                           </span>
                           <input
                             type="number"
@@ -1749,9 +2418,9 @@ function OrderTakingScreen({
                             max="100"
                             step="any"
                             value={
-                              getBonusDiscount(med.id).discount === 0
+                              getBonusDiscount(med.id).distDisc === 0
                                 ? ""
-                                : getBonusDiscount(med.id).discount
+                                : getBonusDiscount(med.id).distDisc
                             }
                             placeholder="0"
                             onChange={(e) => {
@@ -1762,15 +2431,90 @@ function OrderTakingScreen({
                                   Number.parseFloat(e.target.value) || 0,
                                 ),
                               );
-                              updateDiscount(
+                              updateDistDisc(
                                 med.id,
                                 Number.isNaN(val) ? 0 : val,
                               );
                             }}
                             className="w-12 text-center text-xs font-bold text-amber-700 border border-amber-300 bg-amber-50 rounded px-1 py-0.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                            aria-label="Discount percent"
+                            aria-label="Distribution discount percent"
                           />
                         </label>
+                        <label className="flex items-center gap-1">
+                          <span className="text-[9px] text-blue-600 font-medium">
+                            Co%
+                          </span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="any"
+                            value={
+                              getBonusDiscount(med.id).compDisc === 0
+                                ? ""
+                                : getBonusDiscount(med.id).compDisc
+                            }
+                            placeholder="0"
+                            onChange={(e) => {
+                              const val = Math.min(
+                                100,
+                                Math.max(
+                                  0,
+                                  Number.parseFloat(e.target.value) || 0,
+                                ),
+                              );
+                              updateCompDisc(
+                                med.id,
+                                Number.isNaN(val) ? 0 : val,
+                              );
+                            }}
+                            className="w-12 text-center text-xs font-bold text-blue-700 border border-blue-300 bg-blue-50 rounded px-1 py-0.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            aria-label="Company discount percent"
+                          />
+                        </label>
+                        {/* Net Rate — editable, with auto-reset */}
+                        {(() => {
+                          const bd = getBonusDiscount(med.id);
+                          const isManual = bd.netRate !== null;
+                          return (
+                            <div className="flex items-center gap-0.5">
+                              <span className="text-[9px] text-gray-500 font-medium">
+                                Net
+                              </span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={isManual ? bd.netRate! : ""}
+                                placeholder="0"
+                                onChange={(e) => {
+                                  const val = Number.parseFloat(e.target.value);
+                                  if (!e.target.value || Number.isNaN(val)) {
+                                    updateNetRate(med.id, null);
+                                  } else {
+                                    updateNetRate(med.id, val);
+                                  }
+                                }}
+                                className={`w-14 text-center text-xs font-bold rounded px-1 py-0.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                                  isManual
+                                    ? "text-purple-700 border border-purple-400 bg-purple-50"
+                                    : "text-gray-700 border border-gray-200 bg-gray-100"
+                                }`}
+                                aria-label="Net rate"
+                              />
+                              {isManual && (
+                                <button
+                                  type="button"
+                                  onClick={() => updateNetRate(med.id, null)}
+                                  className="text-[9px] text-gray-400 hover:text-gray-600 leading-none"
+                                  title="Reset to auto"
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </>
                     )}
                   </div>
@@ -1911,27 +2655,101 @@ function OrderTakingScreen({
                         </label>
                         <label className="flex flex-col items-center gap-0.5">
                           <span className="text-[10px] text-amber-600 font-medium">
-                            Disc% | ڈسکاؤنٹ
+                            Dist% | تقسیم
                           </span>
                           <input
                             type="number"
                             min="0"
                             max="100"
-                            value={bd.discount === 0 ? "" : bd.discount}
+                            step="any"
+                            value={bd.distDisc === 0 ? "" : bd.distDisc}
                             placeholder="0"
                             onChange={(e) => {
                               const val = Math.min(
                                 100,
-                                Math.max(0, Number(e.target.value)),
+                                Math.max(
+                                  0,
+                                  Number.parseFloat(e.target.value) || 0,
+                                ),
                               );
-                              updateDiscount(
+                              updateDistDisc(
                                 ci.medicine.id,
                                 Number.isNaN(val) ? 0 : val,
                               );
                             }}
                             className="w-14 text-center text-sm font-bold text-amber-700 border border-amber-300 bg-amber-50 rounded-md px-1 py-1 focus:outline-none focus:ring-1 focus:ring-amber-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                            aria-label="Discount percent"
+                            aria-label="Distribution discount percent"
                           />
+                        </label>
+                        <label className="flex flex-col items-center gap-0.5">
+                          <span className="text-[10px] text-blue-600 font-medium">
+                            Co% | کمپنی
+                          </span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="any"
+                            value={bd.compDisc === 0 ? "" : bd.compDisc}
+                            placeholder="0"
+                            onChange={(e) => {
+                              const val = Math.min(
+                                100,
+                                Math.max(
+                                  0,
+                                  Number.parseFloat(e.target.value) || 0,
+                                ),
+                              );
+                              updateCompDisc(
+                                ci.medicine.id,
+                                Number.isNaN(val) ? 0 : val,
+                              );
+                            }}
+                            className="w-14 text-center text-sm font-bold text-blue-700 border border-blue-300 bg-blue-50 rounded-md px-1 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            aria-label="Company discount percent"
+                          />
+                        </label>
+                        <label className="flex flex-col items-center gap-0.5">
+                          <span
+                            className={`text-[10px] font-medium ${bd.netRate !== null ? "text-purple-600" : "text-gray-500"}`}
+                          >
+                            Net | نیٹ
+                          </span>
+                          <div className="flex items-center gap-0.5">
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              value={bd.netRate !== null ? bd.netRate : ""}
+                              placeholder="0"
+                              onChange={(e) => {
+                                const val = Number.parseFloat(e.target.value);
+                                if (!e.target.value || Number.isNaN(val)) {
+                                  updateNetRate(ci.medicine.id, null);
+                                } else {
+                                  updateNetRate(ci.medicine.id, val);
+                                }
+                              }}
+                              className={`w-16 text-center text-sm font-bold rounded-md px-1 py-1 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                                bd.netRate !== null
+                                  ? "text-purple-700 border border-purple-400 bg-purple-50 focus:ring-purple-500"
+                                  : "text-gray-700 border border-gray-300 bg-gray-50 focus:ring-gray-400"
+                              } focus:outline-none focus:ring-1`}
+                              aria-label="Net rate"
+                            />
+                            {bd.netRate !== null && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateNetRate(ci.medicine.id, null)
+                                }
+                                className="text-gray-400 hover:text-gray-600 text-xs leading-none"
+                                title="Auto"
+                              >
+                                ×
+                              </button>
+                            )}
+                          </div>
                         </label>
                       </div>
                     </div>
@@ -2153,6 +2971,91 @@ function OrderDetailScreen({
 }) {
   const order = state.orders.find((o) => o.id === orderId);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editLines, setEditLines] = useState<
+    Array<{
+      _key: string;
+      medicineId: string;
+      medicineName: string;
+      qty: string;
+      bonus: string;
+      distDisc: string;
+      compDisc: string;
+      netRate: string;
+      unitPrice: number;
+    }>
+  >([]);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [editMedSearch, setEditMedSearch] = useState<Record<string, string>>(
+    {},
+  );
+  const [editMedDropOpen, setEditMedDropOpen] = useState<
+    Record<string, boolean>
+  >({});
+
+  // medicines come from state.medicines (local) - fallback to order items for names
+  const availableMedicines = (state as any).medicines as Medicine[] | undefined;
+
+  function openEditModal() {
+    if (!order) return;
+    setEditLines(
+      order.items.map((item) => ({
+        _key: `edit-${item.medicineId}-${Date.now()}`,
+        medicineId: item.medicineId,
+        medicineName: item.medicineName,
+        qty: String(item.qty),
+        bonus: String(item.bonusQty ?? 0),
+        distDisc: String((item.distributionDiscount ?? 0) / 10),
+        compDisc: String((item.companyDiscount ?? 0) / 10),
+        netRate: String(item.manualNetRate ?? 0),
+        unitPrice: item.unitPrice,
+      })),
+    );
+    setShowEditModal(true);
+  }
+
+  async function handleSaveEdit() {
+    if (!order || !actor || order.backendId === null) return;
+    setIsSavingEdit(true);
+    try {
+      const orderLines = editLines.map((line) => {
+        const distD = Number.parseFloat(line.distDisc) || 0;
+        const compD = Number.parseFloat(line.compDisc) || 0;
+        const manualNet = Number.parseFloat(line.netRate) || 0;
+        const autoNet = line.unitPrice * (1 - (distD + compD) / 100);
+        return {
+          medicineId: BigInt(line.medicineId),
+          quantity: BigInt(Math.round(Number.parseFloat(line.qty) || 1)),
+          bonusQty: BigInt(Math.round(Number.parseFloat(line.bonus) || 0)),
+          discountPercent: BigInt(0),
+          distributionDiscount: BigInt(Math.round(distD * 10)),
+          companyDiscount: BigInt(Math.round(compD * 10)),
+          netRate: BigInt(
+            Math.round((manualNet > 0 ? manualNet : autoNet) * 100),
+          ),
+        };
+      });
+      // Find pharmacyId (backendId) from state pharmacies
+      const pharmacy = (state as any).pharmacies?.find(
+        (p: Pharmacy) => p.id === order.pharmacyId,
+      );
+      const pharmacyBackendId = pharmacy?.backendId ?? BigInt(0);
+      await actor.updateOrderLines(
+        order.backendId,
+        pharmacyBackendId,
+        orderLines,
+        order.notes ?? "",
+      );
+      toast.success("Order updated successfully | آرڈر اپ ڈیٹ ہو گیا");
+      setShowEditModal(false);
+      onStatusUpdated();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error updating order: ${msg}`);
+    } finally {
+      setIsSavingEdit(false);
+    }
+  }
 
   if (!order) {
     return (
@@ -2228,20 +3131,357 @@ function OrderDetailScreen({
               <p className="text-xs text-muted-foreground mb-1">Order Status</p>
               <StatusBadge status={order.status} />
             </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={cycleStatus}
-              disabled={isUpdatingStatus}
-              className="text-xs h-8"
-            >
-              {isUpdatingStatus ? (
-                <Loader2 className="h-3 w-3 animate-spin mr-1" />
-              ) : null}
-              Update Status
-            </Button>
+            <div className="flex items-center gap-2">
+              {order.status === "pending" && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={openEditModal}
+                  className="text-xs h-8 gap-1.5"
+                  data-ocid="order_detail.edit_button"
+                >
+                  <Pencil size={12} />
+                  Edit
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={cycleStatus}
+                disabled={isUpdatingStatus}
+                className="text-xs h-8"
+              >
+                {isUpdatingStatus ? (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                ) : null}
+                Update Status
+              </Button>
+            </div>
           </div>
         </div>
+
+        {/* Edit Order Modal */}
+        {showEditModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/55">
+            <div
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              <div
+                className="flex items-center justify-between px-5 py-4 text-white"
+                style={{
+                  background:
+                    "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+                }}
+              >
+                <h2 className="font-bold font-heading text-base">
+                  Edit Order | آرڈر ترمیم
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setShowEditModal(false)}
+                  className="w-7 h-7 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-5 space-y-3">
+                <div className="grid grid-cols-12 gap-1 text-xs font-semibold text-gray-400 uppercase tracking-wide px-1 pb-1">
+                  <div className="col-span-4">Medicine</div>
+                  <div className="col-span-1 text-center">Qty</div>
+                  <div className="col-span-1 text-center">Bonus</div>
+                  <div className="col-span-2 text-center">Dist%</div>
+                  <div className="col-span-2 text-center">Co%</div>
+                  <div className="col-span-1 text-center">Net</div>
+                  <div className="col-span-1" />
+                </div>
+                {editLines.map((line) => (
+                  <div
+                    key={line._key}
+                    className="grid grid-cols-12 gap-1 items-center"
+                  >
+                    <div className="col-span-4 relative">
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={
+                            editMedDropOpen[line._key]
+                              ? (editMedSearch[line._key] ?? "")
+                              : line.medicineName
+                          }
+                          onChange={(e) => {
+                            setEditMedSearch((prev) => ({
+                              ...prev,
+                              [line._key]: e.target.value,
+                            }));
+                            setEditMedDropOpen((prev) => ({
+                              ...prev,
+                              [line._key]: true,
+                            }));
+                          }}
+                          onFocus={() => {
+                            setEditMedSearch((prev) => ({
+                              ...prev,
+                              [line._key]: "",
+                            }));
+                            setEditMedDropOpen((prev) => ({
+                              ...prev,
+                              [line._key]: true,
+                            }));
+                          }}
+                          onKeyDown={() => {
+                            if (!editMedDropOpen[line._key]) {
+                              setEditMedSearch((prev) => ({
+                                ...prev,
+                                [line._key]: "",
+                              }));
+                              setEditMedDropOpen((prev) => ({
+                                ...prev,
+                                [line._key]: true,
+                              }));
+                            }
+                          }}
+                          placeholder="Medicine..."
+                          className="w-full h-8 text-xs border border-gray-300 rounded-lg px-2 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        />
+                      </div>
+                      {editMedDropOpen[line._key] && availableMedicines && (
+                        <>
+                          <div className="absolute z-20 top-full mt-0.5 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-36 overflow-y-auto">
+                            {(() => {
+                              const q = (
+                                editMedSearch[line._key] ?? ""
+                              ).toLowerCase();
+                              const filtered = availableMedicines.filter(
+                                (m) => {
+                                  if (!q) return true;
+                                  return (
+                                    m.name.toLowerCase().includes(q) ||
+                                    m.company.toLowerCase().includes(q)
+                                  );
+                                },
+                              );
+                              return filtered.length === 0 ? (
+                                <div className="px-2 py-1.5 text-xs text-gray-400">
+                                  No medicines found
+                                </div>
+                              ) : (
+                                filtered.map((m) => (
+                                  <button
+                                    type="button"
+                                    key={String(m.backendId)}
+                                    onClick={() => {
+                                      setEditLines((prev) =>
+                                        prev.map((l) =>
+                                          l._key === line._key
+                                            ? {
+                                                ...l,
+                                                medicineId: String(m.backendId),
+                                                medicineName: m.name,
+                                                unitPrice: m.price,
+                                              }
+                                            : l,
+                                        ),
+                                      );
+                                      setEditMedDropOpen((prev) => ({
+                                        ...prev,
+                                        [line._key]: false,
+                                      }));
+                                    }}
+                                    className="w-full text-left px-2 py-1.5 text-xs hover:bg-blue-50 transition-colors"
+                                  >
+                                    {m.name}
+                                    {m.strength && (
+                                      <span className="text-gray-400 ml-1">
+                                        ({m.strength})
+                                      </span>
+                                    )}
+                                  </button>
+                                ))
+                              );
+                            })()}
+                          </div>
+                          <div
+                            className="fixed inset-0 z-10"
+                            onClick={() =>
+                              setEditMedDropOpen((prev) => ({
+                                ...prev,
+                                [line._key]: false,
+                              }))
+                            }
+                            onKeyDown={(e) =>
+                              e.key === "Escape" &&
+                              setEditMedDropOpen((prev) => ({
+                                ...prev,
+                                [line._key]: false,
+                              }))
+                            }
+                            aria-hidden="true"
+                          />
+                        </>
+                      )}
+                    </div>
+                    <div className="col-span-1">
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={line.qty}
+                        onChange={(e) =>
+                          setEditLines((prev) =>
+                            prev.map((l) =>
+                              l._key === line._key
+                                ? { ...l, qty: e.target.value }
+                                : l,
+                            ),
+                          )
+                        }
+                        className="w-full h-8 border border-gray-300 rounded-lg px-1 text-xs text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                    </div>
+                    <div className="col-span-1">
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={line.bonus}
+                        onChange={(e) =>
+                          setEditLines((prev) =>
+                            prev.map((l) =>
+                              l._key === line._key
+                                ? { ...l, bonus: e.target.value }
+                                : l,
+                            ),
+                          )
+                        }
+                        className="w-full h-8 border border-emerald-300 bg-emerald-50 rounded-lg px-1 text-xs text-center text-emerald-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="any"
+                        value={line.distDisc}
+                        onChange={(e) =>
+                          setEditLines((prev) =>
+                            prev.map((l) =>
+                              l._key === line._key
+                                ? { ...l, distDisc: e.target.value }
+                                : l,
+                            ),
+                          )
+                        }
+                        className="w-full h-8 border border-amber-300 bg-amber-50 rounded-lg px-1 text-xs text-center text-amber-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="any"
+                        value={line.compDisc}
+                        onChange={(e) =>
+                          setEditLines((prev) =>
+                            prev.map((l) =>
+                              l._key === line._key
+                                ? { ...l, compDisc: e.target.value }
+                                : l,
+                            ),
+                          )
+                        }
+                        className="w-full h-8 border border-blue-300 bg-blue-50 rounded-lg px-1 text-xs text-center text-blue-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                    </div>
+                    <div className="col-span-1">
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        placeholder="0"
+                        value={line.netRate === "0" ? "" : line.netRate}
+                        onChange={(e) =>
+                          setEditLines((prev) =>
+                            prev.map((l) =>
+                              l._key === line._key
+                                ? { ...l, netRate: e.target.value || "0" }
+                                : l,
+                            ),
+                          )
+                        }
+                        className="w-full h-8 border border-purple-300 bg-purple-50 rounded-lg px-1 text-xs text-center text-purple-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                    </div>
+                    <div className="col-span-1 flex justify-center">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditLines((prev) =>
+                            prev.filter((l) => l._key !== line._key),
+                          )
+                        }
+                        className="w-7 h-7 flex items-center justify-center text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {availableMedicines && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setEditLines((prev) => [
+                        ...prev,
+                        {
+                          _key: `edit-new-${Date.now()}`,
+                          medicineId: String(
+                            availableMedicines[0]?.backendId ?? BigInt(0),
+                          ),
+                          medicineName: availableMedicines[0]?.name ?? "",
+                          qty: "1",
+                          bonus: "0",
+                          distDisc: "0",
+                          compDisc: "0",
+                          netRate: "0",
+                          unitPrice: availableMedicines[0]?.price ?? 0,
+                        },
+                      ])
+                    }
+                    className="flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors"
+                  >
+                    <Plus size={12} />
+                    Add Item
+                  </button>
+                )}
+              </div>
+              <div className="px-5 py-4 border-t border-gray-200 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowEditModal(false)}
+                  className="px-4 py-2 rounded-xl border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors font-medium text-sm"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  data-ocid="order_detail.save_button"
+                  onClick={handleSaveEdit}
+                  disabled={isSavingEdit || editLines.length === 0}
+                  className="flex items-center gap-2 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold text-sm transition-colors"
+                >
+                  {isSavingEdit ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : null}
+                  Save Changes | محفوظ کریں
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Order Info */}
         <div className="bg-white rounded-xl p-4 border border-border shadow-xs space-y-3">
@@ -2452,15 +3692,17 @@ function ManageScreen({
   actor,
   onDataReloaded,
   dispatch,
+  showPharmacies = false,
 }: {
   pharmacies: Pharmacy[];
   medicines: Medicine[];
   actor: backendInterface | null;
   onDataReloaded: (newPharmacies: Pharmacy[], newMedicines: Medicine[]) => void;
   dispatch: React.Dispatch<Action>;
+  showPharmacies?: boolean;
 }) {
   const [activeTab, setActiveTab] = useState<"pharmacies" | "medicines">(
-    "pharmacies",
+    showPharmacies ? "pharmacies" : "medicines",
   );
 
   // ── Pharmacy form state ──
@@ -2470,6 +3712,8 @@ function ManageScreen({
   const [pharmAddress, setPharmAddress] = useState("");
   const [pharmArea, setPharmArea] = useState("");
   const [pharmCode, setPharmCode] = useState("");
+  const [pharmNTN, setPharmNTN] = useState("");
+  const [pharmCNIC, setPharmCNIC] = useState("");
   const [isAddingPharm, setIsAddingPharm] = useState(false);
   const [deletingPharmId, setDeletingPharmId] = useState<string | null>(null);
   const [confirmDeletePharmId, setConfirmDeletePharmId] = useState<
@@ -2551,12 +3795,41 @@ function ManageScreen({
     setIsAddingPharm(true);
     try {
       const location = `${pharmAddress.trim()} | ${pharmArea.trim()}`;
-      await actor.addPharmacy(
+      const newId = await actor.addPharmacy(
         pharmName.trim(),
         pharmContact.trim(),
         location,
         pharmCode.trim(),
       );
+      // Store NTN/CNIC for invoice lookup
+      if (pharmNTN.trim()) {
+        try {
+          localStorage.setItem(
+            `medorder_customer_ntn_${newId}`,
+            pharmNTN.trim(),
+          );
+          localStorage.setItem(
+            `medorder_customer_name_${newId}`,
+            pharmName.trim(),
+          );
+        } catch {
+          /* ignore */
+        }
+      }
+      if (pharmCNIC.trim()) {
+        try {
+          localStorage.setItem(
+            `medorder_customer_cnic_${newId}`,
+            pharmCNIC.trim(),
+          );
+          localStorage.setItem(
+            `medorder_customer_name_${newId}`,
+            pharmName.trim(),
+          );
+        } catch {
+          /* ignore */
+        }
+      }
       const [newPharmacies, newMedicines] = await Promise.all([
         reloadPharmacies(),
         Promise.resolve(medicines),
@@ -2567,6 +3840,8 @@ function ManageScreen({
       setPharmAddress("");
       setPharmArea("");
       setPharmCode("");
+      setPharmNTN("");
+      setPharmCNIC("");
       setShowPharmacyForm(false);
       toast.success(`Pharmacy "${pharmName.trim()}" add ho gayi!`);
     } catch (e: unknown) {
@@ -2698,23 +3973,25 @@ function ManageScreen({
 
       {/* Tabs */}
       <div className="flex bg-white border-b border-border">
-        <button
-          type="button"
-          onClick={() => setActiveTab("pharmacies")}
-          className={`flex-1 py-3 text-sm font-semibold transition-colors ${
-            activeTab === "pharmacies"
-              ? "text-primary border-b-2 border-primary"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <div className="flex items-center justify-center gap-1.5">
-            <Store size={15} />
-            <span>Pharmacies | فارمیسیاں</span>
-          </div>
-          <div className="text-xs font-normal opacity-70 mt-0.5">
-            {pharmacies.length} total
-          </div>
-        </button>
+        {showPharmacies && (
+          <button
+            type="button"
+            onClick={() => setActiveTab("pharmacies")}
+            className={`flex-1 py-3 text-sm font-semibold transition-colors ${
+              activeTab === "pharmacies"
+                ? "text-primary border-b-2 border-primary"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <div className="flex items-center justify-center gap-1.5">
+              <Store size={15} />
+              <span>Pharmacies | فارمیسیاں</span>
+            </div>
+            <div className="text-xs font-normal opacity-70 mt-0.5">
+              {pharmacies.length} total
+            </div>
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setActiveTab("medicines")}
@@ -2735,7 +4012,7 @@ function ManageScreen({
       </div>
 
       {/* ── Pharmacies Tab ── */}
-      {activeTab === "pharmacies" && (
+      {showPharmacies && activeTab === "pharmacies" && (
         <div className="px-4 pt-4 space-y-3">
           {/* Add Pharmacy toggle button */}
           <button
@@ -2845,6 +4122,38 @@ function ManageScreen({
                     disabled={isAddingPharm}
                   />
                 </div>
+                <div>
+                  <label
+                    htmlFor="pharm-ntn"
+                    className="text-xs font-medium text-muted-foreground mb-1 block"
+                  >
+                    NTN# | این ٹی این
+                  </label>
+                  <Input
+                    id="pharm-ntn"
+                    value={pharmNTN}
+                    onChange={(e) => setPharmNTN(e.target.value)}
+                    placeholder="e.g. 1234567-8"
+                    className="h-10 text-sm"
+                    disabled={isAddingPharm}
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="pharm-cnic"
+                    className="text-xs font-medium text-muted-foreground mb-1 block"
+                  >
+                    CNIC# | شناختی کارڈ
+                  </label>
+                  <Input
+                    id="pharm-cnic"
+                    value={pharmCNIC}
+                    onChange={(e) => setPharmCNIC(e.target.value)}
+                    placeholder="e.g. 35202-1234567-1"
+                    className="h-10 text-sm"
+                    disabled={isAddingPharm}
+                  />
+                </div>
               </div>
               <div className="flex gap-2 pt-1">
                 <Button
@@ -2877,6 +4186,8 @@ function ManageScreen({
                     setPharmAddress("");
                     setPharmArea("");
                     setPharmCode("");
+                    setPharmNTN("");
+                    setPharmCNIC("");
                   }}
                   className="h-10 px-3 text-sm"
                   disabled={isAddingPharm}
@@ -3341,7 +4652,8 @@ function buildPrintHtml(orders: OfficeOrderDetail[]): string {
   const invoicesHtml = orders
     .map((order) => {
       const hasBonus = order.items.some((i) => i.bonusQty > 0);
-      const hasDiscount = order.items.some((i) => i.discountPercent > 0);
+      const hasDistDisc = order.items.some((i) => i.distributionDiscount > 0);
+      const hasCompDisc = order.items.some((i) => i.companyDiscount > 0);
 
       const itemRows = order.items
         .map((item, idx) => {
@@ -3356,12 +4668,20 @@ function buildPrintHtml(orders: OfficeOrderDetail[]): string {
               : idx % 2 === 0
                 ? "#fff"
                 : "#f9fafb";
-          const discountPct = item.discountPercent / 10;
-          const discountAmt =
-            item.discountPercent > 0
-              ? Math.round((item.unitPrice * item.qty * discountPct) / 100)
-              : 0;
-          const discountedTotal = item.total - discountAmt;
+          const distDiscPct = item.distributionDiscount / 10;
+          const compDiscPct = item.companyDiscount / 10;
+          const totalDiscPct = distDiscPct + compDiscPct;
+          // Use manualNetRate (stored as netRate / 100) if set, else auto-calculate
+          const manualNetRate = item.netRate > 0 ? item.netRate / 100 : null;
+          const effectiveNetRate =
+            manualNetRate ?? item.unitPrice * (1 - totalDiscPct / 100);
+          const discountedTotal = effectiveNetRate * item.qty;
+          const distDiscAmt = Math.round(
+            (item.unitPrice * item.qty * distDiscPct) / 100,
+          );
+          const compDiscAmt = Math.round(
+            (item.unitPrice * item.qty * compDiscPct) / 100,
+          );
           return `
         <tr style="border-bottom:1px solid #f3f4f6;background:${rowBg};">
           <td style="padding:7px 10px;font-size:12px;color:#111827;font-weight:500;">${item.medicineName}${isReturned ? ' <span style="color:#dc2626;font-size:10px;">(Returned)</span>' : ""}</td>
@@ -3371,8 +4691,10 @@ function buildPrintHtml(orders: OfficeOrderDetail[]): string {
           <td style="padding:7px 10px;font-size:12px;color:#6b7280;text-align:center;">—</td>
           <td style="padding:7px 10px;text-align:center;font-size:12px;font-weight:600;color:#374151;">${item.qty}</td>
           ${hasBonus ? `<td style="padding:7px 10px;text-align:center;font-size:12px;font-weight:600;color:#059669;">${item.bonusQty > 0 ? item.bonusQty : "—"}</td>` : ""}
-          ${hasDiscount ? `<td style="padding:7px 10px;text-align:center;font-size:12px;font-weight:600;color:#d97706;">${item.discountPercent > 0 ? `${discountPct}%` : "—"}</td>` : ""}
-          ${hasDiscount ? `<td style="padding:7px 10px;text-align:right;font-size:12px;font-weight:600;color:#dc2626;">${discountAmt > 0 ? `-Rs ${discountAmt.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</td>` : ""}
+          ${hasDistDisc ? `<td style="padding:7px 10px;text-align:center;font-size:12px;font-weight:600;color:#d97706;">${distDiscPct > 0 ? `${distDiscPct}%` : "—"}</td>` : ""}
+          ${hasDistDisc ? `<td style="padding:7px 10px;text-align:right;font-size:12px;font-weight:600;color:#dc2626;">${distDiscAmt > 0 ? `-Rs ${distDiscAmt.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</td>` : ""}
+          ${hasCompDisc ? `<td style="padding:7px 10px;text-align:center;font-size:12px;font-weight:600;color:#2563eb;">${compDiscPct > 0 ? `${compDiscPct}%` : "—"}</td>` : ""}
+          ${hasCompDisc ? `<td style="padding:7px 10px;text-align:right;font-size:12px;font-weight:600;color:#1d4ed8;">${compDiscAmt > 0 ? `-Rs ${compDiscAmt.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</td>` : ""}
           <td style="padding:7px 10px;text-align:right;font-size:12px;color:#374151;">Rs ${item.unitPrice.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
           <td style="padding:7px 10px;text-align:right;font-size:12px;font-weight:bold;color:#1e40af;">Rs ${discountedTotal.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
         </tr>
@@ -3380,16 +4702,17 @@ function buildPrintHtml(orders: OfficeOrderDetail[]): string {
         })
         .join("");
 
-      const extraColCount = (hasBonus ? 1 : 0) + (hasDiscount ? 2 : 0);
       // base cols: Medicine Name, Strength, Type, Pack Size, Batch#, Qty, Unit Price, Total = 8
+      const extraColCount =
+        (hasBonus ? 1 : 0) + (hasDistDisc ? 2 : 0) + (hasCompDisc ? 2 : 0);
       const totalCols = 8 + extraColCount;
       const subtotal = order.items.reduce((s, i) => {
-        const discountPct = i.discountPercent / 10;
-        const discountAmt =
-          i.discountPercent > 0
-            ? Math.round((i.unitPrice * i.qty * discountPct) / 100)
-            : 0;
-        return s + (i.total - discountAmt);
+        const distPct = i.distributionDiscount / 10;
+        const compPct = i.companyDiscount / 10;
+        const totalPct = distPct + compPct;
+        const manualNet = i.netRate > 0 ? i.netRate / 100 : null;
+        const effNet = manualNet ?? i.unitPrice * (1 - totalPct / 100);
+        return s + effNet * i.qty;
       }, 0);
       const advancedTax = Math.round(subtotal * 0.005);
       const grandTotal = subtotal + advancedTax;
@@ -3469,9 +4792,11 @@ function buildPrintHtml(orders: OfficeOrderDetail[]): string {
             <th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;background:#5b21b6;">Pack Size | پیک</th>
             <th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;">Batch #</th>
             <th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;">Qty</th>
-            ${hasBonus ? '<th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;background:#065f46;">Bonus</th>' : ""}
-            ${hasDiscount ? '<th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;background:#92400e;">Disc%</th>' : ""}
-            ${hasDiscount ? '<th style="padding:9px 10px;text-align:right;font-size:11px;font-weight:600;text-transform:uppercase;background:#7f1d1d;">Disc Amt</th>' : ""}
+             ${hasBonus ? '<th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;background:#065f46;">Bonus</th>' : ""}
+             ${hasDistDisc ? '<th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;background:#92400e;">Dist Disc%</th>' : ""}
+             ${hasDistDisc ? '<th style="padding:9px 10px;text-align:right;font-size:11px;font-weight:600;text-transform:uppercase;background:#7f1d1d;">Dist Amt</th>' : ""}
+             ${hasCompDisc ? '<th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;background:#1e40af;">Co Disc%</th>' : ""}
+             ${hasCompDisc ? '<th style="padding:9px 10px;text-align:right;font-size:11px;font-weight:600;text-transform:uppercase;background:#1d4ed8;">Co Amt</th>' : ""}
             <th style="padding:9px 10px;text-align:right;font-size:11px;font-weight:600;text-transform:uppercase;">Unit Price</th>
             <th style="padding:9px 10px;text-align:right;font-size:11px;font-weight:600;text-transform:uppercase;">Total</th>
           </tr>
@@ -3537,10 +4862,97 @@ function buildPrintHtml(orders: OfficeOrderDetail[]): string {
 function OrderDetailModal({
   order,
   onClose,
+  actor,
+  allMedicines,
+  allPharmacies,
+  onOrderUpdated,
 }: {
   order: OfficeOrderDetail;
   onClose: () => void;
+  actor: backendInterface | null;
+  allMedicines: Medicine[];
+  allPharmacies: Array<{ id: bigint; name: string; location: string }>;
+  onOrderUpdated?: () => void;
 }) {
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editLines, setEditLines] = useState<
+    Array<{
+      _key: string;
+      medicineId: bigint;
+      medicineName: string;
+      qty: string;
+      bonus: string;
+      distDisc: string;
+      compDisc: string;
+      netRate: string;
+      unitPrice: number;
+    }>
+  >([]);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [editMedSearch, setEditMedSearch] = useState<Record<string, string>>(
+    {},
+  );
+  const [editMedDropOpen, setEditMedDropOpen] = useState<
+    Record<string, boolean>
+  >({});
+
+  function openEditModal() {
+    setEditLines(
+      order.items.map((item) => ({
+        _key: `oedit-${item.medicineId}-${Date.now()}`,
+        medicineId: BigInt(item.medicineId),
+        medicineName: item.medicineName,
+        qty: String(item.qty),
+        bonus: String(item.bonusQty ?? 0),
+        distDisc: String((item.distributionDiscount ?? 0) / 10),
+        compDisc: String((item.companyDiscount ?? 0) / 10),
+        netRate: String(item.netRate > 0 ? item.netRate / 100 : 0),
+        unitPrice: item.unitPrice,
+      })),
+    );
+    setShowEditModal(true);
+  }
+
+  async function handleSaveOfficeEdit() {
+    if (!actor) return;
+    setIsSavingEdit(true);
+    try {
+      const orderLines = editLines.map((line) => {
+        const distD = Number.parseFloat(line.distDisc) || 0;
+        const compD = Number.parseFloat(line.compDisc) || 0;
+        const manualNet = Number.parseFloat(line.netRate) || 0;
+        const autoNet = line.unitPrice * (1 - (distD + compD) / 100);
+        return {
+          medicineId: line.medicineId,
+          quantity: BigInt(Math.round(Number.parseFloat(line.qty) || 1)),
+          bonusQty: BigInt(Math.round(Number.parseFloat(line.bonus) || 0)),
+          discountPercent: BigInt(0),
+          distributionDiscount: BigInt(Math.round(distD * 10)),
+          companyDiscount: BigInt(Math.round(compD * 10)),
+          netRate: BigInt(
+            Math.round((manualNet > 0 ? manualNet : autoNet) * 100),
+          ),
+        };
+      });
+      const pharm = allPharmacies.find((p) => p.name === order.pharmacyName);
+      const pharmacyBackendId = pharm?.id ?? order.backendId;
+      await actor.updateOrderLines(
+        order.backendId,
+        pharmacyBackendId,
+        orderLines,
+        "",
+      );
+      toast.success("Order updated | آرڈر اپ ڈیٹ ہو گیا");
+      setShowEditModal(false);
+      onOrderUpdated?.();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error updating order: ${msg}`);
+    } finally {
+      setIsSavingEdit(false);
+    }
+  }
+
   function handlePrint() {
     const printWin = window.open("", "_blank");
     if (!printWin) return;
@@ -3681,17 +5093,24 @@ function OrderDetailModal({
             </h3>
             {(() => {
               const hasBonus = order.items.some((i) => i.bonusQty > 0);
-              const hasDiscount = order.items.some(
-                (i) => i.discountPercent > 0,
+              const hasDistDisc = order.items.some(
+                (i) => i.distributionDiscount > 0,
               );
-              const totalCols = 7 + (hasBonus ? 1 : 0) + (hasDiscount ? 2 : 0);
+              const hasCompDisc = order.items.some(
+                (i) => i.companyDiscount > 0,
+              );
+              const totalCols =
+                7 +
+                (hasBonus ? 1 : 0) +
+                (hasDistDisc ? 2 : 0) +
+                (hasCompDisc ? 2 : 0);
               const discountedSubtotal = order.items.reduce((s, i) => {
-                const discPct = i.discountPercent / 10;
-                const discAmt =
-                  i.discountPercent > 0
-                    ? Math.round((i.unitPrice * i.qty * discPct) / 100)
-                    : 0;
-                return s + (i.total - discAmt);
+                const distPct = i.distributionDiscount / 10;
+                const compPct = i.companyDiscount / 10;
+                const totalPct = distPct + compPct;
+                const manualNet = i.netRate > 0 ? i.netRate / 100 : null;
+                const effNet = manualNet ?? i.unitPrice * (1 - totalPct / 100);
+                return s + effNet * i.qty;
               }, 0);
               const advTax = Math.round(discountedSubtotal * 0.005);
               const grandTotal = discountedSubtotal + advTax;
@@ -3719,14 +5138,24 @@ function OrderDetailModal({
                           Bonus | بونس
                         </th>
                       )}
-                      {hasDiscount && (
+                      {hasDistDisc && (
                         <th className="text-center px-3 py-2.5 text-xs font-semibold text-amber-700 uppercase">
-                          Disc% | ڈسکاؤنٹ
+                          Dist Disc%
                         </th>
                       )}
-                      {hasDiscount && (
+                      {hasDistDisc && (
                         <th className="text-right px-3 py-2.5 text-xs font-semibold text-red-700 uppercase">
-                          Disc Amt
+                          Dist Amt
+                        </th>
+                      )}
+                      {hasCompDisc && (
+                        <th className="text-center px-3 py-2.5 text-xs font-semibold text-blue-600 uppercase">
+                          Co Disc%
+                        </th>
+                      )}
+                      {hasCompDisc && (
+                        <th className="text-right px-3 py-2.5 text-xs font-semibold text-blue-800 uppercase">
+                          Co Amt
                         </th>
                       )}
                       <th className="text-right px-3 py-2.5 text-xs font-semibold text-blue-700 uppercase">
@@ -3751,14 +5180,27 @@ function OrderDetailModal({
                         : i % 2 === 0
                           ? "bg-white"
                           : "bg-gray-50/50";
-                      const discountPct = item.discountPercent / 10;
-                      const discountAmt =
-                        item.discountPercent > 0
+                      const distDiscPct = item.distributionDiscount / 10;
+                      const compDiscPct = item.companyDiscount / 10;
+                      const distDiscAmt =
+                        distDiscPct > 0
                           ? Math.round(
-                              (item.unitPrice * item.qty * discountPct) / 100,
+                              (item.unitPrice * item.qty * distDiscPct) / 100,
                             )
                           : 0;
-                      const discountedTotal = item.total - discountAmt;
+                      const compDiscAmt =
+                        compDiscPct > 0
+                          ? Math.round(
+                              (item.unitPrice * item.qty * compDiscPct) / 100,
+                            )
+                          : 0;
+                      const manualNet =
+                        item.netRate > 0 ? item.netRate / 100 : null;
+                      const effNet =
+                        manualNet ??
+                        item.unitPrice *
+                          (1 - (distDiscPct + compDiscPct) / 100);
+                      const discountedTotal = effNet * item.qty;
                       return (
                         <tr
                           key={`${item.medicineName}-${i}`}
@@ -3789,17 +5231,27 @@ function OrderDetailModal({
                               {item.bonusQty > 0 ? item.bonusQty : "—"}
                             </td>
                           )}
-                          {hasDiscount && (
+                          {hasDistDisc && (
                             <td className="px-3 py-2.5 text-center font-bold text-amber-600">
-                              {item.discountPercent > 0
-                                ? `${item.discountPercent / 10}%`
+                              {distDiscPct > 0 ? `${distDiscPct}%` : "—"}
+                            </td>
+                          )}
+                          {hasDistDisc && (
+                            <td className="px-3 py-2.5 text-right font-bold text-red-600">
+                              {distDiscAmt > 0
+                                ? `-${formatCurrency(distDiscAmt)}`
                                 : "—"}
                             </td>
                           )}
-                          {hasDiscount && (
-                            <td className="px-3 py-2.5 text-right font-bold text-red-600">
-                              {discountAmt > 0
-                                ? `-${formatCurrency(discountAmt)}`
+                          {hasCompDisc && (
+                            <td className="px-3 py-2.5 text-center font-bold text-blue-600">
+                              {compDiscPct > 0 ? `${compDiscPct}%` : "—"}
+                            </td>
+                          )}
+                          {hasCompDisc && (
+                            <td className="px-3 py-2.5 text-right font-bold text-blue-800">
+                              {compDiscAmt > 0
+                                ? `-${formatCurrency(compDiscAmt)}`
                                 : "—"}
                             </td>
                           )}
@@ -3865,24 +5317,360 @@ function OrderDetailModal({
         </div>
 
         {/* Modal Footer */}
-        <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-end gap-3">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-5 py-2.5 rounded-xl border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors font-medium text-sm"
-          >
-            Close | بند کریں
-          </button>
-          <button
-            type="button"
-            onClick={handlePrint}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm transition-colors"
-          >
-            <Printer size={15} />
-            Print Invoice | انوائس پرنٹ
-          </button>
+        <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between gap-3">
+          <div>
+            {order.status === "pending" && (
+              <button
+                type="button"
+                data-ocid="office_order_modal.edit_button"
+                onClick={openEditModal}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-700 font-semibold text-sm transition-colors"
+              >
+                <Pencil size={14} />
+                Edit Order | ترمیم کریں
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-5 py-2.5 rounded-xl border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors font-medium text-sm"
+            >
+              Close | بند کریں
+            </button>
+            <button
+              type="button"
+              onClick={handlePrint}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm transition-colors"
+            >
+              <Printer size={15} />
+              Print Invoice | انوائس پرنٹ
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Office Edit Order Overlay Modal */}
+      {showEditModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/55">
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+          >
+            <div
+              className="flex items-center justify-between px-5 py-4 text-white"
+              style={{
+                background:
+                  "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+              }}
+            >
+              <h2 className="font-bold font-heading text-base">
+                Edit Order {order.orderId} | ترمیم
+              </h2>
+              <button
+                type="button"
+                onClick={() => setShowEditModal(false)}
+                className="w-7 h-7 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-3">
+              {/* Header row */}
+              <div className="grid grid-cols-12 gap-1 text-xs font-semibold text-gray-400 uppercase tracking-wide px-1 pb-1">
+                <div className="col-span-4">Medicine</div>
+                <div className="col-span-1 text-center">Qty</div>
+                <div className="col-span-1 text-center">Bonus</div>
+                <div className="col-span-2 text-center">Dist%</div>
+                <div className="col-span-2 text-center">Co%</div>
+                <div className="col-span-1 text-center">Net</div>
+                <div className="col-span-1" />
+              </div>
+              {editLines.map((line) => (
+                <div
+                  key={line._key}
+                  className="grid grid-cols-12 gap-1 items-center"
+                >
+                  <div className="col-span-4 relative">
+                    <input
+                      type="text"
+                      value={
+                        editMedDropOpen[line._key]
+                          ? (editMedSearch[line._key] ?? "")
+                          : line.medicineName
+                      }
+                      onChange={(e) => {
+                        setEditMedSearch((prev) => ({
+                          ...prev,
+                          [line._key]: e.target.value,
+                        }));
+                        setEditMedDropOpen((prev) => ({
+                          ...prev,
+                          [line._key]: true,
+                        }));
+                      }}
+                      onFocus={() => {
+                        setEditMedSearch((prev) => ({
+                          ...prev,
+                          [line._key]: "",
+                        }));
+                        setEditMedDropOpen((prev) => ({
+                          ...prev,
+                          [line._key]: true,
+                        }));
+                      }}
+                      onKeyDown={() => {
+                        if (!editMedDropOpen[line._key]) {
+                          setEditMedSearch((prev) => ({
+                            ...prev,
+                            [line._key]: "",
+                          }));
+                          setEditMedDropOpen((prev) => ({
+                            ...prev,
+                            [line._key]: true,
+                          }));
+                        }
+                      }}
+                      placeholder="Medicine..."
+                      className="w-full h-8 text-xs border border-gray-300 rounded-lg px-2 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    {editMedDropOpen[line._key] && (
+                      <>
+                        <div className="absolute z-20 top-full mt-0.5 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-36 overflow-y-auto">
+                          {(() => {
+                            const q = (
+                              editMedSearch[line._key] ?? ""
+                            ).toLowerCase();
+                            const filtered = allMedicines.filter((m) => {
+                              if (!q) return true;
+                              return (
+                                m.name.toLowerCase().includes(q) ||
+                                m.company.toLowerCase().includes(q)
+                              );
+                            });
+                            return filtered.length === 0 ? (
+                              <div className="px-2 py-1.5 text-xs text-gray-400">
+                                No medicines found
+                              </div>
+                            ) : (
+                              filtered.map((m) => (
+                                <button
+                                  type="button"
+                                  key={String(m.backendId)}
+                                  onClick={() => {
+                                    setEditLines((prev) =>
+                                      prev.map((l) =>
+                                        l._key === line._key
+                                          ? {
+                                              ...l,
+                                              medicineId: m.backendId,
+                                              medicineName: m.name,
+                                              unitPrice: m.price,
+                                            }
+                                          : l,
+                                      ),
+                                    );
+                                    setEditMedDropOpen((prev) => ({
+                                      ...prev,
+                                      [line._key]: false,
+                                    }));
+                                  }}
+                                  className="w-full text-left px-2 py-1.5 text-xs hover:bg-blue-50 transition-colors"
+                                >
+                                  {m.name}
+                                  {m.strength && (
+                                    <span className="text-gray-400 ml-1">
+                                      ({m.strength})
+                                    </span>
+                                  )}
+                                  {m.company && (
+                                    <span className="text-gray-400 ml-1 text-[10px]">
+                                      · {m.company}
+                                    </span>
+                                  )}
+                                </button>
+                              ))
+                            );
+                          })()}
+                        </div>
+                        <div
+                          className="fixed inset-0 z-10"
+                          onClick={() =>
+                            setEditMedDropOpen((prev) => ({
+                              ...prev,
+                              [line._key]: false,
+                            }))
+                          }
+                          onKeyDown={(e) =>
+                            e.key === "Escape" &&
+                            setEditMedDropOpen((prev) => ({
+                              ...prev,
+                              [line._key]: false,
+                            }))
+                          }
+                          aria-hidden="true"
+                        />
+                      </>
+                    )}
+                  </div>
+                  <div className="col-span-1">
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={line.qty}
+                      onChange={(e) =>
+                        setEditLines((prev) =>
+                          prev.map((l) =>
+                            l._key === line._key
+                              ? { ...l, qty: e.target.value }
+                              : l,
+                          ),
+                        )
+                      }
+                      className="w-full h-8 border border-gray-300 rounded-lg px-1 text-xs text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
+                  </div>
+                  <div className="col-span-1">
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={line.bonus}
+                      onChange={(e) =>
+                        setEditLines((prev) =>
+                          prev.map((l) =>
+                            l._key === line._key
+                              ? { ...l, bonus: e.target.value }
+                              : l,
+                          ),
+                        )
+                      }
+                      className="w-full h-8 border border-emerald-300 bg-emerald-50 rounded-lg px-1 text-xs text-center text-emerald-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="any"
+                      value={line.distDisc}
+                      onChange={(e) =>
+                        setEditLines((prev) =>
+                          prev.map((l) =>
+                            l._key === line._key
+                              ? { ...l, distDisc: e.target.value }
+                              : l,
+                          ),
+                        )
+                      }
+                      className="w-full h-8 border border-amber-300 bg-amber-50 rounded-lg px-1 text-xs text-center text-amber-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="any"
+                      value={line.compDisc}
+                      onChange={(e) =>
+                        setEditLines((prev) =>
+                          prev.map((l) =>
+                            l._key === line._key
+                              ? { ...l, compDisc: e.target.value }
+                              : l,
+                          ),
+                        )
+                      }
+                      className="w-full h-8 border border-blue-300 bg-blue-50 rounded-lg px-1 text-xs text-center text-blue-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
+                  </div>
+                  <div className="col-span-1">
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      placeholder="0"
+                      value={line.netRate === "0" ? "" : line.netRate}
+                      onChange={(e) =>
+                        setEditLines((prev) =>
+                          prev.map((l) =>
+                            l._key === line._key
+                              ? { ...l, netRate: e.target.value || "0" }
+                              : l,
+                          ),
+                        )
+                      }
+                      className="w-full h-8 border border-purple-300 bg-purple-50 rounded-lg px-1 text-xs text-center text-purple-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
+                  </div>
+                  <div className="col-span-1 flex justify-center">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEditLines((prev) =>
+                          prev.filter((l) => l._key !== line._key),
+                        )
+                      }
+                      className="w-7 h-7 flex items-center justify-center text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() =>
+                  setEditLines((prev) => [
+                    ...prev,
+                    {
+                      _key: `oedit-new-${Date.now()}`,
+                      medicineId: allMedicines[0]?.backendId ?? BigInt(0),
+                      medicineName: allMedicines[0]?.name ?? "",
+                      qty: "1",
+                      bonus: "0",
+                      distDisc: "0",
+                      compDisc: "0",
+                      netRate: "0",
+                      unitPrice: allMedicines[0]?.price ?? 0,
+                    },
+                  ])
+                }
+                className="flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors"
+              >
+                <Plus size={12} />
+                Add Item
+              </button>
+            </div>
+            <div className="px-5 py-4 border-t border-gray-200 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowEditModal(false)}
+                className="px-4 py-2 rounded-xl border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors font-medium text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                data-ocid="office_order_modal.save_button"
+                onClick={handleSaveOfficeEdit}
+                disabled={isSavingEdit || editLines.length === 0}
+                className="flex items-center gap-2 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold text-sm transition-colors"
+              >
+                {isSavingEdit ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : null}
+                Save Changes | محفوظ کریں
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </dialog>
   );
 }
@@ -3924,6 +5712,9 @@ type OfficeOrderDetail = OfficeOrder & {
     total: number;
     bonusQty: number;
     discountPercent: number;
+    distributionDiscount: number;
+    companyDiscount: number;
+    netRate: number;
   }>;
   paymentReceived: number;
   returnItems: Array<{ medicineId: string; returnedQty: number }>;
@@ -3979,6 +5770,21 @@ function mapRawOrdersToDetail(
       const qty = Number(line.quantity);
       const seed = MEDICINE_SEEDS.find((s) => s.name === med?.name);
       const medCategory = seed?.category ?? inferCategory(med?.name ?? "");
+      const rawDistDisc = Number(
+        (line as unknown as { distributionDiscount?: bigint })
+          .distributionDiscount ?? 0,
+      );
+      const rawCompDisc = Number(
+        (line as unknown as { companyDiscount?: bigint }).companyDiscount ?? 0,
+      );
+      const rawDiscPct = Number(
+        (line as unknown as { discountPercent?: bigint }).discountPercent ?? 0,
+      );
+      // Backward compat: if no distributionDiscount but has discountPercent, treat as dist disc
+      const effectiveDistDisc = rawDistDisc > 0 ? rawDistDisc : rawDiscPct;
+      const rawNetRate = Number(
+        (line as unknown as { netRate?: bigint }).netRate ?? 0,
+      );
       return {
         medicineId: String(line.medicineId),
         medicineName: med?.name ?? `Medicine #${line.medicineId}`,
@@ -3991,10 +5797,10 @@ function mapRawOrdersToDetail(
         bonusQty: Number(
           (line as unknown as { bonusQty?: bigint }).bonusQty ?? 0,
         ),
-        discountPercent: Number(
-          (line as unknown as { discountPercent?: bigint }).discountPercent ??
-            0,
-        ),
+        discountPercent: rawDiscPct,
+        distributionDiscount: effectiveDistDisc,
+        companyDiscount: rawCompDisc,
+        netRate: rawNetRate,
       };
     });
     const totalAmount = items.reduce((s, i) => s + i.total, 0);
@@ -4714,6 +6520,9 @@ function DailySaleStatement({
                       <th className="px-2 py-2 font-semibold text-indigo-700 border-r border-gray-200 min-w-[50px] text-center bg-indigo-50">
                         4th Qtr
                       </th>
+                      <th className="px-2 py-2 font-semibold text-teal-700 border-r border-gray-200 min-w-[60px] text-center bg-teal-50">
+                        Inventory | اسٹاک
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -4827,6 +6636,28 @@ function DailySaleStatement({
                               <span className="text-gray-300">-</span>
                             )}
                           </td>
+                          {(() => {
+                            const inv = getStock(s.medicine.backendId);
+                            if (inv === null)
+                              return (
+                                <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-teal-50/30">
+                                  --
+                                </td>
+                              );
+                            const cls =
+                              inv === 0
+                                ? "text-red-700 bg-red-50"
+                                : inv <= 10
+                                  ? "text-amber-700 bg-amber-50"
+                                  : "text-teal-700 bg-teal-50";
+                            return (
+                              <td
+                                className={`px-2 py-1.5 text-center border-r border-gray-100 font-semibold ${cls}`}
+                              >
+                                {inv}
+                              </td>
+                            );
+                          })()}
                         </tr>
                       );
                     })}
@@ -4926,6 +6757,12 @@ function DailySaleStatement({
                           ? `Rs. ${totalQ4Value.toFixed(0)}`
                           : "-"}
                       </td>
+                      <td className="px-2 py-2 text-center border-r border-gray-200 text-teal-800 bg-teal-50 text-[10px]">
+                        {stats.reduce((sum, s) => {
+                          const inv = getStock(s.medicine.backendId);
+                          return sum + (inv ?? 0);
+                        }, 0) || "-"}
+                      </td>
                     </tr>
 
                     {/* Net Value row */}
@@ -4960,7 +6797,7 @@ function DailySaleStatement({
                       </td>
                       <td
                         className="px-2 py-1.5 text-center border-r border-gray-200 text-gray-400 text-[10px]"
-                        colSpan={14}
+                        colSpan={15}
                       >
                         -
                       </td>
@@ -5408,6 +7245,623 @@ function PaymentsView({
   );
 }
 
+// ─── User Management Panel ────────────────────────────────────────────────────
+
+function UserManagementPanel() {
+  const [customUsers, setCustomUsers] = useState<AppUser[]>(() =>
+    getCustomUsers(),
+  );
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newUsername, setNewUsername] = useState("");
+  const [newDisplayName, setNewDisplayName] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newRole, setNewRole] = useState<UserRole>("staff");
+  const [addError, setAddError] = useState("");
+  const [changePwdFor, setChangePwdFor] = useState<string | null>(null);
+  const [newPwd, setNewPwd] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+
+  const allUsers = [...USER_DB, ...customUsers];
+
+  function saveCustomUsers(users: AppUser[]) {
+    setCustomUsers(users);
+    try {
+      localStorage.setItem(CUSTOM_USERS_KEY, JSON.stringify(users));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function handleAddUser() {
+    if (!newUsername.trim() || !newDisplayName.trim() || !newPassword.trim()) {
+      setAddError("Sab fields zaruri hain | All fields required");
+      return;
+    }
+    // Check for duplicate
+    if (
+      allUsers.some(
+        (u) => u.username.toLowerCase() === newUsername.trim().toLowerCase(),
+      )
+    ) {
+      setAddError("Username already exists | یوزر نیم پہلے سے موجود ہے");
+      return;
+    }
+    const updated = [
+      ...customUsers,
+      {
+        username: newUsername.trim(),
+        password: newPassword.trim(),
+        role: newRole,
+        displayName: newDisplayName.trim(),
+      },
+    ];
+    saveCustomUsers(updated);
+    setNewUsername("");
+    setNewDisplayName("");
+    setNewPassword("");
+    setNewRole("staff");
+    setAddError("");
+    setShowAddForm(false);
+    toast.success(`User "${newDisplayName.trim()}" add ho gaya`);
+  }
+
+  function handleChangePassword(username: string) {
+    if (!newPwd.trim()) {
+      toast.error("New password enter karein");
+      return;
+    }
+    const idx = customUsers.findIndex((u) => u.username === username);
+    if (idx >= 0) {
+      const updated = customUsers.map((u) =>
+        u.username === username ? { ...u, password: newPwd.trim() } : u,
+      );
+      saveCustomUsers(updated);
+    } else {
+      // It's a built-in user — store override in customUsers
+      const builtIn = USER_DB.find((u) => u.username === username);
+      if (builtIn) {
+        const updated = [
+          ...customUsers,
+          { ...builtIn, password: newPwd.trim() },
+        ];
+        saveCustomUsers(updated);
+      }
+    }
+    setChangePwdFor(null);
+    setNewPwd("");
+    toast.success("Password update ho gaya");
+  }
+
+  function handleDeleteUser(username: string) {
+    const updated = customUsers.filter((u) => u.username !== username);
+    saveCustomUsers(updated);
+    setDeleteConfirm(null);
+    toast.success("User delete ho gaya");
+  }
+
+  const roleBadge: Record<UserRole, { label: string; class: string }> = {
+    admin: {
+      label: "Admin",
+      class: "bg-purple-100 text-purple-700 border-purple-200",
+    },
+    staff: {
+      label: "Staff / Booker",
+      class: "bg-blue-100 text-blue-700 border-blue-200",
+    },
+    delivery: {
+      label: "Delivery",
+      class: "bg-emerald-100 text-emerald-700 border-emerald-200",
+    },
+  };
+
+  const isBuiltIn = (username: string) =>
+    USER_DB.some((u) => u.username === username);
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900 font-heading">
+            User Management | صارف انتظام
+          </h2>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Users ke liye login credentials aur roles manage karein
+          </p>
+        </div>
+        <Button
+          onClick={() => setShowAddForm((v) => !v)}
+          data-ocid="user_management.open_modal_button"
+          size="sm"
+          style={{
+            background:
+              "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+          }}
+          className="text-white"
+        >
+          <Plus size={14} className="mr-1.5" />
+          Add User
+        </Button>
+      </div>
+
+      {/* Add User Form */}
+      {showAddForm && (
+        <div
+          className="bg-blue-50 border border-blue-200 rounded-xl p-5 space-y-4"
+          data-ocid="user_management.dialog"
+        >
+          <h3 className="font-bold text-blue-900 text-sm">
+            New User | نیا صارف
+          </h3>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label
+                htmlFor="um-username"
+                className="text-xs font-semibold text-gray-600 block mb-1"
+              >
+                Username | یوزر نیم
+              </label>
+              <Input
+                id="um-username"
+                value={newUsername}
+                onChange={(e) => {
+                  setNewUsername(e.target.value);
+                  setAddError("");
+                }}
+                placeholder="e.g. booker6"
+                className="h-9 text-sm"
+                data-ocid="user_management.input"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="um-displayname"
+                className="text-xs font-semibold text-gray-600 block mb-1"
+              >
+                Display Name | نام
+              </label>
+              <Input
+                id="um-displayname"
+                value={newDisplayName}
+                onChange={(e) => {
+                  setNewDisplayName(e.target.value);
+                  setAddError("");
+                }}
+                placeholder="e.g. Booker Six"
+                className="h-9 text-sm"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="um-password"
+                className="text-xs font-semibold text-gray-600 block mb-1"
+              >
+                Password | پاس ورڈ
+              </label>
+              <Input
+                id="um-password"
+                type="password"
+                value={newPassword}
+                onChange={(e) => {
+                  setNewPassword(e.target.value);
+                  setAddError("");
+                }}
+                placeholder="Set a password"
+                className="h-9 text-sm"
+                data-ocid="user_management.password.input"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="um-role"
+                className="text-xs font-semibold text-gray-600 block mb-1"
+              >
+                Role | کردار
+              </label>
+              <select
+                id="um-role"
+                value={newRole}
+                onChange={(e) => setNewRole(e.target.value as UserRole)}
+                className="w-full h-9 px-2 border border-input rounded-md text-sm bg-background"
+                data-ocid="user_management.select"
+              >
+                <option value="admin">Admin</option>
+                <option value="staff">Staff / Booker</option>
+                <option value="delivery">Delivery</option>
+              </select>
+            </div>
+          </div>
+          {addError && <p className="text-red-600 text-xs">{addError}</p>}
+          <div className="flex gap-2">
+            <Button
+              onClick={handleAddUser}
+              size="sm"
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+              data-ocid="user_management.submit_button"
+            >
+              Save User | محفوظ کریں
+            </Button>
+            <Button
+              onClick={() => {
+                setShowAddForm(false);
+                setAddError("");
+              }}
+              variant="outline"
+              size="sm"
+              data-ocid="user_management.cancel_button"
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Users Table */}
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <table className="w-full text-sm" data-ocid="user_management.table">
+          <thead>
+            <tr className="bg-gray-50 border-b border-gray-200">
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                Username
+              </th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                Display Name
+              </th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                Role
+              </th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                Type
+              </th>
+              <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                Actions
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {allUsers.map((user, idx) => (
+              <tr
+                key={user.username}
+                className="border-b border-gray-100 last:border-0 hover:bg-gray-50/50"
+                data-ocid={`user_management.row.${idx + 1}`}
+              >
+                <td className="px-4 py-3 font-mono text-xs font-semibold text-gray-800">
+                  {user.username}
+                </td>
+                <td className="px-4 py-3 font-medium text-gray-700">
+                  {user.displayName}
+                </td>
+                <td className="px-4 py-3">
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border ${roleBadge[user.role].class}`}
+                  >
+                    {roleBadge[user.role].label}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-xs text-gray-400">
+                  {isBuiltIn(user.username) ? "Built-in" : "Custom"}
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center justify-end gap-1.5">
+                    {changePwdFor === user.username ? (
+                      <div className="flex items-center gap-1.5">
+                        <Input
+                          type="password"
+                          placeholder="New password"
+                          value={newPwd}
+                          onChange={(e) => setNewPwd(e.target.value)}
+                          className="h-7 w-28 text-xs"
+                          onKeyDown={(e) =>
+                            e.key === "Enter" &&
+                            handleChangePassword(user.username)
+                          }
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleChangePassword(user.username)}
+                          className="text-xs text-green-600 font-semibold hover:text-green-700 px-1.5 py-0.5 rounded bg-green-50 border border-green-200"
+                          data-ocid={`user_management.save_button.${idx + 1}`}
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setChangePwdFor(null);
+                            setNewPwd("");
+                          }}
+                          className="text-xs text-gray-500 hover:text-gray-700 px-1 py-0.5 rounded bg-gray-100 border border-gray-200"
+                          data-ocid={`user_management.cancel_button.${idx + 1}`}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setChangePwdFor(user.username);
+                          setNewPwd("");
+                        }}
+                        className="text-xs text-blue-600 font-medium hover:text-blue-700 px-2 py-1 rounded bg-blue-50 border border-blue-100 transition-colors"
+                        data-ocid={`user_management.edit_button.${idx + 1}`}
+                      >
+                        Change Pwd
+                      </button>
+                    )}
+                    {!isBuiltIn(user.username) &&
+                      (deleteConfirm === user.username ? (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteUser(user.username)}
+                            className="text-xs text-white font-semibold px-2 py-1 rounded bg-red-500 hover:bg-red-600 transition-colors"
+                            data-ocid={`user_management.confirm_button.${idx + 1}`}
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeleteConfirm(null)}
+                            className="text-xs text-gray-500 px-1.5 py-1 rounded bg-gray-100 hover:bg-gray-200 transition-colors"
+                            data-ocid={`user_management.cancel_button.${idx + 1}`}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setDeleteConfirm(user.username)}
+                          className="text-xs text-red-500 font-medium hover:text-red-600 px-2 py-1 rounded bg-red-50 border border-red-100 transition-colors"
+                          data-ocid={`user_management.delete_button.${idx + 1}`}
+                        >
+                          Delete
+                        </button>
+                      ))}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Login credentials info */}
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+        <p className="text-xs font-semibold text-amber-800 mb-2">
+          Login Credentials | لاگ ان تفصیلات
+        </p>
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <p className="text-xs font-bold text-amber-700 mb-1">Admin</p>
+            <p className="text-[11px] text-amber-600 font-mono">URL: /office</p>
+          </div>
+          <div>
+            <p className="text-xs font-bold text-blue-700 mb-1">
+              Staff / Bookers
+            </p>
+            <p className="text-[11px] text-blue-600 font-mono">
+              URL: / (Main App)
+            </p>
+          </div>
+          <div>
+            <p className="text-xs font-bold text-emerald-700 mb-1">Delivery</p>
+            <p className="text-[11px] text-emerald-600 font-mono">
+              URL: /delivery
+            </p>
+          </div>
+        </div>
+        <p className="text-[11px] text-amber-600 mt-2">
+          Session stored on device — staff aur delivery boys ko baar baar login
+          nahi karna parta | Session persists until manual logout
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Location Tracking Hook ───────────────────────────────────────────────────
+
+function useLocationTracking(username: string, role: string, enabled: boolean) {
+  useEffect(() => {
+    if (!enabled || !username) return;
+    if (typeof navigator === "undefined" || !navigator.geolocation) return;
+    const updateLocation = () => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const data = {
+            username,
+            role,
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+            updatedAt: new Date().toISOString(),
+          };
+          try {
+            localStorage.setItem(
+              `medorder_location_${username}`,
+              JSON.stringify(data),
+            );
+          } catch {
+            /* ignore */
+          }
+        },
+        () => {},
+        { enableHighAccuracy: true, timeout: 10000 },
+      );
+    };
+    updateLocation();
+    const interval = setInterval(updateLocation, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [username, role, enabled]);
+}
+
+// ─── Staff Locations View (shown inside OfficeDashboard) ──────────────────────
+
+function StaffLocationsView() {
+  const [entries, setEntries] = useState<
+    Array<{
+      username: string;
+      role: string;
+      lat: number;
+      lng: number;
+      accuracy: number;
+      updatedAt: string;
+    }>
+  >([]);
+
+  function loadEntries() {
+    const result: typeof entries = [];
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key?.startsWith("medorder_location_")) continue;
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+        try {
+          result.push(JSON.parse(raw));
+        } catch {
+          /* ignore bad JSON */
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    result.sort(
+      (a, b) =>
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    );
+    setEntries(result);
+  }
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: loadEntries is stable, run once on mount
+  useEffect(() => {
+    loadEntries();
+  }, []);
+
+  function relativeTime(iso: string) {
+    const diff = Date.now() - new Date(iso).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "Just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900 font-heading">
+            Staff Locations | عملے کی جگہ
+          </h2>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Last known location of staff and delivery members
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={loadEntries}
+          className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 font-medium bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors"
+          data-ocid="staff_locations.button"
+        >
+          <RefreshCw size={13} />
+          Refresh
+        </button>
+      </div>
+
+      <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-700">
+        <strong>Note:</strong> Locations update every 5 minutes when the staff
+        or delivery dashboard is open in browser. Background tracking requires a
+        native app.
+      </div>
+
+      {entries.length === 0 ? (
+        <div
+          className="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-400"
+          data-ocid="staff_locations.empty_state"
+        >
+          <MapPin size={32} className="mx-auto mb-3 opacity-30" />
+          <p className="font-medium">No location data yet</p>
+          <p className="text-xs mt-1">
+            Staff must allow location access on their device
+          </p>
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+          <table className="w-full">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-200">
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                  Name | نام
+                </th>
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                  Role | کردار
+                </th>
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                  Coordinates | مقام
+                </th>
+                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                  Last Updated | آخری وقت
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {entries.map((entry, idx) => (
+                <tr
+                  key={entry.username}
+                  data-ocid={`staff_locations.item.${idx + 1}`}
+                  className={idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"}
+                >
+                  <td className="px-4 py-3 font-semibold text-sm text-gray-900">
+                    {entry.username}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold ${
+                        entry.role === "delivery"
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-blue-100 text-blue-700"
+                      }`}
+                    >
+                      {entry.role === "delivery" ? (
+                        <Truck size={10} />
+                      ) : (
+                        <User size={10} />
+                      )}
+                      {entry.role === "delivery" ? "Delivery" : "Staff"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <a
+                      href={`https://maps.google.com/?q=${entry.lat},${entry.lng}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-mono text-xs text-blue-600 hover:underline"
+                      data-ocid={`staff_locations.map_marker.${idx + 1}`}
+                    >
+                      {entry.lat.toFixed(5)}, {entry.lng.toFixed(5)}
+                    </a>
+                    {entry.accuracy && (
+                      <span className="ml-1.5 text-[10px] text-gray-400">
+                        ±{Math.round(entry.accuracy)}m
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right text-xs text-gray-500">
+                    {relativeTime(entry.updatedAt)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Office Dashboard ─────────────────────────────────────────────────────────
 
 function OfficeDashboard() {
@@ -5441,11 +7895,16 @@ function OfficeDashboard() {
     | "daily-sale-statement"
     | "customer-wise-sales"
     | "add-customer"
+    | "manage"
+    | "user-management"
+    | "staff-locations"
   >("orders");
   const [allCustomers, setAllCustomers] = useState<Customer[]>([]);
   // Customer form state
   const [custName, setCustName] = useState("");
-  const [custType, setCustType] = useState<CustomerType>(CustomerType.pharmacy);
+  const [custType, setCustType] = useState<ExtendedCustomerType>(
+    CustomerType.pharmacy,
+  );
   const [custContact, setCustContact] = useState("");
   const [custAddress, setCustAddress] = useState("");
   const [custArea, setCustArea] = useState("");
@@ -5466,6 +7925,13 @@ function OfficeDashboard() {
   >("allover");
   const [cwsSelectedCustomer, setCwsSelectedCustomer] =
     useState<Customer | null>(null);
+  // Also track a selected pharmacy (from allPharmacies) for CWS filter
+  const [cwsSelectedPharmacy, setCwsSelectedPharmacy] = useState<{
+    id: bigint;
+    name: string;
+    area: string;
+    code: string;
+  } | null>(null);
   const [cwsCustomerSearch, setCwsCustomerSearch] = useState("");
   const [cwsCustomerDropdownOpen, setCwsCustomerDropdownOpen] = useState(false);
   const [cwsDateFrom, setCwsDateFrom] = useState(
@@ -5490,6 +7956,9 @@ function OfficeDashboard() {
       qty: string;
       bonus: string;
       discount: string;
+      distDisc: string;
+      compDisc: string;
+      netRate: string;
     }>
   >([]);
   const [newOrderNotes, setNewOrderNotes] = useState("");
@@ -5538,6 +8007,7 @@ function OfficeDashboard() {
   const [selectedOrder, setSelectedOrder] = useState<OfficeOrderDetail | null>(
     null,
   );
+  const [bookerFilter, setBookerFilter] = useState<string | null>(null);
   const [backendError, setBackendError] = useState<string | null>(null);
   const [printedOrderIds, setPrintedOrderIds] = useState<Set<string>>(() => {
     try {
@@ -5755,7 +8225,7 @@ function OfficeDashboard() {
     try {
       const newBackendId = await actor.addCustomer(
         custName.trim(),
-        custType,
+        toBackendCustomerType(custType),
         custAddress.trim(),
         custArea.trim(),
         custContact.trim(),
@@ -5792,6 +8262,23 @@ function OfficeDashboard() {
         }
       }
       toast.success(`Customer "${custName.trim()}" add ho gaya!`);
+      // Also add as pharmacy if type is medicalStore or pharmacy
+      if (
+        actor &&
+        (custType === CustomerType.pharmacy ||
+          custType === CustomerType.medicalStore)
+      ) {
+        try {
+          await actor.addPharmacy(
+            custName.trim(),
+            custContact.trim(),
+            `${custAddress.trim()} | ${custArea.trim()}`,
+            custCode.trim(),
+          );
+        } catch {
+          // non-critical — customer was added, pharmacy sync failed silently
+        }
+      }
       setCustName("");
       setCustType(CustomerType.pharmacy);
       setCustContact("");
@@ -5801,7 +8288,7 @@ function OfficeDashboard() {
       setCustCode("");
       setCustNTN("");
       setCustCNIC("");
-      await loadCustomers();
+      await Promise.all([loadCustomers(), loadAllData()]);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Unknown error";
       toast.error(`Error adding customer: ${msg}`);
@@ -5902,20 +8389,48 @@ function OfficeDashboard() {
     if (!actor || !newOrderPharmacyId || newOrderLines.length === 0) return;
     setIsSubmittingNewOrder(true);
     try {
-      const orderLines = newOrderLines.map((line) => ({
-        medicineId: line.medicineId,
-        quantity: BigInt(Math.round(Number.parseFloat(line.qty) || 1)),
-        bonusQty: BigInt(Math.round(Number.parseFloat(line.bonus) || 0)),
-        // Store as * 10 to support decimals (11.5% → 115); display as / 10
-        discountPercent: BigInt(
-          Math.round((Number.parseFloat(line.discount) || 0) * 10),
-        ),
-      }));
+      const orderLines = newOrderLines.map((line) => {
+        const distD = Number.parseFloat(line.distDisc || line.discount) || 0;
+        const compD = Number.parseFloat(line.compDisc) || 0;
+        const med = allMedicines.find((m) => m.backendId === line.medicineId);
+        const price = med?.price ?? 0;
+        const manualNet = Number.parseFloat(line.netRate) || 0;
+        const autoNet = price * (1 - (distD + compD) / 100);
+        return {
+          medicineId: line.medicineId,
+          quantity: BigInt(Math.round(Number.parseFloat(line.qty) || 1)),
+          bonusQty: BigInt(Math.round(Number.parseFloat(line.bonus) || 0)),
+          discountPercent: BigInt(0),
+          distributionDiscount: BigInt(Math.round(distD * 10)),
+          companyDiscount: BigInt(Math.round(compD * 10)),
+          netRate: BigInt(
+            Math.round((manualNet > 0 ? manualNet : autoNet) * 100),
+          ),
+        };
+      });
       await actor.createOrder(
         newOrderPharmacyId,
         orderLines,
-        newOrderStaffName.trim(),
-        newOrderStaffCode.trim(),
+        newOrderStaffName.trim() || "Office Admin",
+        newOrderStaffCode.trim() || "admin",
+      );
+      // Deduct stock for ordered items (localStorage)
+      deductStock(
+        newOrderLines.map((line) => ({
+          backendId: line.medicineId,
+          qty: Math.round(Number.parseFloat(line.qty) || 1),
+        })),
+      );
+      // Sync inventory deduction to backend (fire-and-forget)
+      Promise.all(
+        newOrderLines.map((line) =>
+          actor
+            .adjustInventoryStock(
+              line.medicineId,
+              BigInt(-Math.round(Number.parseFloat(line.qty) || 1)),
+            )
+            .catch(() => {}),
+        ),
       );
       toast.success("Order submit ho gaya! | Order submitted!");
       setNewOrderPharmacyId(null);
@@ -5934,14 +8449,33 @@ function OfficeDashboard() {
   }
 
   const filtered = useMemo((): OfficeOrderDetail[] => {
-    if (statusFilter === "all") return orders;
-    return orders.filter((o) => o.status === statusFilter);
-  }, [orders, statusFilter]);
+    let result =
+      statusFilter === "all"
+        ? orders
+        : orders.filter((o) => o.status === statusFilter);
+    if (bookerFilter)
+      result = result.filter((o) => o.staffName === bookerFilter);
+    return result;
+  }, [orders, statusFilter, bookerFilter]);
 
   const filteredWithLines = useMemo((): OfficeOrderDetail[] => {
-    if (statusFilter === "all") return ordersWithLines;
-    return ordersWithLines.filter((o) => o.status === statusFilter);
-  }, [ordersWithLines, statusFilter]);
+    let result =
+      statusFilter === "all"
+        ? ordersWithLines
+        : ordersWithLines.filter((o) => o.status === statusFilter);
+    if (bookerFilter)
+      result = result.filter((o) => o.staffName === bookerFilter);
+    return result;
+  }, [ordersWithLines, statusFilter, bookerFilter]);
+
+  // Unique booker names derived from orders
+  const uniqueBookers = useMemo(() => {
+    const names = new Set<string>();
+    for (const o of orders) {
+      if (o.staffName) names.add(o.staffName);
+    }
+    return Array.from(names).sort();
+  }, [orders]);
 
   const filteredHistory = useMemo((): OfficeOrderDetail[] => {
     return historyOrders;
@@ -6038,14 +8572,18 @@ function OfficeDashboard() {
               <h1 className="text-xl font-bold font-heading">
                 MedOrder Office
               </h1>
-              <p className="text-white/70 text-xs">
+              <p className="text-white/70 text-xs flex items-center gap-1.5">
                 Office Dashboard | آفس ڈیش بورڈ
+                <span className="bg-purple-400/40 text-purple-100 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                  Admin
+                </span>
               </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <a
-              href="/delivery"
+              href="/delivery?from=office"
+              data-ocid="office.delivery_view_link"
               className="flex items-center gap-1.5 bg-white/15 hover:bg-white/25 transition-colors px-3 py-2 rounded-xl text-sm font-medium"
             >
               <Truck size={15} />
@@ -6209,6 +8747,69 @@ function OfficeDashboard() {
                   {sidebarOpen && <span>Add Customer | کسٹمر شامل کریں</span>}
                 </button>
               </div>
+              {/* Manage Section */}
+              <div className="pt-3 border-t border-gray-100 mt-3">
+                {sidebarOpen && (
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-2 mb-2">
+                    Settings | سیٹنگز
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveView("manage");
+                    setSidebarOpen(false);
+                  }}
+                  title="Manage"
+                  data-ocid="office.manage_tab"
+                  className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "manage" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
+                >
+                  <Settings2 size={16} className="shrink-0" />
+                  {sidebarOpen && <span>Manage | منظم</span>}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveView("user-management");
+                    setSidebarOpen(false);
+                  }}
+                  title="User Management"
+                  data-ocid="office.user_management_tab"
+                  className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "user-management" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
+                >
+                  <User size={16} className="shrink-0" />
+                  {sidebarOpen && <span>User Management | صارف انتظام</span>}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveView("staff-locations");
+                    setSidebarOpen(false);
+                  }}
+                  title="Staff Locations"
+                  data-ocid="office.staff_locations_tab"
+                  className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "staff-locations" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
+                >
+                  <MapPin size={16} className="shrink-0" />
+                  {sidebarOpen && <span>Staff Locations | عملے کی جگہ</span>}
+                </button>
+                {/* Logout */}
+                <div className="border-t border-gray-100 mt-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearSession();
+                      window.location.href = "/office";
+                    }}
+                    title="Logout"
+                    data-ocid="office.logout_button"
+                    className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors text-red-500 hover:bg-red-50 ${!sidebarOpen ? "justify-center" : ""}`}
+                  >
+                    <LogOut size={16} className="shrink-0" />
+                    {sidebarOpen && <span>Logout | لاگ آؤٹ</span>}
+                  </button>
+                </div>
+              </div>
             </div>
           </nav>
         </aside>
@@ -6350,56 +8951,106 @@ function OfficeDashboard() {
                         Print Selected ({selectedForReprint.size}) | منتخب
                       </button>
                     )}
-                    {/* Print New */}
+                    {/* Print New — only confirmed orders */}
                     {(() => {
                       const newOrders = filteredWithLines.filter(
-                        (o) => !printedOrderIds.has(o.orderId),
+                        (o) =>
+                          !printedOrderIds.has(o.orderId) &&
+                          o.status === "confirmed",
+                      );
+                      const pendingUnprinted = filteredWithLines.filter(
+                        (o) =>
+                          !printedOrderIds.has(o.orderId) &&
+                          o.status === "pending",
                       );
                       return (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (newOrders.length === 0) {
-                              toast.info(
-                                "All filtered orders already printed. Select specific orders to re-print.",
-                              );
-                              return;
-                            }
-                            const printWin = window.open("", "_blank");
-                            if (!printWin) return;
-                            const html = buildPrintHtml(newOrders);
-                            printWin.document.write(html);
-                            printWin.document.close();
-                            printWin.print();
-                            const newPrinted = new Set(printedOrderIds);
-                            for (const o of newOrders) {
-                              newPrinted.add(o.orderId);
-                            }
-                            setPrintedOrderIds(newPrinted);
-                            try {
-                              localStorage.setItem(
-                                "medorder_printed_orders",
-                                JSON.stringify(Array.from(newPrinted)),
-                              );
-                            } catch {
-                              // ignore
-                            }
-                          }}
-                          disabled={filtered.length === 0}
-                          className="flex items-center gap-2 bg-gray-600 hover:bg-gray-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
-                        >
-                          <Printer size={14} />
-                          Print New | نئے پرنٹ
-                          {newOrders.length > 0 && (
-                            <span className="bg-white/25 text-white text-xs px-1.5 py-0.5 rounded-full">
-                              {newOrders.length}
+                        <>
+                          <button
+                            type="button"
+                            data-ocid="office.print_new_button"
+                            onClick={() => {
+                              if (newOrders.length === 0) {
+                                if (pendingUnprinted.length > 0) {
+                                  toast.warning(
+                                    `${pendingUnprinted.length} pending order(s) must be confirmed before printing.`,
+                                  );
+                                } else {
+                                  toast.info(
+                                    "No confirmed orders to print. Select specific orders to re-print.",
+                                  );
+                                }
+                                return;
+                              }
+                              const printWin = window.open("", "_blank");
+                              if (!printWin) return;
+                              const html = buildPrintHtml(newOrders);
+                              printWin.document.write(html);
+                              printWin.document.close();
+                              printWin.print();
+                              const newPrinted = new Set(printedOrderIds);
+                              for (const o of newOrders) {
+                                newPrinted.add(o.orderId);
+                              }
+                              setPrintedOrderIds(newPrinted);
+                              try {
+                                localStorage.setItem(
+                                  "medorder_printed_orders",
+                                  JSON.stringify(Array.from(newPrinted)),
+                                );
+                              } catch {
+                                // ignore
+                              }
+                            }}
+                            disabled={newOrders.length === 0}
+                            className="flex items-center gap-2 bg-gray-600 hover:bg-gray-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                          >
+                            <Printer size={14} />
+                            Print All | سب پرنٹ
+                            {newOrders.length > 0 && (
+                              <span className="bg-white/25 text-white text-xs px-1.5 py-0.5 rounded-full">
+                                {newOrders.length}
+                              </span>
+                            )}
+                          </button>
+                          {pendingUnprinted.length > 0 && (
+                            <span className="text-xs text-amber-600 font-medium flex items-center gap-1">
+                              ⚠ {pendingUnprinted.length} pending — confirm
+                              first
                             </span>
                           )}
-                        </button>
+                        </>
                       );
                     })()}
                   </div>
                 </div>
+
+                {/* Booker filter chips */}
+                {uniqueBookers.length > 1 && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                      Booker:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setBookerFilter(null)}
+                      className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${bookerFilter === null ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+                    >
+                      All
+                    </button>
+                    {uniqueBookers.map((name) => (
+                      <button
+                        type="button"
+                        key={name}
+                        onClick={() =>
+                          setBookerFilter(bookerFilter === name ? null : name)
+                        }
+                        className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${bookerFilter === name ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+                      >
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                )}
 
                 {/* Color Legend */}
                 <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500 px-1">
@@ -6407,19 +9058,19 @@ function OfficeDashboard() {
                     Order Colors:
                   </span>
                   <span className="flex items-center gap-1.5">
-                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-purple-500" />
+                    <span className="inline-block w-4 h-4 rounded-full bg-purple-600 shadow-sm" />
                     Discount + Bonus
                   </span>
                   <span className="flex items-center gap-1.5">
-                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500" />
+                    <span className="inline-block w-4 h-4 rounded-full bg-red-600 shadow-sm" />
                     Discount only
                   </span>
                   <span className="flex items-center gap-1.5">
-                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-blue-500" />
+                    <span className="inline-block w-4 h-4 rounded-full bg-blue-600 shadow-sm" />
                     Bonus only
                   </span>
                   <span className="flex items-center gap-1.5">
-                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-green-500" />
+                    <span className="inline-block w-4 h-4 rounded-full bg-green-600 shadow-sm" />
                     No discount/bonus
                   </span>
                 </div>
@@ -6480,7 +9131,10 @@ function OfficeDashboard() {
                             order.orderId,
                           );
                           const hasAnyDiscount = order.items.some(
-                            (i) => (i.discountPercent ?? 0) > 0,
+                            (i) =>
+                              (i.discountPercent ?? 0) > 0 ||
+                              (i.distributionDiscount ?? 0) > 0 ||
+                              (i.companyDiscount ?? 0) > 0,
                           );
                           const hasAnyBonus = order.items.some(
                             (i) => (i.bonusQty ?? 0) > 0,
@@ -6488,17 +9142,17 @@ function OfficeDashboard() {
                           let orderColorClass = "";
                           let orderDotColor = "";
                           if (hasAnyDiscount && hasAnyBonus) {
-                            orderColorClass = "border-l-4 border-l-purple-500";
-                            orderDotColor = "bg-purple-500";
+                            orderColorClass = "border-l-4 border-l-purple-600";
+                            orderDotColor = "bg-purple-600";
                           } else if (hasAnyDiscount && !hasAnyBonus) {
-                            orderColorClass = "border-l-4 border-l-red-500";
-                            orderDotColor = "bg-red-500";
+                            orderColorClass = "border-l-4 border-l-red-600";
+                            orderDotColor = "bg-red-600";
                           } else if (!hasAnyDiscount && hasAnyBonus) {
-                            orderColorClass = "border-l-4 border-l-blue-500";
-                            orderDotColor = "bg-blue-500";
+                            orderColorClass = "border-l-4 border-l-blue-600";
+                            orderDotColor = "bg-blue-600";
                           } else {
-                            orderColorClass = "border-l-4 border-l-green-500";
-                            orderDotColor = "bg-green-500";
+                            orderColorClass = "border-l-4 border-l-green-600";
+                            orderDotColor = "bg-green-600";
                           }
                           return (
                             <tr
@@ -6543,7 +9197,7 @@ function OfficeDashboard() {
                               </td>
                               <td className="px-4 py-3 text-sm font-mono font-semibold text-blue-700">
                                 <span
-                                  className={`inline-block w-2 h-2 rounded-full mr-1 ${orderDotColor}`}
+                                  className={`inline-block w-4 h-4 rounded-full mr-1.5 shadow-sm align-middle ${orderDotColor}`}
                                 />
                                 {order.orderId}
                               </td>
@@ -7292,7 +9946,7 @@ function OfficeDashboard() {
             )}
 
             {activeView === "add-order" && (
-              <div className="space-y-6">
+              <div className="space-y-4">
                 <div>
                   <h2 className="text-xl font-bold text-gray-900 font-heading">
                     Add New Order | نیا آرڈر شامل کریں
@@ -7302,151 +9956,13 @@ function OfficeDashboard() {
                   </p>
                 </div>
 
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-5">
-                  {/* Staff info */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label
-                        htmlFor="new-order-staff-name"
-                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
-                      >
-                        Staff Name | نام
-                      </label>
-                      <input
-                        id="new-order-staff-name"
-                        type="text"
-                        value={newOrderStaffName}
-                        onChange={(e) => setNewOrderStaffName(e.target.value)}
-                        placeholder="e.g. Ahmed Ali"
-                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      />
-                    </div>
-                    <div>
-                      <label
-                        htmlFor="new-order-staff-code"
-                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
-                      >
-                        Staff Code | کوڈ
-                      </label>
-                      <input
-                        id="new-order-staff-code"
-                        type="text"
-                        value={newOrderStaffCode}
-                        onChange={(e) => setNewOrderStaffCode(e.target.value)}
-                        placeholder="e.g. SA-001"
-                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Pharmacy searchable select */}
-                  <div className="relative">
-                    <label
-                      htmlFor="new-order-pharmacy-search"
-                      className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
-                    >
-                      Pharmacy | فارمیسی *
-                    </label>
-                    <div className="relative">
-                      <Search
-                        size={14}
-                        className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
-                      />
-                      <input
-                        id="new-order-pharmacy-search"
-                        type="text"
-                        value={
-                          newOrderPharmacyId && !newOrderPharmacyDropdownOpen
-                            ? (allPharmacies.find(
-                                (p) => p.id === newOrderPharmacyId,
-                              )?.name ?? newOrderPharmacySearch)
-                            : newOrderPharmacySearch
-                        }
-                        onChange={(e) => {
-                          setNewOrderPharmacySearch(e.target.value);
-                          setNewOrderPharmacyDropdownOpen(true);
-                          if (!e.target.value) setNewOrderPharmacyId(null);
-                        }}
-                        onFocus={() => {
-                          setNewOrderPharmacySearch("");
-                          setNewOrderPharmacyDropdownOpen(true);
-                        }}
-                        placeholder="Search pharmacy... | فارمیسی تلاش کریں"
-                        className="w-full h-10 text-sm border border-gray-300 rounded-lg pl-9 pr-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        autoComplete="off"
-                      />
-                      {newOrderPharmacyId && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setNewOrderPharmacyId(null);
-                            setNewOrderPharmacySearch("");
-                          }}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                          aria-label="Clear pharmacy"
-                        >
-                          <X size={14} />
-                        </button>
-                      )}
-                    </div>
-                    {newOrderPharmacyDropdownOpen && (
-                      <div className="absolute z-20 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                        {allPharmacies
-                          .filter((p) =>
-                            newOrderPharmacySearch
-                              ? p.name
-                                  .toLowerCase()
-                                  .includes(
-                                    newOrderPharmacySearch.toLowerCase(),
-                                  )
-                              : true,
-                          )
-                          .map((p) => (
-                            <button
-                              type="button"
-                              key={String(p.id)}
-                              onClick={() => {
-                                setNewOrderPharmacyId(p.id);
-                                setNewOrderPharmacySearch("");
-                                setNewOrderPharmacyDropdownOpen(false);
-                              }}
-                              className={`w-full text-left px-3 py-2.5 text-sm hover:bg-blue-50 transition-colors ${newOrderPharmacyId === p.id ? "bg-blue-50 text-blue-700 font-semibold" : "text-gray-900"}`}
-                            >
-                              {p.name}
-                            </button>
-                          ))}
-                        {allPharmacies.filter((p) =>
-                          newOrderPharmacySearch
-                            ? p.name
-                                .toLowerCase()
-                                .includes(newOrderPharmacySearch.toLowerCase())
-                            : true,
-                        ).length === 0 && (
-                          <div className="px-3 py-3 text-sm text-gray-400 text-center">
-                            No pharmacies found
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {/* Backdrop to close dropdown */}
-                    {newOrderPharmacyDropdownOpen && (
-                      <div
-                        className="fixed inset-0 z-10"
-                        onClick={() => setNewOrderPharmacyDropdownOpen(false)}
-                        onKeyDown={(e) =>
-                          e.key === "Escape" &&
-                          setNewOrderPharmacyDropdownOpen(false)
-                        }
-                        aria-hidden="true"
-                      />
-                    )}
-                  </div>
-
-                  {/* Medicine rows */}
-                  <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
-                        Order Items | اشیاء *
+                {/* Two column layout: LEFT = medicine items, RIGHT = form details */}
+                <div className="flex gap-4 items-start">
+                  {/* LEFT: Order Items panel */}
+                  <div className="w-3/5 bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-bold text-gray-700 uppercase tracking-wide">
+                        Order Items | اشیاء
                       </span>
                       <button
                         type="button"
@@ -7461,10 +9977,14 @@ function OfficeDashboard() {
                               qty: "1",
                               bonus: "0",
                               discount: "0",
+                              distDisc: "0",
+                              compDisc: "0",
+                              netRate: "0",
                             },
                           ])
                         }
                         disabled={allMedicines.length === 0}
+                        data-ocid="add_order.add_item_button"
                         className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors"
                       >
                         <Plus size={13} />
@@ -7473,25 +9993,21 @@ function OfficeDashboard() {
                     </div>
 
                     {newOrderLines.length === 0 ? (
-                      <div className="text-center py-8 text-gray-400 text-sm border-2 border-dashed border-gray-200 rounded-xl">
-                        Add items using the button above | اوپر بٹن سے اشیاء
+                      <div
+                        className="text-center py-10 text-gray-400 text-sm border-2 border-dashed border-gray-200 rounded-xl"
+                        data-ocid="add_order.items_empty_state"
+                      >
+                        Click "Add Item" to add medicines | اوپر بٹن سے اشیاء
                         شامل کریں
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        <div className="grid grid-cols-12 gap-2 px-1 text-xs font-semibold text-gray-400 uppercase tracking-wide">
-                          <div className="col-span-5">Medicine</div>
-                          <div className="col-span-2 text-center">Qty</div>
-                          <div className="col-span-2 text-center">Bonus</div>
-                          <div className="col-span-2 text-center">Disc%</div>
-                          <div className="col-span-1" />
-                        </div>
                         {newOrderLines.map((line) => (
                           <div
                             key={line._key}
-                            className="grid grid-cols-12 gap-2 items-center"
+                            className="grid grid-cols-12 gap-1 items-center"
                           >
-                            <div className="col-span-5 relative">
+                            <div className="col-span-4 relative">
                               <div className="relative">
                                 <Search
                                   size={12}
@@ -7632,7 +10148,7 @@ function OfficeDashboard() {
                                 </>
                               )}
                             </div>
-                            <div className="col-span-2">
+                            <div className="col-span-1">
                               <input
                                 type="number"
                                 min="0"
@@ -7648,10 +10164,10 @@ function OfficeDashboard() {
                                     ),
                                   )
                                 }
-                                className="w-full h-9 border border-gray-300 rounded-lg px-2 text-sm text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                className="w-full h-9 border border-gray-300 rounded-lg px-1 text-xs text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
                             </div>
-                            <div className="col-span-2">
+                            <div className="col-span-1">
                               <input
                                 type="number"
                                 min="0"
@@ -7667,27 +10183,73 @@ function OfficeDashboard() {
                                     ),
                                   )
                                 }
-                                className="w-full h-9 border border-emerald-300 bg-emerald-50 rounded-lg px-2 text-sm text-center text-emerald-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                className="w-full h-9 border border-emerald-300 bg-emerald-50 rounded-lg px-1 text-xs text-center text-emerald-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              />
+                            </div>
+                            <div className="col-span-1">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="any"
+                                placeholder="Dist%"
+                                value={line.distDisc}
+                                onChange={(e) =>
+                                  setNewOrderLines((prev) =>
+                                    prev.map((l) =>
+                                      l._key === line._key
+                                        ? {
+                                            ...l,
+                                            distDisc: e.target.value,
+                                            discount: e.target.value,
+                                          }
+                                        : l,
+                                    ),
+                                  )
+                                }
+                                className="w-full h-9 border border-amber-300 bg-amber-50 rounded-lg px-1 text-xs text-center text-amber-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              />
+                            </div>
+                            <div className="col-span-1">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="any"
+                                placeholder="Co%"
+                                value={line.compDisc}
+                                onChange={(e) =>
+                                  setNewOrderLines((prev) =>
+                                    prev.map((l) =>
+                                      l._key === line._key
+                                        ? { ...l, compDisc: e.target.value }
+                                        : l,
+                                    ),
+                                  )
+                                }
+                                className="w-full h-9 border border-blue-300 bg-blue-50 rounded-lg px-1 text-xs text-center text-blue-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
                             </div>
                             <div className="col-span-2">
                               <input
                                 type="number"
                                 min="0"
-                                max="100"
                                 step="any"
-                                placeholder="Disc%"
-                                value={line.discount}
+                                placeholder="0"
+                                value={line.netRate === "0" ? "" : line.netRate}
                                 onChange={(e) =>
                                   setNewOrderLines((prev) =>
                                     prev.map((l) =>
                                       l._key === line._key
-                                        ? { ...l, discount: e.target.value }
+                                        ? {
+                                            ...l,
+                                            netRate: e.target.value || "0",
+                                          }
                                         : l,
                                     ),
                                   )
                                 }
-                                className="w-full h-9 border border-amber-300 bg-amber-50 rounded-lg px-2 text-sm text-center text-amber-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                className="w-full h-9 border border-purple-300 bg-purple-50 rounded-lg px-1 text-xs text-center text-purple-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
                             </div>
                             <div className="col-span-1 flex justify-center">
@@ -7704,48 +10266,177 @@ function OfficeDashboard() {
                                 <Trash2 size={14} />
                               </button>
                             </div>
+                            <div className="col-span-1" />
                           </div>
                         ))}
                       </div>
                     )}
                   </div>
 
-                  {/* Notes */}
-                  <div>
-                    <label
-                      htmlFor="new-order-notes"
-                      className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
-                    >
-                      Notes | نوٹس
-                    </label>
-                    <textarea
-                      id="new-order-notes"
-                      value={newOrderNotes}
-                      onChange={(e) => setNewOrderNotes(e.target.value)}
-                      placeholder="Special instructions..."
-                      rows={2}
-                      className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
-                    />
-                  </div>
+                  {/* RIGHT: Order details & submit */}
+                  <div className="w-2/5 bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4 sticky top-0">
+                    {/* Admin badge */}
+                    <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                      <User size={14} className="text-blue-600 shrink-0" />
+                      <span className="text-xs font-semibold text-blue-700">
+                        Order by: Admin | آفس آرڈر
+                      </span>
+                    </div>
 
-                  {/* Submit */}
-                  <button
-                    type="button"
-                    onClick={handleSubmitNewOrder}
-                    disabled={
-                      isSubmittingNewOrder ||
-                      !newOrderPharmacyId ||
-                      newOrderLines.length === 0
-                    }
-                    className="w-full h-11 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold rounded-lg transition-colors"
-                  >
-                    {isSubmittingNewOrder ? (
-                      <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                      <Plus size={16} />
+                    {/* Pharmacy searchable select */}
+                    <div className="relative">
+                      <label
+                        htmlFor="new-order-pharmacy-search"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Pharmacy | فارمیسی *
+                      </label>
+                      <div className="relative">
+                        <Search
+                          size={14}
+                          className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+                        />
+                        <input
+                          id="new-order-pharmacy-search"
+                          type="text"
+                          value={
+                            newOrderPharmacyId && !newOrderPharmacyDropdownOpen
+                              ? (allPharmacies.find(
+                                  (p) => p.id === newOrderPharmacyId,
+                                )?.name ?? newOrderPharmacySearch)
+                              : newOrderPharmacySearch
+                          }
+                          onChange={(e) => {
+                            setNewOrderPharmacySearch(e.target.value);
+                            setNewOrderPharmacyDropdownOpen(true);
+                            if (!e.target.value) setNewOrderPharmacyId(null);
+                          }}
+                          onFocus={() => {
+                            setNewOrderPharmacySearch("");
+                            setNewOrderPharmacyDropdownOpen(true);
+                          }}
+                          placeholder="Search pharmacy..."
+                          className="w-full h-10 text-sm border border-gray-300 rounded-lg pl-9 pr-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          autoComplete="off"
+                        />
+                        {newOrderPharmacyId && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNewOrderPharmacyId(null);
+                              setNewOrderPharmacySearch("");
+                            }}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                            aria-label="Clear pharmacy"
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+                      {newOrderPharmacyDropdownOpen && (
+                        <div className="absolute z-20 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                          {allPharmacies
+                            .filter((p) =>
+                              newOrderPharmacySearch
+                                ? p.name
+                                    .toLowerCase()
+                                    .includes(
+                                      newOrderPharmacySearch.toLowerCase(),
+                                    )
+                                : true,
+                            )
+                            .map((p) => (
+                              <button
+                                type="button"
+                                key={String(p.id)}
+                                onClick={() => {
+                                  setNewOrderPharmacyId(p.id);
+                                  setNewOrderPharmacySearch("");
+                                  setNewOrderPharmacyDropdownOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-2.5 text-sm hover:bg-blue-50 transition-colors ${newOrderPharmacyId === p.id ? "bg-blue-50 text-blue-700 font-semibold" : "text-gray-900"}`}
+                              >
+                                {p.name}
+                              </button>
+                            ))}
+                          {allPharmacies.filter((p) =>
+                            newOrderPharmacySearch
+                              ? p.name
+                                  .toLowerCase()
+                                  .includes(
+                                    newOrderPharmacySearch.toLowerCase(),
+                                  )
+                              : true,
+                          ).length === 0 && (
+                            <div className="px-3 py-3 text-sm text-gray-400 text-center">
+                              No pharmacies found
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {newOrderPharmacyDropdownOpen && (
+                        <div
+                          className="fixed inset-0 z-10"
+                          onClick={() => setNewOrderPharmacyDropdownOpen(false)}
+                          onKeyDown={(e) =>
+                            e.key === "Escape" &&
+                            setNewOrderPharmacyDropdownOpen(false)
+                          }
+                          aria-hidden="true"
+                        />
+                      )}
+                    </div>
+
+                    {/* Order summary */}
+                    {newOrderLines.length > 0 && (
+                      <div className="bg-gray-50 rounded-lg p-3 space-y-1">
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                          Summary
+                        </p>
+                        <p className="text-sm text-gray-700">
+                          {newOrderLines.length} item(s)
+                        </p>
+                      </div>
                     )}
-                    Submit Order | آرڈر جمع کریں
-                  </button>
+
+                    {/* Notes */}
+                    <div>
+                      <label
+                        htmlFor="new-order-notes"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Notes | نوٹس
+                      </label>
+                      <textarea
+                        id="new-order-notes"
+                        value={newOrderNotes}
+                        onChange={(e) => setNewOrderNotes(e.target.value)}
+                        placeholder="Special instructions..."
+                        rows={2}
+                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+                      />
+                    </div>
+
+                    {/* Submit */}
+                    <button
+                      type="button"
+                      onClick={handleSubmitNewOrder}
+                      disabled={
+                        isSubmittingNewOrder ||
+                        !newOrderPharmacyId ||
+                        newOrderLines.length === 0
+                      }
+                      data-ocid="add_order.submit_button"
+                      className="w-full h-11 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold rounded-lg transition-colors"
+                    >
+                      {isSubmittingNewOrder ? (
+                        <Loader2 size={16} className="animate-spin" />
+                      ) : (
+                        <Plus size={16} />
+                      )}
+                      Submit Order | آرڈر جمع کریں
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -7811,25 +10502,31 @@ function OfficeDashboard() {
                           className="w-full h-10 text-sm border border-gray-300 rounded-lg pl-9 pr-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                       </div>
-                      {cwsSelectedCustomer && (
+                      {(cwsSelectedCustomer || cwsSelectedPharmacy) && (
                         <button
                           type="button"
                           data-ocid="cws.customer_clear_button"
                           onClick={() => {
                             setCwsSelectedCustomer(null);
+                            setCwsSelectedPharmacy(null);
                             setCwsCustomerSearch("");
                             setCwsCustomerDropdownOpen(false);
                           }}
                           className="flex items-center gap-1.5 bg-blue-100 text-blue-700 text-xs font-semibold px-3 py-2 rounded-lg hover:bg-blue-200 transition-colors"
                         >
-                          <span>Viewing: {cwsSelectedCustomer.name}</span>
+                          <span>
+                            Viewing:{" "}
+                            {cwsSelectedCustomer?.name ??
+                              cwsSelectedPharmacy?.name}
+                          </span>
                           <X size={12} />
                         </button>
                       )}
                     </div>
                     {cwsCustomerDropdownOpen &&
                       cwsCustomerSearch.trim().length > 0 && (
-                        <div className="absolute z-20 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
+                        <div className="absolute z-20 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                          {/* Customers */}
                           {allCustomers
                             .filter((c) => {
                               const q = cwsCustomerSearch.toLowerCase();
@@ -7841,11 +10538,12 @@ function OfficeDashboard() {
                             })
                             .map((c) => (
                               <button
-                                key={c.id}
+                                key={`cust-${c.id}`}
                                 type="button"
                                 className="w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 flex items-center justify-between gap-2"
                                 onClick={() => {
                                   setCwsSelectedCustomer(c);
+                                  setCwsSelectedPharmacy(null);
                                   setCwsCustomerSearch(c.name);
                                   setCwsCustomerDropdownOpen(false);
                                 }}
@@ -7853,11 +10551,66 @@ function OfficeDashboard() {
                                 <span className="font-medium text-gray-900">
                                   {c.name}
                                 </span>
-                                <span className="text-xs text-gray-400">
-                                  {c.area} {c.code && `· ${c.code}`}
+                                <span className="flex items-center gap-1.5 shrink-0">
+                                  <span
+                                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${c.customerType === CustomerType.doctor ? "bg-green-100 text-green-700" : c.customerType === CustomerType.medicalStore ? "bg-orange-100 text-orange-700" : "bg-blue-100 text-blue-700"}`}
+                                  >
+                                    {c.customerType === CustomerType.doctor
+                                      ? "Doctor"
+                                      : c.customerType ===
+                                          CustomerType.medicalStore
+                                        ? "Store"
+                                        : "Pharmacy"}
+                                  </span>
+                                  <span className="text-xs text-gray-400">
+                                    {c.area} {c.code && `· ${c.code}`}
+                                  </span>
                                 </span>
                               </button>
                             ))}
+                          {/* Pharmacies from allPharmacies */}
+                          {allPharmacies
+                            .filter((p) => {
+                              const q = cwsCustomerSearch.toLowerCase();
+                              const { area } = parseLocation(p.location);
+                              return (
+                                p.name.toLowerCase().includes(q) ||
+                                area.toLowerCase().includes(q)
+                              );
+                            })
+                            .map((p) => {
+                              const { area } = parseLocation(p.location);
+                              return (
+                                <button
+                                  key={`pharm-${p.id}`}
+                                  type="button"
+                                  className="w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 flex items-center justify-between gap-2"
+                                  onClick={() => {
+                                    setCwsSelectedCustomer(null);
+                                    setCwsSelectedPharmacy({
+                                      id: p.id,
+                                      name: p.name,
+                                      area,
+                                      code: "",
+                                    });
+                                    setCwsCustomerSearch(p.name);
+                                    setCwsCustomerDropdownOpen(false);
+                                  }}
+                                >
+                                  <span className="font-medium text-gray-900">
+                                    {p.name}
+                                  </span>
+                                  <span className="flex items-center gap-1.5 shrink-0">
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-purple-100 text-purple-700">
+                                      Pharmacy
+                                    </span>
+                                    <span className="text-xs text-gray-400">
+                                      {area}
+                                    </span>
+                                  </span>
+                                </button>
+                              );
+                            })}
                           {allCustomers.filter((c) => {
                             const q = cwsCustomerSearch.toLowerCase();
                             return (
@@ -7865,20 +10618,31 @@ function OfficeDashboard() {
                               c.code.toLowerCase().includes(q) ||
                               c.area.toLowerCase().includes(q)
                             );
-                          }).length === 0 && (
-                            <div className="px-4 py-3 text-sm text-gray-400">
-                              No customers found
-                            </div>
-                          )}
+                          }).length === 0 &&
+                            allPharmacies.filter((p) => {
+                              const q = cwsCustomerSearch.toLowerCase();
+                              const { area } = parseLocation(p.location);
+                              return (
+                                p.name.toLowerCase().includes(q) ||
+                                area.toLowerCase().includes(q)
+                              );
+                            }).length === 0 && (
+                              <div className="px-4 py-3 text-sm text-gray-400">
+                                No customers or pharmacies found
+                              </div>
+                            )}
                         </div>
                       )}
                   </div>
-                  {cwsSelectedCustomer && (
+                  {(cwsSelectedCustomer || cwsSelectedPharmacy) && (
                     <p className="text-xs text-blue-600 mt-2">
                       Showing sales for:{" "}
-                      <strong>{cwsSelectedCustomer.name}</strong>
-                      {cwsSelectedCustomer.area &&
-                        ` — ${cwsSelectedCustomer.area}`}
+                      <strong>
+                        {cwsSelectedCustomer?.name ?? cwsSelectedPharmacy?.name}
+                      </strong>
+                      {(cwsSelectedCustomer?.area ||
+                        cwsSelectedPharmacy?.area) &&
+                        ` — ${cwsSelectedCustomer?.area ?? cwsSelectedPharmacy?.area}`}
                     </p>
                   )}
                 </div>
@@ -7977,6 +10741,12 @@ function OfficeDashboard() {
                         cwsSelectedCustomer.code &&
                         o.pharmacyCode === cwsSelectedCustomer.code;
                       return nameMatch || !!codeMatch;
+                    }
+                    if (cwsSelectedPharmacy) {
+                      return (
+                        o.pharmacyName.toLowerCase() ===
+                        cwsSelectedPharmacy.name.toLowerCase()
+                      );
                     }
                     return true;
                   });
@@ -8601,7 +11371,7 @@ function OfficeDashboard() {
                         data-ocid="add_customer.type_select"
                         value={custType}
                         onChange={(e) =>
-                          setCustType(e.target.value as CustomerType)
+                          setCustType(e.target.value as ExtendedCustomerType)
                         }
                         disabled={isAddingCustomer}
                         className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
@@ -8609,6 +11379,7 @@ function OfficeDashboard() {
                         <option value={CustomerType.doctor}>
                           Doctor | ڈاکٹر
                         </option>
+                        <option value="hospital">Hospital | ہسپتال</option>
                         <option value={CustomerType.medicalStore}>
                           Medical Store | میڈیکل اسٹور
                         </option>
@@ -8788,12 +11559,26 @@ function OfficeDashboard() {
                   ) : (
                     <div className="divide-y divide-gray-100">
                       {allCustomers.map((cust, idx) => {
-                        const typeConfig = {
+                        const typeConfig: Record<
+                          string,
+                          {
+                            label: string;
+                            urdu: string;
+                            color: string;
+                            icon: ReturnType<typeof Stethoscope>;
+                          }
+                        > = {
                           [CustomerType.doctor]: {
                             label: "Doctor",
                             urdu: "ڈاکٹر",
                             color: "bg-blue-100 text-blue-700",
                             icon: <Stethoscope size={12} />,
+                          },
+                          hospital: {
+                            label: "Hospital",
+                            urdu: "ہسپتال",
+                            color: "bg-cyan-100 text-cyan-700",
+                            icon: <Building2 size={12} />,
                           },
                           [CustomerType.medicalStore]: {
                             label: "Medical Store",
@@ -8960,6 +11745,59 @@ function OfficeDashboard() {
               </div>
             )}
 
+            {/* Manage — same as staff ManageScreen */}
+            {activeView === "manage" && (
+              <div className="space-y-4">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900 font-heading">
+                    Manage | منظم
+                  </h2>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    Pharmacies aur medicines manage karein
+                  </p>
+                </div>
+                <ManageScreen
+                  pharmacies={allPharmacies.map((p) => {
+                    const { address, area } = parseLocation(p.location);
+                    return {
+                      id: String(p.id),
+                      backendId: p.id,
+                      name: p.name,
+                      address,
+                      area,
+                      contactNo: "",
+                      lastOrderDate: null,
+                      isVisited: false,
+                      code: (p as any).code ?? "",
+                    };
+                  })}
+                  medicines={allMedicines}
+                  actor={actor}
+                  showPharmacies={true}
+                  onDataReloaded={(newPharms, newMeds) => {
+                    setAllPharmacies(
+                      newPharms.map((p) => ({
+                        id: p.backendId,
+                        name: p.name,
+                        location: `${p.address} | ${p.area}`,
+                        code: p.code ?? "",
+                      })),
+                    );
+                    setAllMedicines(newMeds);
+                    // Also reload full data so pharmacy list is fresh everywhere
+                    loadAllData();
+                  }}
+                  dispatch={() => {}}
+                />
+              </div>
+            )}
+
+            {/* User Management */}
+            {activeView === "user-management" && <UserManagementPanel />}
+
+            {/* Staff Locations */}
+            {activeView === "staff-locations" && <StaffLocationsView />}
+
             {/* Footer */}
             <div className="text-center py-3 text-xs text-gray-400">
               © {new Date().getFullYear()}. Built with ♥ using{" "}
@@ -8981,6 +11819,13 @@ function OfficeDashboard() {
         <OrderDetailModal
           order={selectedOrder}
           onClose={() => setSelectedOrder(null)}
+          actor={actor}
+          allMedicines={allMedicines}
+          allPharmacies={allPharmacies}
+          onOrderUpdated={() => {
+            setSelectedOrder(null);
+            loadAllData();
+          }}
         />
       )}
     </div>
@@ -9008,6 +11853,9 @@ type DeliveryOrder = {
     total: number;
     bonusQty: number;
     discountPercent: number;
+    distributionDiscount: number;
+    companyDiscount: number;
+    netRate: number;
   }>;
   paymentReceived: number;
   returnItems: Array<{ medicineId: string; returnedQty: number }>;
@@ -9016,6 +11864,9 @@ type DeliveryOrder = {
 };
 
 function DeliveryDashboard() {
+  const fromOffice =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("from") === "office";
   const { actor, isFetching: isActorFetching } = useActor();
   const [pendingOrders, setPendingOrders] = useState<DeliveryOrder[]>([]);
   const [allOrders, setAllOrders] = useState<DeliveryOrder[]>([]);
@@ -9040,6 +11891,128 @@ function DeliveryDashboard() {
     {},
   );
   const [isSavingReturn, setIsSavingReturn] = useState(false);
+  // Offline mode for delivery
+  const [isDeliveryOffline, setIsDeliveryOffline] = useState(() => {
+    try {
+      return localStorage.getItem("medorder_delivery_offline") === "true";
+    } catch {
+      return false;
+    }
+  });
+  // Offline deliveries queued
+  const [offlineDeliveries, setOfflineDeliveries] = useState<string[]>(() => {
+    try {
+      const s = localStorage.getItem("medorder_offline_deliveries");
+      return s ? JSON.parse(s) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [isSyncingDeliveries, setIsSyncingDeliveries] = useState(false);
+  // Pharmacy search for delivery
+  const [pharmacySearch, setPharmacySearch] = useState("");
+
+  // Location tracking for delivery
+  const deliveryUsername = (() => {
+    try {
+      return getSession()?.username ?? "";
+    } catch {
+      return "";
+    }
+  })();
+  const deliveryLocationKey = `medorder_location_asked_${deliveryUsername}`;
+  const [locationAsked, setLocationAsked] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(deliveryLocationKey);
+    } catch {
+      return null;
+    }
+  });
+  useLocationTracking(deliveryUsername, "delivery", locationAsked === "yes");
+
+  function handleAllowDeliveryLocation() {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        try {
+          localStorage.setItem(deliveryLocationKey, "yes");
+          localStorage.setItem(
+            `medorder_location_${deliveryUsername}`,
+            JSON.stringify({
+              username: deliveryUsername,
+              role: "delivery",
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+              accuracy: pos.coords.accuracy,
+              updatedAt: new Date().toISOString(),
+            }),
+          );
+        } catch {
+          /* ignore */
+        }
+        setLocationAsked("yes");
+      },
+      () => {
+        try {
+          localStorage.setItem(deliveryLocationKey, "denied");
+        } catch {
+          /* ignore */
+        }
+        setLocationAsked("denied");
+      },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  }
+
+  function handleToggleDeliveryOffline() {
+    const next = !isDeliveryOffline;
+    setIsDeliveryOffline(next);
+    try {
+      localStorage.setItem("medorder_delivery_offline", String(next));
+    } catch {
+      /* ignore */
+    }
+    if (!next && offlineDeliveries.length > 0) {
+      toast.info(`${offlineDeliveries.length} deliveries pending sync`);
+    }
+  }
+
+  async function handleSyncDeliveries() {
+    if (!actor || offlineDeliveries.length === 0) return;
+    setIsSyncingDeliveries(true);
+    let synced = 0;
+    const remaining: string[] = [];
+    for (const orderId of offlineDeliveries) {
+      const order = allOrders.find((o) => o.orderId === orderId);
+      if (!order) continue;
+      try {
+        await actor.updateOrderStatus(
+          order.backendId,
+          mapLocalStatusToBackend("delivered"),
+        );
+        synced++;
+      } catch {
+        remaining.push(orderId);
+      }
+    }
+    setOfflineDeliveries(remaining);
+    try {
+      localStorage.setItem(
+        "medorder_offline_deliveries",
+        JSON.stringify(remaining),
+      );
+    } catch {
+      /* ignore */
+    }
+    if (synced > 0) {
+      toast.success(`${synced} deliveries synced!`);
+      await loadData();
+    }
+    if (remaining.length > 0) {
+      toast.error(`${remaining.length} delivery/deliveries failed to sync`);
+    }
+    setIsSyncingDeliveries(false);
+  }
 
   const loadData = useCallback(async () => {
     if (!actor || isActorFetching) return;
@@ -9065,6 +12038,11 @@ function DeliveryDashboard() {
             const med = medicineMap.get(String(line.medicineId));
             const unitPrice = med ? Number(med.price) : 0;
             const qty = Number(line.quantity);
+            const rawDistDisc = Number(line.distributionDiscount ?? 0);
+            const rawCompDisc = Number(line.companyDiscount ?? 0);
+            const rawDiscPct = Number(line.discountPercent ?? 0);
+            const effectiveDistDisc =
+              rawDistDisc > 0 ? rawDistDisc : rawDiscPct;
             return {
               medicineId: String(line.medicineId),
               medicineName: med?.name ?? `Medicine #${line.medicineId}`,
@@ -9073,7 +12051,10 @@ function DeliveryDashboard() {
               unitPrice,
               total: unitPrice * qty,
               bonusQty: Number(line.bonusQty ?? 0),
-              discountPercent: Number(line.discountPercent ?? 0),
+              discountPercent: rawDiscPct,
+              distributionDiscount: effectiveDistDisc,
+              companyDiscount: rawCompDisc,
+              netRate: Number(line.netRate ?? 0),
             };
           });
           const itemCount = items.length;
@@ -9137,6 +12118,28 @@ function DeliveryDashboard() {
   }, [loadData]);
 
   async function handleMarkDelivered(order: DeliveryOrder) {
+    if (isDeliveryOffline) {
+      // Save to offline queue
+      const updated = [...offlineDeliveries, order.orderId];
+      setOfflineDeliveries(updated);
+      try {
+        localStorage.setItem(
+          "medorder_offline_deliveries",
+          JSON.stringify(updated),
+        );
+      } catch {
+        /* ignore */
+      }
+      setDeliveredThisSession((prev) => [
+        { ...order, status: "delivered" as OrderStatus },
+        ...prev,
+      ]);
+      setPendingOrders((prev) =>
+        prev.filter((o) => o.backendId !== order.backendId),
+      );
+      toast.success(`${order.pharmacyName} — saved offline. Sync when online.`);
+      return;
+    }
     if (!actor) return;
     setMarkingId(order.backendId);
     try {
@@ -9180,12 +12183,13 @@ function DeliveryDashboard() {
     if (!actor || !returnModalOrder) return;
     setIsSavingReturn(true);
     try {
-      const returnItems = returnModalOrder.items
-        .filter((item) => returnToggles[item.medicineId])
-        .map((item) => ({
-          medicineId: BigInt(item.medicineId),
-          returnedQty: BigInt(item.qty),
-        }));
+      const returnedItems = returnModalOrder.items.filter(
+        (item) => returnToggles[item.medicineId],
+      );
+      const returnItems = returnedItems.map((item) => ({
+        medicineId: BigInt(item.medicineId),
+        returnedQty: BigInt(item.qty),
+      }));
       const payment = Number(paymentAmount[returnModalOrder.orderId] ?? 0);
       await (actor as any).updateOrderPaymentAndReturn(
         returnModalOrder.backendId,
@@ -9193,6 +12197,21 @@ function DeliveryDashboard() {
         returnItems,
         returnReason,
         "",
+      );
+      // Restore stock for returned items (localStorage)
+      restoreStock(
+        returnedItems.map((item) => ({
+          backendId: BigInt(item.medicineId),
+          qty: item.qty,
+        })),
+      );
+      // Sync inventory restoration to backend (fire-and-forget)
+      Promise.all(
+        returnedItems.map((item) =>
+          actor
+            .adjustInventoryStock(BigInt(item.medicineId), BigInt(item.qty))
+            .catch(() => {}),
+        ),
       );
       toast.success("Return aur payment save ho gaya!");
       setReturnModalOrder(null);
@@ -9251,17 +12270,40 @@ function DeliveryDashboard() {
       >
         <div className="max-w-sm mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2.5">
+            {fromOffice && (
+              <a
+                href="/office"
+                data-ocid="delivery.back_button"
+                className="w-8 h-8 flex items-center justify-center bg-white/20 hover:bg-white/30 transition-colors rounded-lg mr-0.5"
+                aria-label="Back to Office"
+                title="Back to Office Dashboard"
+              >
+                <ChevronLeft size={18} />
+              </a>
+            )}
             <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center">
               <Truck size={18} />
             </div>
             <div>
               <h1 className="text-lg font-bold font-heading">
-                Delivery | ڈیلیوری
+                {(() => {
+                  const s = getSession();
+                  return s?.displayName ?? "Delivery | ڈیلیوری";
+                })()}
               </h1>
               <p className="text-white/70 text-xs">Delivery Dashboard</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              data-ocid="delivery.offline_toggle"
+              onClick={handleToggleDeliveryOffline}
+              title={isDeliveryOffline ? "Switch online" : "Go offline"}
+              className={`w-8 h-8 flex items-center justify-center transition-colors rounded-lg ${isDeliveryOffline ? "bg-amber-400 text-white" : "bg-white/15 hover:bg-white/25"}`}
+            >
+              {isDeliveryOffline ? <WifiOff size={14} /> : <Wifi size={14} />}
+            </button>
             <button
               type="button"
               onClick={loadData}
@@ -9275,9 +12317,86 @@ function DeliveryDashboard() {
                 <RefreshCw size={14} />
               )}
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                clearSession();
+                window.location.href = "/delivery";
+              }}
+              className="w-8 h-8 flex items-center justify-center bg-red-400/80 hover:bg-red-400 transition-colors rounded-lg"
+              aria-label="Logout"
+              title="Logout"
+              data-ocid="delivery.logout_button"
+            >
+              <LogOut size={14} />
+            </button>
           </div>
         </div>
       </header>
+      {/* Delivery offline banner */}
+      {isDeliveryOffline && (
+        <div className="flex items-center gap-2.5 bg-amber-500 text-white px-4 py-2.5 text-sm font-medium">
+          <WifiOff size={15} className="shrink-0" />
+          <span className="flex-1">
+            Offline Mode — deliveries saved locally
+            {offlineDeliveries.length > 0
+              ? ` (${offlineDeliveries.length} pending)`
+              : ""}
+          </span>
+          {offlineDeliveries.length > 0 && (
+            <button
+              type="button"
+              data-ocid="delivery.sync_button"
+              onClick={handleSyncDeliveries}
+              disabled={isSyncingDeliveries}
+              className="flex items-center gap-1.5 bg-white/25 hover:bg-white/40 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors disabled:opacity-60 shrink-0"
+            >
+              {isSyncingDeliveries ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <RefreshCw size={12} />
+              )}
+              Sync
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Location permission banner */}
+      {!locationAsked && (
+        <div
+          className="flex items-center gap-3 bg-blue-600 text-white px-4 py-2.5 text-sm"
+          data-ocid="delivery.location_banner"
+        >
+          <MapPin size={15} className="shrink-0 opacity-80" />
+          <span className="flex-1 text-xs">
+            Share your location for tracking | اپنی جگہ شیئر کریں
+          </span>
+          <button
+            type="button"
+            data-ocid="delivery.location_allow_button"
+            onClick={handleAllowDeliveryLocation}
+            className="bg-white text-blue-600 text-xs font-semibold px-2.5 py-1 rounded-lg shrink-0"
+          >
+            Allow | اجازت
+          </button>
+          <button
+            type="button"
+            data-ocid="delivery.location_later_button"
+            onClick={() => {
+              try {
+                localStorage.setItem(deliveryLocationKey, "later");
+              } catch {
+                /* ignore */
+              }
+              setLocationAsked("later");
+            }}
+            className="bg-white/20 text-white text-xs font-semibold px-2.5 py-1 rounded-lg shrink-0"
+          >
+            Later | بعد میں
+          </button>
+        </div>
+      )}
 
       <div className="max-w-sm mx-auto px-4 py-5 space-y-5">
         {/* Summary Stats Bar — always shown, persists until office clears */}
@@ -9328,6 +12447,32 @@ function DeliveryDashboard() {
           </div>
         )}
 
+        {/* Pharmacy Search */}
+        <div className="relative">
+          <Search
+            size={16}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
+          />
+          <input
+            type="text"
+            value={pharmacySearch}
+            onChange={(e) => setPharmacySearch(e.target.value)}
+            placeholder="Search pharmacy... | فارمیسی تلاش کریں"
+            className="w-full pl-9 pr-9 h-10 rounded-xl border border-gray-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 shadow-sm"
+            data-ocid="delivery.pharmacy_search_input"
+          />
+          {pharmacySearch && (
+            <button
+              type="button"
+              onClick={() => setPharmacySearch("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              aria-label="Clear search"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+
         {/* Pending Deliveries */}
         <div>
           <h2 className="font-bold text-gray-800 font-heading mb-3 flex items-center gap-2">
@@ -9335,7 +12480,9 @@ function DeliveryDashboard() {
             Pending Deliveries | زیر التواء ڈیلیوری
             {!isLoading && (
               <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-semibold">
-                {pendingOrders.length}
+                {pharmacySearch.trim()
+                  ? `${pendingOrders.filter((o) => o.pharmacyName.toLowerCase().includes(pharmacySearch.toLowerCase())).length}/${pendingOrders.length}`
+                  : pendingOrders.length}
               </span>
             )}
           </h2>
@@ -9344,169 +12491,210 @@ function DeliveryDashboard() {
             <div className="flex items-center justify-center py-12">
               <Loader2 className="animate-spin text-blue-500" size={28} />
             </div>
-          ) : pendingOrders.length === 0 ? (
-            <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-400">
-              <Truck size={32} className="mx-auto mb-3 opacity-40" />
-              <p className="text-sm font-medium">No pending deliveries</p>
-              <p className="text-xs mt-1">تمام ڈیلیوریاں مکمل ہو گئی ہیں</p>
-            </div>
           ) : (
-            <div className="space-y-3">
-              {pendingOrders.map((order) => (
-                <div
-                  key={String(order.backendId)}
-                  className="bg-white rounded-xl border border-gray-200 shadow-sm p-4"
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <div>
-                      <h3 className="font-bold text-gray-900 font-heading">
-                        {order.pharmacyName}
-                      </h3>
-                      {order.pharmacyAddress && (
-                        <div className="flex items-center gap-1 mt-0.5 text-xs text-gray-500">
-                          <MapPin size={10} />
-                          <span>{order.pharmacyAddress}</span>
+            (() => {
+              const filteredPendingOrders = pharmacySearch.trim()
+                ? pendingOrders.filter((o) =>
+                    o.pharmacyName
+                      .toLowerCase()
+                      .includes(pharmacySearch.toLowerCase()),
+                  )
+                : pendingOrders;
+              return filteredPendingOrders.length === 0 ? (
+                <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-400">
+                  <Truck size={32} className="mx-auto mb-3 opacity-40" />
+                  <p className="text-sm font-medium">
+                    {pharmacySearch.trim()
+                      ? "No matching pharmacies"
+                      : "No pending deliveries"}
+                  </p>
+                  <p className="text-xs mt-1">
+                    {pharmacySearch.trim()
+                      ? "تلاش کا نتیجہ نہیں ملا"
+                      : "تمام ڈیلیوریاں مکمل ہو گئی ہیں"}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {filteredPendingOrders.map((order) => (
+                    <div
+                      key={String(order.backendId)}
+                      className="bg-white rounded-xl border border-gray-200 shadow-sm p-4"
+                    >
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <h3 className="font-bold text-gray-900 font-heading">
+                            {order.pharmacyName}
+                          </h3>
+                          {order.pharmacyAddress && (
+                            <div className="flex items-center gap-1 mt-0.5 text-xs text-gray-500">
+                              <MapPin size={10} />
+                              <span>{order.pharmacyAddress}</span>
+                            </div>
+                          )}
+                          {order.pharmacyArea && (
+                            <span className="inline-block text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full mt-1">
+                              {order.pharmacyArea}
+                            </span>
+                          )}
                         </div>
-                      )}
-                      {order.pharmacyArea && (
-                        <span className="inline-block text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full mt-1">
-                          {order.pharmacyArea}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between text-sm mt-3">
-                    <div className="text-gray-500">
-                      <span className="font-medium text-gray-700">
-                        {order.itemCount}
-                      </span>{" "}
-                      items ·{" "}
-                      <span className="font-bold text-gray-900">
-                        {formatCurrency(order.totalAmount)}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Payment & Return Section */}
-                  <div className="mt-3 space-y-2">
-                    <div>
-                      <label
-                        htmlFor={`payment-${order.orderId}`}
-                        className="text-xs text-gray-500 font-medium block mb-1"
-                      >
-                        Received | موصول (Rs)
-                      </label>
-                      <input
-                        id={`payment-${order.orderId}`}
-                        type="number"
-                        min="0"
-                        value={
-                          paymentAmount[order.orderId] ??
-                          (order.paymentReceived > 0
-                            ? String(order.paymentReceived)
-                            : "")
-                        }
-                        onChange={(e) =>
-                          setPaymentAmount((prev) => ({
-                            ...prev,
-                            [order.orderId]: e.target.value,
-                          }))
-                        }
-                        placeholder="0"
-                        className="w-full h-9 text-sm border border-gray-300 rounded-lg px-2 focus:outline-none focus:ring-1 focus:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                      />
-                    </div>
-                    {/* Balance display */}
-                    {(() => {
-                      const received = Number(
-                        paymentAmount[order.orderId] ??
-                          order.paymentReceived ??
-                          0,
-                      );
-                      const balance = order.totalAmount - received;
-                      if (received === 0) return null;
-                      return (
-                        <div
-                          className={`flex items-center justify-between text-sm px-3 py-1.5 rounded-lg ${balance > 0 ? "bg-red-50 text-red-700" : balance < 0 ? "bg-emerald-50 text-emerald-700" : "bg-gray-50 text-gray-600"}`}
-                        >
-                          <span className="font-medium">Balance | باقی:</span>
-                          <span className="font-bold">
-                            {formatCurrency(Math.abs(balance))}{" "}
-                            {balance > 0
-                              ? "(baqi)"
-                              : balance < 0
-                                ? "(extra)"
-                                : "(full paid)"}
+                      </div>
+                      <div className="flex items-center justify-between text-sm mt-3">
+                        <div className="text-gray-500">
+                          <span className="font-medium text-gray-700">
+                            {order.itemCount}
+                          </span>{" "}
+                          items ·{" "}
+                          <span className="font-bold text-gray-900">
+                            {formatCurrency(order.totalAmount)}
                           </span>
                         </div>
-                      );
-                    })()}
-                    {/* Return items display if any */}
-                    {order.returnItems && order.returnItems.length > 0 && (
-                      <div className="bg-orange-50 border border-orange-200 rounded-lg p-2">
-                        <p className="text-xs font-semibold text-orange-700 mb-1">
-                          Returned Items | واپس کی گئی:
-                        </p>
-                        {order.items.map((item) => {
-                          const isReturned = order.returnItems.some(
-                            (r) => r.medicineId === item.medicineId,
+                      </div>
+
+                      {/* Payment & Return Section */}
+                      <div className="mt-3 space-y-2">
+                        <div>
+                          <label
+                            htmlFor={`payment-${order.orderId}`}
+                            className="text-xs text-gray-500 font-medium block mb-1"
+                          >
+                            Received | موصول (Rs)
+                          </label>
+                          <input
+                            id={`payment-${order.orderId}`}
+                            type="number"
+                            min="0"
+                            value={
+                              paymentAmount[order.orderId] ??
+                              (order.paymentReceived > 0
+                                ? String(order.paymentReceived)
+                                : "")
+                            }
+                            onChange={(e) =>
+                              setPaymentAmount((prev) => ({
+                                ...prev,
+                                [order.orderId]: e.target.value,
+                              }))
+                            }
+                            placeholder="0"
+                            className="w-full h-9 text-sm border border-gray-300 rounded-lg px-2 focus:outline-none focus:ring-1 focus:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          />
+                        </div>
+                        {/* Balance display */}
+                        {(() => {
+                          const received = Number(
+                            paymentAmount[order.orderId] ??
+                              order.paymentReceived ??
+                              0,
                           );
+                          const balance = order.totalAmount - received;
+                          if (received === 0) return null;
                           return (
                             <div
-                              key={item.medicineId}
-                              className={`text-xs py-0.5 font-medium ${isReturned ? "text-red-600" : "text-emerald-600"}`}
+                              className={`flex items-center justify-between text-sm px-3 py-1.5 rounded-lg ${balance > 0 ? "bg-red-50 text-red-700" : balance < 0 ? "bg-emerald-50 text-emerald-700" : "bg-gray-50 text-gray-600"}`}
                             >
-                              {isReturned ? "↩ " : "✓ "}
-                              {item.medicineName} x{item.qty}
+                              <span className="font-medium">
+                                Balance | باقی:
+                              </span>
+                              <span className="font-bold">
+                                {formatCurrency(Math.abs(balance))}{" "}
+                                {balance > 0
+                                  ? "(baqi)"
+                                  : balance < 0
+                                    ? "(extra)"
+                                    : "(full paid)"}
+                              </span>
                             </div>
                           );
-                        })}
-                        {order.returnReason && (
-                          <p className="text-xs text-orange-600 mt-1 italic">
-                            Reason: {order.returnReason}
-                          </p>
+                        })()}
+                        {/* Return items display if any */}
+                        {order.returnItems && order.returnItems.length > 0 && (
+                          <div className="bg-orange-50 border border-orange-200 rounded-lg p-2">
+                            <p className="text-xs font-semibold text-orange-700 mb-1">
+                              Returned Items | واپس کی گئی:
+                            </p>
+                            {order.items.map((item) => {
+                              const isReturned = order.returnItems.some(
+                                (r) => r.medicineId === item.medicineId,
+                              );
+                              return (
+                                <div
+                                  key={item.medicineId}
+                                  className={`text-xs py-0.5 font-medium ${isReturned ? "text-red-600" : "text-emerald-600"}`}
+                                >
+                                  {isReturned ? "↩ " : "✓ "}
+                                  {item.medicineName} x{item.qty}
+                                </div>
+                              );
+                            })}
+                            {order.returnReason && (
+                              <p className="text-xs text-orange-600 mt-1 italic">
+                                Reason: {order.returnReason}
+                              </p>
+                            )}
+                          </div>
                         )}
                       </div>
-                    )}
-                  </div>
 
-                  {/* Return button */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setReturnModalOrder(order);
-                      const toggles: Record<string, boolean> = {};
-                      for (const item of order.items) {
-                        const isReturned = order.returnItems?.some(
-                          (r) => r.medicineId === item.medicineId,
+                      {/* Return button */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReturnModalOrder(order);
+                          const toggles: Record<string, boolean> = {};
+                          for (const item of order.items) {
+                            const isReturned = order.returnItems?.some(
+                              (r) => r.medicineId === item.medicineId,
+                            );
+                            if (isReturned) toggles[item.medicineId] = true;
+                          }
+                          setReturnToggles(toggles);
+                          setReturnReason(order.returnReason ?? "");
+                        }}
+                        className="mt-2 w-full flex items-center justify-center gap-2 border-2 border-orange-400 text-orange-600 hover:bg-orange-50 font-semibold py-2.5 rounded-xl transition-colors text-sm"
+                      >
+                        <X size={15} />
+                        Return Items | واپسی
+                      </button>
+
+                      {(() => {
+                        const paymentEntered =
+                          Number(
+                            paymentAmount[order.orderId] ??
+                              order.paymentReceived ??
+                              0,
+                          ) > 0;
+                        return (
+                          <div className="mt-2">
+                            <button
+                              type="button"
+                              onClick={() => handleMarkDelivered(order)}
+                              disabled={
+                                markingId === order.backendId || !paymentEntered
+                              }
+                              className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                            >
+                              {markingId === order.backendId ? (
+                                <Loader2 size={16} className="animate-spin" />
+                              ) : (
+                                <CheckCircle2 size={16} />
+                              )}
+                              Mark Delivered | تحویل کریں
+                            </button>
+                            {!paymentEntered && (
+                              <p className="text-xs text-amber-600 text-center mt-1 font-medium">
+                                ⚠ Pehle payment enter karein | Please enter
+                                payment first
+                              </p>
+                            )}
+                          </div>
                         );
-                        if (isReturned) toggles[item.medicineId] = true;
-                      }
-                      setReturnToggles(toggles);
-                      setReturnReason(order.returnReason ?? "");
-                    }}
-                    className="mt-2 w-full flex items-center justify-center gap-2 border-2 border-orange-400 text-orange-600 hover:bg-orange-50 font-semibold py-2.5 rounded-xl transition-colors text-sm"
-                  >
-                    <X size={15} />
-                    Return Items | واپسی
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleMarkDelivered(order)}
-                    disabled={markingId === order.backendId}
-                    className="mt-2 w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-60 text-sm"
-                  >
-                    {markingId === order.backendId ? (
-                      <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                      <CheckCircle2 size={16} />
-                    )}
-                    Mark Delivered | تحویل کریں
-                  </button>
+                      })()}
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              );
+            })()
           )}
         </div>
 
@@ -9602,6 +12790,28 @@ function DeliveryDashboard() {
                 Jo medicine wapis ho rahi hai us ka toggle on karein | Toggle ON
                 for returned items:
               </p>
+              {/* Return All / Keep All quick buttons */}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const t: Record<string, boolean> = {};
+                    for (const item of returnModalOrder.items)
+                      t[item.medicineId] = true;
+                    setReturnToggles(t);
+                  }}
+                  className="flex-1 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-semibold transition-colors"
+                >
+                  Return All | سب واپس
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReturnToggles({})}
+                  className="flex-1 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-semibold transition-colors"
+                >
+                  Keep All | سب رکھیں
+                </button>
+              </div>
               {returnModalOrder.items.map((item) => {
                 const isReturn = returnToggles[item.medicineId] ?? false;
                 return (
@@ -9681,8 +12891,43 @@ function MobileApp() {
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
   const [sideMenuOpen, setSideMenuOpen] = useState(false);
   const [backendError, setBackendError] = useState<string | null>(null);
+  // Offline mode
+  const [isOfflineMode, setIsOfflineMode] = useState(() => {
+    try {
+      return localStorage.getItem("medorder_offline_mode") === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [pendingOfflineOrders, setPendingOfflineOrders] = useState<Order[]>(
+    () => {
+      try {
+        const stored = localStorage.getItem("medorder_offline_orders");
+        return stored ? JSON.parse(stored) : [];
+      } catch {
+        return [];
+      }
+    },
+  );
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const { actor, isFetching: isActorFetching } = useActor();
+
+  // ── Session persistence: restore login on page load ───────────────────
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally run once on mount
+  useEffect(() => {
+    const session = getSession();
+    if (!session) return;
+    // Only restore staff sessions (admin/delivery have their own pages)
+    if (session.role === "staff") {
+      dispatch({
+        type: "LOGIN",
+        staff: { id: session.username, name: session.displayName, area: "" },
+        role: session.role,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Load orders from backend ───────────────────────────────────────────
   const loadOrders = useCallback(
@@ -9716,6 +12961,18 @@ function MobileApp() {
             );
             const unitPrice = med?.price ?? 0;
             const qty = Number(line.quantity);
+            const rawDistDisc = Number(
+              (line as unknown as { distributionDiscount?: bigint })
+                .distributionDiscount ?? 0,
+            );
+            const rawCompDisc = Number(
+              (line as unknown as { companyDiscount?: bigint })
+                .companyDiscount ?? 0,
+            );
+            const rawDiscPct = Number(
+              (line as unknown as { discountPercent?: bigint })
+                .discountPercent ?? 0,
+            );
             return {
               medicineId: String(line.medicineId),
               medicineName: med?.name ?? `Medicine #${line.medicineId}`,
@@ -9727,10 +12984,10 @@ function MobileApp() {
               bonusQty: Number(
                 (line as unknown as { bonusQty?: bigint }).bonusQty ?? 0,
               ),
-              discountPercent: Number(
-                (line as unknown as { discountPercent?: bigint })
-                  .discountPercent ?? 0,
-              ),
+              discountPercent: rawDiscPct,
+              distributionDiscount: rawDistDisc > 0 ? rawDistDisc : rawDiscPct,
+              companyDiscount: rawCompDisc,
+              manualNetRate: undefined,
             };
           });
 
@@ -9764,9 +13021,21 @@ function MobileApp() {
           };
         });
 
+        // Filter orders for staff role: bookers only see their own orders
+        const session = getSession();
+        const filteredOrders =
+          session?.role === "staff"
+            ? orders.filter(
+                (o) =>
+                  o.staffId === staffId ||
+                  o.staffName === staffName ||
+                  o.staffId === session.username,
+              )
+            : orders;
+
         // Sort newest first
-        orders.sort((a, b) => b.id.localeCompare(a.id));
-        dispatch({ type: "SET_ORDERS", orders });
+        filteredOrders.sort((a, b) => b.id.localeCompare(a.id));
+        dispatch({ type: "SET_ORDERS", orders: filteredOrders });
         setBackendError(null);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Unknown error";
@@ -9946,6 +13215,72 @@ function MobileApp() {
   const isLoadingData =
     isLoadingPharmacies || isLoadingMedicines || isLoadingOrders;
 
+  // Offline mode toggle
+  function handleToggleOfflineMode() {
+    const next = !isOfflineMode;
+    setIsOfflineMode(next);
+    try {
+      localStorage.setItem("medorder_offline_mode", String(next));
+    } catch {
+      /* ignore */
+    }
+    if (!next && pendingOfflineOrders.length > 0) {
+      toast.info(
+        `${pendingOfflineOrders.length} offline order(s) pending — tap Sync to upload`,
+      );
+    }
+  }
+
+  // Sync offline orders to backend
+  async function handleSyncOfflineOrders() {
+    if (!actor || pendingOfflineOrders.length === 0) return;
+    setIsSyncing(true);
+    let synced = 0;
+    const remaining: Order[] = [];
+    for (const order of pendingOfflineOrders) {
+      try {
+        const pharmacy = pharmacies.find((p) => p.id === order.pharmacyId);
+        if (!pharmacy) {
+          remaining.push(order);
+          continue;
+        }
+        const lines = order.items.map((item) => ({
+          medicineId: BigInt(item.medicineId),
+          quantity: BigInt(item.qty),
+          bonusQty: BigInt(item.bonusQty ?? 0),
+          discountPercent: BigInt(Math.round((item.discountPercent ?? 0) * 10)),
+        }));
+        await (actor as any).createOrder(
+          pharmacy.backendId,
+          lines,
+          order.notes ?? "",
+          state.currentStaff?.name ?? "",
+          state.currentStaff?.id ?? "",
+        );
+        synced++;
+      } catch {
+        remaining.push(order);
+      }
+    }
+    setPendingOfflineOrders(remaining);
+    try {
+      localStorage.setItem(
+        "medorder_offline_orders",
+        JSON.stringify(remaining),
+      );
+    } catch {
+      /* ignore */
+    }
+    if (synced > 0) {
+      toast.success(`${synced} offline order(s) synced!`);
+      handleRefreshOrders();
+    }
+    if (remaining.length > 0) {
+      toast.error(`${remaining.length} order(s) failed to sync`);
+    }
+    setIsSyncing(false);
+  }
+
   // ── Called by ManageScreen after add/delete to sync state ────────────
   const handleManageDataReloaded = useCallback(
     (newPharmacies: Pharmacy[], newMedicines: Medicine[]) => {
@@ -9959,7 +13294,18 @@ function MobileApp() {
     const { screen } = state;
     switch (screen.name) {
       case "login":
-        return <LoginScreen dispatch={dispatch} actor={actor} />;
+        return (
+          <LoginScreen
+            dispatch={dispatch}
+            onRoleLogin={(role, username, displayName) => {
+              dispatch({
+                type: "LOGIN",
+                staff: { id: username, name: displayName, area: "" },
+                role,
+              });
+            }}
+          />
+        );
       case "dashboard":
         return (
           <DashboardScreen
@@ -9969,6 +13315,9 @@ function MobileApp() {
             isLoadingData={isLoadingData}
             onRefreshOrders={handleRefreshOrders}
             onOpenMenu={() => setSideMenuOpen(true)}
+            isOfflineMode={isOfflineMode}
+            pendingOfflineCount={pendingOfflineOrders.length}
+            actor={actor}
           />
         );
       case "pharmacies":
@@ -9989,6 +13338,19 @@ function MobileApp() {
             medicines={medicines}
             onOrderSubmitted={handleRefreshOrders}
             actor={actor}
+            isOfflineMode={isOfflineMode}
+            onSaveOfflineOrder={(order) => {
+              const updated = [...pendingOfflineOrders, order];
+              setPendingOfflineOrders(updated);
+              try {
+                localStorage.setItem(
+                  "medorder_offline_orders",
+                  JSON.stringify(updated),
+                );
+              } catch {
+                /* ignore */
+              }
+            }}
           />
         );
       case "order-history":
@@ -10016,6 +13378,7 @@ function MobileApp() {
             pharmacies={pharmacies}
             medicines={medicines}
             actor={actor}
+            showPharmacies={false}
             onDataReloaded={handleManageDataReloaded}
             dispatch={dispatch}
           />
@@ -10085,6 +13448,11 @@ function MobileApp() {
         onClose={() => setSideMenuOpen(false)}
         navigate={navigate}
         dispatch={dispatch}
+        isOfflineMode={isOfflineMode}
+        onToggleOfflineMode={handleToggleOfflineMode}
+        pendingOfflineCount={pendingOfflineOrders.length}
+        onSync={handleSyncOfflineOrders}
+        isSyncing={isSyncing}
       />
     </div>
   );
@@ -10201,12 +13569,92 @@ function TestView() {
   );
 }
 
+// ─── Auth Guard: wraps OfficeDashboard with login requirement ────────────────
+
+function OfficeAuthGuard() {
+  const session = getSession();
+  const [authed, setAuthed] = useState<boolean>(
+    () => session?.role === "admin",
+  );
+
+  if (!authed) {
+    return (
+      <LoginScreen
+        dispatch={() => {}}
+        onRoleLogin={(role, _username, _displayName) => {
+          if (role === "admin") {
+            setAuthed(true);
+          } else if (role === "staff") {
+            window.location.href = "/";
+            toast.error(
+              "Access denied — redirecting to Staff Dashboard | رسائی ممنوع",
+            );
+          } else if (role === "delivery") {
+            window.location.href = "/delivery";
+            toast.error(
+              "Access denied — redirecting to Delivery Dashboard | رسائی ممنوع",
+            );
+          }
+        }}
+      />
+    );
+  }
+
+  return <OfficeDashboard />;
+}
+
+// ─── Auth Guard: wraps DeliveryDashboard with login requirement ──────────────
+
+function DeliveryAuthGuard() {
+  const session = getSession();
+  const [authed, setAuthed] = useState<boolean>(
+    () => session?.role === "delivery",
+  );
+
+  if (!authed) {
+    return (
+      <LoginScreen
+        dispatch={() => {}}
+        onRoleLogin={(role, _username, _displayName) => {
+          if (role === "delivery") {
+            setAuthed(true);
+          } else if (role === "staff") {
+            window.location.href = "/";
+            toast.error(
+              "Access denied — redirecting to Staff Dashboard | رسائی ممنوع",
+            );
+          } else if (role === "admin") {
+            window.location.href = "/office";
+            toast.error(
+              "Access denied — redirecting to Office Dashboard | رسائی ممنوع",
+            );
+          }
+        }}
+      />
+    );
+  }
+
+  return <DeliveryDashboard />;
+}
+
 // ─── App Root (URL Router) ────────────────────────────────────────────────────
 
 export default function App() {
   const pathname = window.location.pathname;
-  if (pathname === "/office") return <OfficeDashboard />;
-  if (pathname === "/delivery") return <DeliveryDashboard />;
+  if (pathname === "/office")
+    return (
+      <>
+        <Toaster richColors position="top-center" />
+        <OfficeAuthGuard />
+      </>
+    );
+  if (pathname === "/delivery")
+    return (
+      <>
+        <Toaster richColors position="top-center" />
+        <DeliveryAuthGuard />
+      </>
+    );
   if (pathname === "/test") return <TestView />;
   return <MobileApp />;
 }

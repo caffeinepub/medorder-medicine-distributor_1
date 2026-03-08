@@ -1,12 +1,11 @@
 import Array "mo:core/Array";
 import Map "mo:core/Map";
+import Nat "mo:core/Nat";
+import Int "mo:core/Int";
 import Order "mo:core/Order";
 import Time "mo:core/Time";
 import Principal "mo:core/Principal";
-
-
-// Persistent storage migration API
-
+import Iter "mo:core/Iter";
 
 actor {
   type Staff = {
@@ -58,6 +57,9 @@ actor {
     quantity : Nat;
     bonusQty : Nat;
     discountPercent : Nat;
+    distributionDiscount : Nat;
+    companyDiscount : Nat;
+    netRate : Nat;
   };
 
   type OrderStatus = {
@@ -73,7 +75,7 @@ actor {
 
   type OrderRecord = {
     id : Nat;
-    staffId : Principal;
+    staffId : Principal.Principal;
     staffName : Text;
     staffCode : Text;
     pharmacyId : Nat;
@@ -176,13 +178,13 @@ actor {
     };
   };
 
-  // Persistent storage
-  let staff = Map.empty<Principal, Staff>();
+  let staff = Map.empty<Principal.Principal, Staff>();
   let pharmacies = Map.empty<Nat, Pharmacy>();
   let customers = Map.empty<Nat, Customer>();
   let medicines = Map.empty<Nat, Medicine>();
   let orders = Map.empty<Nat, OrderRecord>();
   let purchases = Map.empty<Nat, PurchaseRecord>();
+  let inventoryStock = Map.empty<Nat, Int>();
 
   var nextPharmacyId = 0;
   var nextMedicineId = 0;
@@ -190,11 +192,9 @@ actor {
   var nextPurchaseId = 0;
   var nextCustomerId = 0;
 
-  // Time constants (in nanoseconds)
   let fortyEightHoursInNanoseconds : Int = 48 * 60 * 60 * 1_000_000_000;
   let oneYearInNanoseconds : Int = 365 * 24 * 60 * 60 * 1_000_000_000;
 
-  // Staff Management
   public shared ({ caller }) func registerStaff(name : Text, password : Text) : async Bool {
     if (staff.containsKey(caller)) { return true };
 
@@ -207,7 +207,15 @@ actor {
     true;
   };
 
-  // Pharmacy Management
+  public query ({ caller }) func verifyPassword(name : Text, password : Text) : async Bool {
+    for ((_, staffRecord) in staff.entries()) {
+      if (staffRecord.name == name and staffRecord.password == password) {
+        return true;
+      };
+    };
+    false;
+  };
+
   public shared ({ caller }) func addPharmacy(name : Text, contact : Text, location : Text, code : Text) : async Nat {
     let id = nextPharmacyId;
     nextPharmacyId += 1;
@@ -234,7 +242,6 @@ actor {
     pharmacies.values().toArray().sort();
   };
 
-  // Customer Management
   public shared ({ caller }) func addCustomer(
     name : Text,
     customerType : CustomerType,
@@ -273,7 +280,6 @@ actor {
     customers.values().toArray().sort(Customer.compareById);
   };
 
-  // Medicine Management
   public shared ({ caller }) func addMedicine(
     name : Text,
     price : Nat,
@@ -315,7 +321,6 @@ actor {
     medicines.values().toArray().sort();
   };
 
-  // Order Management
   public shared ({ caller }) func createOrder(
     pharmacyId : Nat,
     orderLines : [MedicineItem],
@@ -362,7 +367,6 @@ actor {
     };
   };
 
-  // New update function for payment and returns
   public shared ({ caller }) func updateOrderPaymentAndReturn(
     orderId : Nat,
     paymentReceived : Nat,
@@ -386,7 +390,6 @@ actor {
     };
   };
 
-  // Query Functions for Orders
   public query ({ caller }) func getAllStaffOrders() : async [OrderRecord] {
     orders.values().toArray();
   };
@@ -414,7 +417,7 @@ actor {
     ).sort(OrderRecord.compareDescendingById);
   };
 
-  public query ({ caller }) func getStaffOrders(staffId : Principal) : async [OrderRecord] {
+  public query ({ caller }) func getStaffOrders(staffId : Principal.Principal) : async [OrderRecord] {
     orders.values().toArray().filter(
       func(order) { order.staffId == staffId }
     );
@@ -424,7 +427,6 @@ actor {
     orders.get(orderId);
   };
 
-  // Purchase Management
   public shared ({ caller }) func addPurchase(
     productName : Text,
     genericName : Text,
@@ -464,5 +466,52 @@ actor {
   public query ({ caller }) func getPurchases() : async [PurchaseRecord] {
     let purchaseArray = purchases.values().toArray();
     purchaseArray.sort(PurchaseRecord.compareByIdDescending);
+  };
+
+  // New Functionality
+
+  public shared ({ caller }) func updateOrderLines(
+    orderId : Nat,
+    pharmacyId : Nat,
+    orderLines : [MedicineItem],
+    notes : Text,
+  ) : async Bool {
+    switch (orders.get(orderId)) {
+      case (null) { false };
+      case (?order) {
+        switch (order.status) {
+          case (#pending) {
+            let updatedOrder : OrderRecord = {
+              order with
+              orderLines;
+              pharmacyId;
+              notes;
+            };
+            orders.add(orderId, updatedOrder);
+            true;
+          };
+          case (_) { false };
+        };
+      };
+    };
+  };
+
+  public query ({ caller }) func getInventoryStock() : async [(Nat, Int)] {
+    inventoryStock.toArray();
+  };
+
+  public shared ({ caller }) func setInventoryStock(medicineId : Nat, qty : Int) : async Bool {
+    inventoryStock.add(medicineId, qty);
+    true;
+  };
+
+  public shared ({ caller }) func adjustInventoryStock(medicineId : Nat, delta : Int) : async Bool {
+    let currentQty : Int = switch (inventoryStock.get(medicineId)) {
+      case (null) { 0 };
+      case (?qty) { qty };
+    };
+    let newQty = Int.max(0, currentQty + delta);
+    inventoryStock.add(medicineId, newQty);
+    true;
   };
 };

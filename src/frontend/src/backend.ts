@@ -124,6 +124,7 @@ export interface PurchaseRecord {
     price: bigint;
     medicineType: string;
 }
+export type Principal = Principal;
 export interface Medicine {
     id: bigint;
     packSize: string;
@@ -137,6 +138,9 @@ export interface Medicine {
     medicineType: string;
 }
 export interface MedicineItem {
+    distributionDiscount: bigint;
+    companyDiscount: bigint;
+    netRate: bigint;
     discountPercent: bigint;
     bonusQty: bigint;
     quantity: bigint;
@@ -172,6 +176,7 @@ export interface backendInterface {
     addMedicine(name: string, price: bigint, description: string, company: string, strength: string, packSize: string, genericName: string, batchNo: string, medicineType: string): Promise<bigint>;
     addPharmacy(name: string, contact: string, location: string, code: string): Promise<bigint>;
     addPurchase(productName: string, genericName: string, batchNo: string, quantity: bigint, price: bigint, packSize: string, companyName: string, medicineType: string): Promise<bigint>;
+    adjustInventoryStock(medicineId: bigint, delta: bigint): Promise<boolean>;
     createOrder(pharmacyId: bigint, orderLines: Array<MedicineItem>, staffName: string, staffCode: string): Promise<bigint>;
     deleteCustomer(id: bigint): Promise<boolean>;
     deleteMedicine(id: bigint): Promise<boolean>;
@@ -181,16 +186,20 @@ export interface backendInterface {
     getAllStaffOrders(): Promise<Array<OrderRecord>>;
     getCustomers(): Promise<Array<Customer>>;
     getHistoryOrders(): Promise<Array<OrderRecord>>;
+    getInventoryStock(): Promise<Array<[bigint, bigint]>>;
     getMedicines(): Promise<Array<Medicine>>;
     getOrder(orderId: bigint): Promise<OrderRecord | null>;
     getPharmacies(): Promise<Array<Pharmacy>>;
     getPurchases(): Promise<Array<PurchaseRecord>>;
     getStaffOrders(staffId: Principal): Promise<Array<OrderRecord>>;
     registerStaff(name: string, password: string): Promise<boolean>;
+    setInventoryStock(medicineId: bigint, qty: bigint): Promise<boolean>;
+    updateOrderLines(orderId: bigint, pharmacyId: bigint, orderLines: Array<MedicineItem>, notes: string): Promise<boolean>;
     updateOrderPaymentAndReturn(orderId: bigint, paymentReceived: bigint, returnItems: Array<ReturnItem>, returnReason: string, pharmacyCode: string): Promise<boolean>;
     updateOrderStatus(orderId: bigint, newStatus: OrderStatus): Promise<boolean>;
+    verifyPassword(name: string, password: string): Promise<boolean>;
 }
-import type { Customer as _Customer, CustomerType as _CustomerType, MedicineItem as _MedicineItem, OrderRecord as _OrderRecord, OrderStatus as _OrderStatus, ReturnItem as _ReturnItem, Time as _Time } from "./declarations/backend.did.d.ts";
+import type { Customer as _Customer, CustomerType as _CustomerType, MedicineItem as _MedicineItem, OrderRecord as _OrderRecord, OrderStatus as _OrderStatus, Principal as _Principal, ReturnItem as _ReturnItem, Time as _Time } from "./declarations/backend.did.d.ts";
 export class Backend implements backendInterface {
     constructor(private actor: ActorSubclass<_SERVICE>, private _uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, private _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, private processError?: (error: unknown) => never){}
     async addCustomer(arg0: string, arg1: CustomerType, arg2: string, arg3: string, arg4: string, arg5: string, arg6: string): Promise<bigint> {
@@ -246,6 +255,20 @@ export class Backend implements backendInterface {
             }
         } else {
             const result = await this.actor.addPurchase(arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+            return result;
+        }
+    }
+    async adjustInventoryStock(arg0: bigint, arg1: bigint): Promise<boolean> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.adjustInventoryStock(arg0, arg1);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.adjustInventoryStock(arg0, arg1);
             return result;
         }
     }
@@ -375,6 +398,20 @@ export class Backend implements backendInterface {
             return from_candid_vec_n3(this._uploadFile, this._downloadFile, result);
         }
     }
+    async getInventoryStock(): Promise<Array<[bigint, bigint]>> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.getInventoryStock();
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.getInventoryStock();
+            return result;
+        }
+    }
     async getMedicines(): Promise<Array<Medicine>> {
         if (this.processError) {
             try {
@@ -459,6 +496,34 @@ export class Backend implements backendInterface {
             return result;
         }
     }
+    async setInventoryStock(arg0: bigint, arg1: bigint): Promise<boolean> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.setInventoryStock(arg0, arg1);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.setInventoryStock(arg0, arg1);
+            return result;
+        }
+    }
+    async updateOrderLines(arg0: bigint, arg1: bigint, arg2: Array<MedicineItem>, arg3: string): Promise<boolean> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.updateOrderLines(arg0, arg1, arg2, arg3);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.updateOrderLines(arg0, arg1, arg2, arg3);
+            return result;
+        }
+    }
     async updateOrderPaymentAndReturn(arg0: bigint, arg1: bigint, arg2: Array<ReturnItem>, arg3: string, arg4: string): Promise<boolean> {
         if (this.processError) {
             try {
@@ -484,6 +549,20 @@ export class Backend implements backendInterface {
             }
         } else {
             const result = await this.actor.updateOrderStatus(arg0, to_candid_OrderStatus_n14(this._uploadFile, this._downloadFile, arg1));
+            return result;
+        }
+    }
+    async verifyPassword(arg0: string, arg1: string): Promise<boolean> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.verifyPassword(arg0, arg1);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.verifyPassword(arg0, arg1);
             return result;
         }
     }
@@ -541,7 +620,7 @@ function from_candid_record_n5(_uploadFile: (file: ExternalBlob) => Promise<Uint
     status: _OrderStatus;
     staffCode: string;
     staffName: string;
-    staffId: Principal;
+    staffId: _Principal;
     returnReason: string;
     pharmacyCode: string;
     notes: string;

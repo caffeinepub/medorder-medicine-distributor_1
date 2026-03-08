@@ -37,6 +37,9 @@ export interface Medicine {
   'medicineType' : string,
 }
 export interface MedicineItem {
+  'distributionDiscount' : bigint,
+  'companyDiscount' : bigint,
+  'netRate' : bigint,
   'discountPercent' : bigint,
   'bonusQty' : bigint,
   'quantity' : bigint,
@@ -67,6 +70,7 @@ export interface Pharmacy {
   'name' : string,
   'location' : string,
 }
+export type Principal = Principal;
 export interface PurchaseRecord {
   'id' : bigint,
   'packSize' : string,
@@ -95,6 +99,7 @@ export interface _SERVICE {
     [string, string, string, bigint, bigint, string, string, string],
     bigint
   >,
+  'adjustInventoryStock' : ActorMethod<[bigint, bigint], boolean>,
   'createOrder' : ActorMethod<
     [bigint, Array<MedicineItem>, string, string],
     bigint
@@ -107,17 +112,24 @@ export interface _SERVICE {
   'getAllStaffOrders' : ActorMethod<[], Array<OrderRecord>>,
   'getCustomers' : ActorMethod<[], Array<Customer>>,
   'getHistoryOrders' : ActorMethod<[], Array<OrderRecord>>,
+  'getInventoryStock' : ActorMethod<[], Array<[bigint, bigint]>>,
   'getMedicines' : ActorMethod<[], Array<Medicine>>,
   'getOrder' : ActorMethod<[bigint], [] | [OrderRecord]>,
   'getPharmacies' : ActorMethod<[], Array<Pharmacy>>,
   'getPurchases' : ActorMethod<[], Array<PurchaseRecord>>,
   'getStaffOrders' : ActorMethod<[Principal], Array<OrderRecord>>,
   'registerStaff' : ActorMethod<[string, string], boolean>,
+  'setInventoryStock' : ActorMethod<[bigint, bigint], boolean>,
+  'updateOrderLines' : ActorMethod<
+    [bigint, bigint, Array<MedicineItem>, string],
+    boolean
+  >,
   'updateOrderPaymentAndReturn' : ActorMethod<
     [bigint, bigint, Array<ReturnItem>, string, string],
     boolean
   >,
   'updateOrderStatus' : ActorMethod<[bigint, OrderStatus], boolean>,
+  'verifyPassword' : ActorMethod<[string, string], boolean>,
 }
 export declare const idlService: IDL.ServiceClass;
 export declare const idlInitArgs: IDL.Type[];
