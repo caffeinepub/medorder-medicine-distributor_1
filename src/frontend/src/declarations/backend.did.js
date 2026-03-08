@@ -9,6 +9,7 @@
 import { IDL } from '@icp-sdk/core/candid';
 
 export const CustomerType = IDL.Variant({
+  'hospital' : IDL.Null,
   'doctor' : IDL.Null,
   'medicalStore' : IDL.Null,
   'pharmacy' : IDL.Null,
@@ -19,7 +20,7 @@ export const MedicineItem = IDL.Record({
   'netRate' : IDL.Nat,
   'discountPercent' : IDL.Nat,
   'bonusQty' : IDL.Nat,
-  'quantity' : IDL.Nat,
+  'quantity' : IDL.Float64,
   'medicineId' : IDL.Nat,
 });
 export const OrderStatus = IDL.Variant({
@@ -48,10 +49,20 @@ export const OrderRecord = IDL.Record({
   'pharmacyId' : IDL.Nat,
   'returnItems' : IDL.Vec(ReturnItem),
 });
+export const StaffLocation = IDL.Record({
+  'lat' : IDL.Float64,
+  'lng' : IDL.Float64,
+  'username' : IDL.Text,
+  'role' : IDL.Text,
+  'updatedAt' : IDL.Text,
+  'accuracy' : IDL.Float64,
+});
 export const Customer = IDL.Record({
   'id' : IDL.Nat,
+  'ntn' : IDL.Text,
   'customerType' : CustomerType,
   'area' : IDL.Text,
+  'cnic' : IDL.Text,
   'code' : IDL.Text,
   'name' : IDL.Text,
   'address' : IDL.Text,
@@ -71,9 +82,20 @@ export const Medicine = IDL.Record({
   'price' : IDL.Nat,
   'medicineType' : IDL.Text,
 });
+export const PaymentRecord = IDL.Record({
+  'id' : IDL.Nat,
+  'staffName' : IDL.Text,
+  'date' : IDL.Text,
+  'orderId' : IDL.Nat,
+  'pharmacyName' : IDL.Text,
+  'timestamp' : Time,
+  'amount' : IDL.Nat,
+});
 export const Pharmacy = IDL.Record({
   'id' : IDL.Nat,
+  'ntn' : IDL.Text,
   'contact' : IDL.Text,
+  'cnic' : IDL.Text,
   'code' : IDL.Text,
   'name' : IDL.Text,
   'location' : IDL.Text,
@@ -101,6 +123,8 @@ export const idlService = IDL.Service({
         IDL.Text,
         IDL.Text,
         IDL.Text,
+        IDL.Text,
+        IDL.Text,
       ],
       [IDL.Nat],
       [],
@@ -120,8 +144,13 @@ export const idlService = IDL.Service({
       [IDL.Nat],
       [],
     ),
+  'addPaymentRecord' : IDL.Func(
+      [IDL.Text, IDL.Nat, IDL.Nat, IDL.Text, IDL.Text],
+      [IDL.Nat],
+      [],
+    ),
   'addPharmacy' : IDL.Func(
-      [IDL.Text, IDL.Text, IDL.Text, IDL.Text],
+      [IDL.Text, IDL.Text, IDL.Text, IDL.Text, IDL.Text, IDL.Text],
       [IDL.Nat],
       [],
     ),
@@ -141,15 +170,17 @@ export const idlService = IDL.Service({
     ),
   'adjustInventoryStock' : IDL.Func([IDL.Nat, IDL.Int], [IDL.Bool], []),
   'createOrder' : IDL.Func(
-      [IDL.Nat, IDL.Vec(MedicineItem), IDL.Text, IDL.Text],
+      [IDL.Nat, IDL.Vec(MedicineItem), IDL.Text, IDL.Text, IDL.Text],
       [IDL.Nat],
       [],
     ),
   'deleteCustomer' : IDL.Func([IDL.Nat], [IDL.Bool], []),
   'deleteMedicine' : IDL.Func([IDL.Nat], [IDL.Bool], []),
+  'deletePaymentRecord' : IDL.Func([IDL.Nat], [IDL.Bool], []),
   'deletePharmacy' : IDL.Func([IDL.Nat], [IDL.Bool], []),
   'deletePurchase' : IDL.Func([IDL.Nat], [IDL.Bool], []),
   'getActiveOrders' : IDL.Func([], [IDL.Vec(OrderRecord)], ['query']),
+  'getAllStaffLocations' : IDL.Func([], [IDL.Vec(StaffLocation)], ['query']),
   'getAllStaffOrders' : IDL.Func([], [IDL.Vec(OrderRecord)], ['query']),
   'getCustomers' : IDL.Func([], [IDL.Vec(Customer)], ['query']),
   'getHistoryOrders' : IDL.Func([], [IDL.Vec(OrderRecord)], ['query']),
@@ -160,22 +191,49 @@ export const idlService = IDL.Service({
     ),
   'getMedicines' : IDL.Func([], [IDL.Vec(Medicine)], ['query']),
   'getOrder' : IDL.Func([IDL.Nat], [IDL.Opt(OrderRecord)], ['query']),
+  'getPaymentRecords' : IDL.Func([], [IDL.Vec(PaymentRecord)], ['query']),
   'getPharmacies' : IDL.Func([], [IDL.Vec(Pharmacy)], ['query']),
   'getPurchases' : IDL.Func([], [IDL.Vec(PurchaseRecord)], ['query']),
   'getStaffOrders' : IDL.Func([Principal], [IDL.Vec(OrderRecord)], ['query']),
   'registerStaff' : IDL.Func([IDL.Text, IDL.Text], [IDL.Bool], []),
   'setInventoryStock' : IDL.Func([IDL.Nat, IDL.Int], [IDL.Bool], []),
+  'updateMedicine' : IDL.Func(
+      [
+        IDL.Nat,
+        IDL.Text,
+        IDL.Nat,
+        IDL.Text,
+        IDL.Text,
+        IDL.Text,
+        IDL.Text,
+        IDL.Text,
+        IDL.Text,
+        IDL.Text,
+      ],
+      [IDL.Bool],
+      [],
+    ),
   'updateOrderLines' : IDL.Func(
       [IDL.Nat, IDL.Nat, IDL.Vec(MedicineItem), IDL.Text],
       [IDL.Bool],
       [],
     ),
   'updateOrderPaymentAndReturn' : IDL.Func(
-      [IDL.Nat, IDL.Nat, IDL.Vec(ReturnItem), IDL.Text, IDL.Text],
+      [IDL.Nat, IDL.Nat, IDL.Vec(ReturnItem), IDL.Text],
       [IDL.Bool],
       [],
     ),
   'updateOrderStatus' : IDL.Func([IDL.Nat, OrderStatus], [IDL.Bool], []),
+  'updatePharmacy' : IDL.Func(
+      [IDL.Nat, IDL.Text, IDL.Text, IDL.Text, IDL.Text, IDL.Text, IDL.Text],
+      [IDL.Bool],
+      [],
+    ),
+  'updateStaffLocation' : IDL.Func(
+      [IDL.Text, IDL.Text, IDL.Float64, IDL.Float64, IDL.Float64, IDL.Text],
+      [IDL.Bool],
+      [],
+    ),
   'verifyPassword' : IDL.Func([IDL.Text, IDL.Text], [IDL.Bool], ['query']),
 });
 
@@ -183,6 +241,7 @@ export const idlInitArgs = [];
 
 export const idlFactory = ({ IDL }) => {
   const CustomerType = IDL.Variant({
+    'hospital' : IDL.Null,
     'doctor' : IDL.Null,
     'medicalStore' : IDL.Null,
     'pharmacy' : IDL.Null,
@@ -193,7 +252,7 @@ export const idlFactory = ({ IDL }) => {
     'netRate' : IDL.Nat,
     'discountPercent' : IDL.Nat,
     'bonusQty' : IDL.Nat,
-    'quantity' : IDL.Nat,
+    'quantity' : IDL.Float64,
     'medicineId' : IDL.Nat,
   });
   const OrderStatus = IDL.Variant({
@@ -222,10 +281,20 @@ export const idlFactory = ({ IDL }) => {
     'pharmacyId' : IDL.Nat,
     'returnItems' : IDL.Vec(ReturnItem),
   });
+  const StaffLocation = IDL.Record({
+    'lat' : IDL.Float64,
+    'lng' : IDL.Float64,
+    'username' : IDL.Text,
+    'role' : IDL.Text,
+    'updatedAt' : IDL.Text,
+    'accuracy' : IDL.Float64,
+  });
   const Customer = IDL.Record({
     'id' : IDL.Nat,
+    'ntn' : IDL.Text,
     'customerType' : CustomerType,
     'area' : IDL.Text,
+    'cnic' : IDL.Text,
     'code' : IDL.Text,
     'name' : IDL.Text,
     'address' : IDL.Text,
@@ -245,9 +314,20 @@ export const idlFactory = ({ IDL }) => {
     'price' : IDL.Nat,
     'medicineType' : IDL.Text,
   });
+  const PaymentRecord = IDL.Record({
+    'id' : IDL.Nat,
+    'staffName' : IDL.Text,
+    'date' : IDL.Text,
+    'orderId' : IDL.Nat,
+    'pharmacyName' : IDL.Text,
+    'timestamp' : Time,
+    'amount' : IDL.Nat,
+  });
   const Pharmacy = IDL.Record({
     'id' : IDL.Nat,
+    'ntn' : IDL.Text,
     'contact' : IDL.Text,
+    'cnic' : IDL.Text,
     'code' : IDL.Text,
     'name' : IDL.Text,
     'location' : IDL.Text,
@@ -275,6 +355,8 @@ export const idlFactory = ({ IDL }) => {
           IDL.Text,
           IDL.Text,
           IDL.Text,
+          IDL.Text,
+          IDL.Text,
         ],
         [IDL.Nat],
         [],
@@ -294,8 +376,13 @@ export const idlFactory = ({ IDL }) => {
         [IDL.Nat],
         [],
       ),
+    'addPaymentRecord' : IDL.Func(
+        [IDL.Text, IDL.Nat, IDL.Nat, IDL.Text, IDL.Text],
+        [IDL.Nat],
+        [],
+      ),
     'addPharmacy' : IDL.Func(
-        [IDL.Text, IDL.Text, IDL.Text, IDL.Text],
+        [IDL.Text, IDL.Text, IDL.Text, IDL.Text, IDL.Text, IDL.Text],
         [IDL.Nat],
         [],
       ),
@@ -315,15 +402,17 @@ export const idlFactory = ({ IDL }) => {
       ),
     'adjustInventoryStock' : IDL.Func([IDL.Nat, IDL.Int], [IDL.Bool], []),
     'createOrder' : IDL.Func(
-        [IDL.Nat, IDL.Vec(MedicineItem), IDL.Text, IDL.Text],
+        [IDL.Nat, IDL.Vec(MedicineItem), IDL.Text, IDL.Text, IDL.Text],
         [IDL.Nat],
         [],
       ),
     'deleteCustomer' : IDL.Func([IDL.Nat], [IDL.Bool], []),
     'deleteMedicine' : IDL.Func([IDL.Nat], [IDL.Bool], []),
+    'deletePaymentRecord' : IDL.Func([IDL.Nat], [IDL.Bool], []),
     'deletePharmacy' : IDL.Func([IDL.Nat], [IDL.Bool], []),
     'deletePurchase' : IDL.Func([IDL.Nat], [IDL.Bool], []),
     'getActiveOrders' : IDL.Func([], [IDL.Vec(OrderRecord)], ['query']),
+    'getAllStaffLocations' : IDL.Func([], [IDL.Vec(StaffLocation)], ['query']),
     'getAllStaffOrders' : IDL.Func([], [IDL.Vec(OrderRecord)], ['query']),
     'getCustomers' : IDL.Func([], [IDL.Vec(Customer)], ['query']),
     'getHistoryOrders' : IDL.Func([], [IDL.Vec(OrderRecord)], ['query']),
@@ -334,22 +423,49 @@ export const idlFactory = ({ IDL }) => {
       ),
     'getMedicines' : IDL.Func([], [IDL.Vec(Medicine)], ['query']),
     'getOrder' : IDL.Func([IDL.Nat], [IDL.Opt(OrderRecord)], ['query']),
+    'getPaymentRecords' : IDL.Func([], [IDL.Vec(PaymentRecord)], ['query']),
     'getPharmacies' : IDL.Func([], [IDL.Vec(Pharmacy)], ['query']),
     'getPurchases' : IDL.Func([], [IDL.Vec(PurchaseRecord)], ['query']),
     'getStaffOrders' : IDL.Func([Principal], [IDL.Vec(OrderRecord)], ['query']),
     'registerStaff' : IDL.Func([IDL.Text, IDL.Text], [IDL.Bool], []),
     'setInventoryStock' : IDL.Func([IDL.Nat, IDL.Int], [IDL.Bool], []),
+    'updateMedicine' : IDL.Func(
+        [
+          IDL.Nat,
+          IDL.Text,
+          IDL.Nat,
+          IDL.Text,
+          IDL.Text,
+          IDL.Text,
+          IDL.Text,
+          IDL.Text,
+          IDL.Text,
+          IDL.Text,
+        ],
+        [IDL.Bool],
+        [],
+      ),
     'updateOrderLines' : IDL.Func(
         [IDL.Nat, IDL.Nat, IDL.Vec(MedicineItem), IDL.Text],
         [IDL.Bool],
         [],
       ),
     'updateOrderPaymentAndReturn' : IDL.Func(
-        [IDL.Nat, IDL.Nat, IDL.Vec(ReturnItem), IDL.Text, IDL.Text],
+        [IDL.Nat, IDL.Nat, IDL.Vec(ReturnItem), IDL.Text],
         [IDL.Bool],
         [],
       ),
     'updateOrderStatus' : IDL.Func([IDL.Nat, OrderStatus], [IDL.Bool], []),
+    'updatePharmacy' : IDL.Func(
+        [IDL.Nat, IDL.Text, IDL.Text, IDL.Text, IDL.Text, IDL.Text, IDL.Text],
+        [IDL.Bool],
+        [],
+      ),
+    'updateStaffLocation' : IDL.Func(
+        [IDL.Text, IDL.Text, IDL.Float64, IDL.Float64, IDL.Float64, IDL.Text],
+        [IDL.Bool],
+        [],
+      ),
     'verifyPassword' : IDL.Func([IDL.Text, IDL.Text], [IDL.Bool], ['query']),
   });
 };

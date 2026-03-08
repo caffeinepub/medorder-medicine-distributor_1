@@ -12,8 +12,10 @@ import type { Principal } from '@icp-sdk/core/principal';
 
 export interface Customer {
   'id' : bigint,
+  'ntn' : string,
   'customerType' : CustomerType,
   'area' : string,
+  'cnic' : string,
   'code' : string,
   'name' : string,
   'address' : string,
@@ -21,7 +23,8 @@ export interface Customer {
   'contactNo' : string,
   'groupName' : string,
 }
-export type CustomerType = { 'doctor' : null } |
+export type CustomerType = { 'hospital' : null } |
+  { 'doctor' : null } |
   { 'medicalStore' : null } |
   { 'pharmacy' : null };
 export interface Medicine {
@@ -42,7 +45,7 @@ export interface MedicineItem {
   'netRate' : bigint,
   'discountPercent' : bigint,
   'bonusQty' : bigint,
-  'quantity' : bigint,
+  'quantity' : number,
   'medicineId' : bigint,
 }
 export interface OrderRecord {
@@ -63,9 +66,20 @@ export interface OrderRecord {
 export type OrderStatus = { 'pending' : null } |
   { 'delivered' : null } |
   { 'confirmed' : null };
+export interface PaymentRecord {
+  'id' : bigint,
+  'staffName' : string,
+  'date' : string,
+  'orderId' : bigint,
+  'pharmacyName' : string,
+  'timestamp' : Time,
+  'amount' : bigint,
+}
 export interface Pharmacy {
   'id' : bigint,
+  'ntn' : string,
   'contact' : string,
+  'cnic' : string,
   'code' : string,
   'name' : string,
   'location' : string,
@@ -84,51 +98,102 @@ export interface PurchaseRecord {
   'medicineType' : string,
 }
 export interface ReturnItem { 'medicineId' : bigint, 'returnedQty' : bigint }
+export interface StaffLocation {
+  'lat' : number,
+  'lng' : number,
+  'username' : string,
+  'role' : string,
+  'updatedAt' : string,
+  'accuracy' : number,
+}
 export type Time = bigint;
 export interface _SERVICE {
   'addCustomer' : ActorMethod<
-    [string, CustomerType, string, string, string, string, string],
+    [
+      string,
+      CustomerType,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+    ],
     bigint
   >,
   'addMedicine' : ActorMethod<
     [string, bigint, string, string, string, string, string, string, string],
     bigint
   >,
-  'addPharmacy' : ActorMethod<[string, string, string, string], bigint>,
+  'addPaymentRecord' : ActorMethod<
+    [string, bigint, bigint, string, string],
+    bigint
+  >,
+  'addPharmacy' : ActorMethod<
+    [string, string, string, string, string, string],
+    bigint
+  >,
   'addPurchase' : ActorMethod<
     [string, string, string, bigint, bigint, string, string, string],
     bigint
   >,
   'adjustInventoryStock' : ActorMethod<[bigint, bigint], boolean>,
   'createOrder' : ActorMethod<
-    [bigint, Array<MedicineItem>, string, string],
+    [bigint, Array<MedicineItem>, string, string, string],
     bigint
   >,
   'deleteCustomer' : ActorMethod<[bigint], boolean>,
   'deleteMedicine' : ActorMethod<[bigint], boolean>,
+  'deletePaymentRecord' : ActorMethod<[bigint], boolean>,
   'deletePharmacy' : ActorMethod<[bigint], boolean>,
   'deletePurchase' : ActorMethod<[bigint], boolean>,
   'getActiveOrders' : ActorMethod<[], Array<OrderRecord>>,
+  'getAllStaffLocations' : ActorMethod<[], Array<StaffLocation>>,
   'getAllStaffOrders' : ActorMethod<[], Array<OrderRecord>>,
   'getCustomers' : ActorMethod<[], Array<Customer>>,
   'getHistoryOrders' : ActorMethod<[], Array<OrderRecord>>,
   'getInventoryStock' : ActorMethod<[], Array<[bigint, bigint]>>,
   'getMedicines' : ActorMethod<[], Array<Medicine>>,
   'getOrder' : ActorMethod<[bigint], [] | [OrderRecord]>,
+  'getPaymentRecords' : ActorMethod<[], Array<PaymentRecord>>,
   'getPharmacies' : ActorMethod<[], Array<Pharmacy>>,
   'getPurchases' : ActorMethod<[], Array<PurchaseRecord>>,
   'getStaffOrders' : ActorMethod<[Principal], Array<OrderRecord>>,
   'registerStaff' : ActorMethod<[string, string], boolean>,
   'setInventoryStock' : ActorMethod<[bigint, bigint], boolean>,
+  'updateMedicine' : ActorMethod<
+    [
+      bigint,
+      string,
+      bigint,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+    ],
+    boolean
+  >,
   'updateOrderLines' : ActorMethod<
     [bigint, bigint, Array<MedicineItem>, string],
     boolean
   >,
   'updateOrderPaymentAndReturn' : ActorMethod<
-    [bigint, bigint, Array<ReturnItem>, string, string],
+    [bigint, bigint, Array<ReturnItem>, string],
     boolean
   >,
   'updateOrderStatus' : ActorMethod<[bigint, OrderStatus], boolean>,
+  'updatePharmacy' : ActorMethod<
+    [bigint, string, string, string, string, string, string],
+    boolean
+  >,
+  'updateStaffLocation' : ActorMethod<
+    [string, string, number, number, number, string],
+    boolean
+  >,
   'verifyPassword' : ActorMethod<[string, string], boolean>,
 }
 export declare const idlService: IDL.ServiceClass;

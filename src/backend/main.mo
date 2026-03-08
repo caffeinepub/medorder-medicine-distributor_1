@@ -1,13 +1,13 @@
-import Array "mo:core/Array";
-import Map "mo:core/Map";
 import Nat "mo:core/Nat";
-import Int "mo:core/Int";
-import Order "mo:core/Order";
+import Map "mo:core/Map";
+import Array "mo:core/Array";
+import Text "mo:core/Text";
 import Time "mo:core/Time";
 import Principal "mo:core/Principal";
-import Iter "mo:core/Iter";
+import Int "mo:core/Int";
+import Order "mo:core/Order";
 
-actor {
+persistent actor {
   type Staff = {
     name : Text;
     password : Text;
@@ -19,12 +19,15 @@ actor {
     contact : Text;
     location : Text;
     code : Text;
+    ntn : Text;
+    cnic : Text;
   };
 
   type CustomerType = {
     #doctor;
     #medicalStore;
     #pharmacy;
+    #hospital;
   };
 
   type Customer = {
@@ -36,6 +39,8 @@ actor {
     contactNo : Text;
     groupName : Text;
     code : Text;
+    ntn : Text;
+    cnic : Text;
     timestamp : Time.Time;
   };
 
@@ -54,7 +59,7 @@ actor {
 
   type MedicineItem = {
     medicineId : Nat;
-    quantity : Nat;
+    quantity : Float;
     bonusQty : Nat;
     discountPercent : Nat;
     distributionDiscount : Nat;
@@ -62,15 +67,15 @@ actor {
     netRate : Nat;
   };
 
+  type ReturnItem = {
+    medicineId : Nat;
+    returnedQty : Nat;
+  };
+
   type OrderStatus = {
     #pending;
     #confirmed;
     #delivered;
-  };
-
-  type ReturnItem = {
-    medicineId : Nat;
-    returnedQty : Nat;
   };
 
   type OrderRecord = {
@@ -102,52 +107,39 @@ actor {
     timestamp : Time.Time;
   };
 
-  module Pharmacy {
-    public func compare(p1 : Pharmacy, p2 : Pharmacy) : Order.Order {
-      compareNat(p1.id, p2.id);
-    };
+  type StaffLocation = {
+    username : Text;
+    role : Text;
+    lat : Float;
+    lng : Float;
+    accuracy : Float;
+    updatedAt : Text;
+  };
 
-    func compareNat(n1 : Nat, n2 : Nat) : Order.Order {
-      if (n1 < n2) { #less } else if (n1 > n2) { #greater } else { #equal };
+  type PaymentRecord = {
+    id : Nat;
+    date : Text;
+    amount : Nat;
+    orderId : Nat;
+    staffName : Text;
+    pharmacyName : Text;
+    timestamp : Time.Time;
+  };
+
+  module Pharmacy {
+    public func compareById(p1 : Pharmacy, p2 : Pharmacy) : Order.Order {
+      Nat.compare(p1.id, p2.id);
     };
   };
 
   module Medicine {
-    public func compare(m1 : Medicine, m2 : Medicine) : Order.Order {
-      compareNat(m1.id, m2.id);
-    };
-
-    func compareNat(n1 : Nat, n2 : Nat) : Order.Order {
-      if (n1 < n2) { #less } else if (n1 > n2) { #greater } else { #equal };
+    public func compareById(m1 : Medicine, m2 : Medicine) : Order.Order {
+      Nat.compare(m1.id, m2.id);
     };
   };
 
   module OrderRecord {
-    func compareNat(n1 : Nat, n2 : Nat) : Order.Order {
-      if (n1 < n2) { #less } else if (n1 > n2) { #greater } else { #equal };
-    };
-
-    public func compare(o1 : OrderRecord, o2 : OrderRecord) : Order.Order {
-      compareNat(o1.id, o2.id);
-    };
-
-    func orderStatusToNat(status : OrderStatus) : Nat {
-      switch (status) {
-        case (#pending) { 0 };
-        case (#confirmed) { 1 };
-        case (#delivered) { 2 };
-      };
-    };
-
-    public func compareByStatusThenId(o1 : OrderRecord, o2 : OrderRecord) : Order.Order {
-      let res = compareNat(orderStatusToNat(o1.status), orderStatusToNat(o2.status));
-      switch (res) {
-        case (#equal) { compareNat(o1.id, o2.id) };
-        case (other) { other };
-      };
-    };
-
-    public func compareDescendingById(a : OrderRecord, b : OrderRecord) : Order.Order {
+    public func compareByIdDescending(a : OrderRecord, b : OrderRecord) : Order.Order {
       if (a.id > b.id) {
         #less;
       } else if (a.id < b.id) {
@@ -185,13 +177,14 @@ actor {
   let orders = Map.empty<Nat, OrderRecord>();
   let purchases = Map.empty<Nat, PurchaseRecord>();
   let inventoryStock = Map.empty<Nat, Int>();
-
+  let staffLocations = Map.empty<Text, StaffLocation>();
+  let paymentRecords = Map.empty<Nat, PaymentRecord>();
   var nextPharmacyId = 0;
   var nextMedicineId = 0;
   var nextOrderId = 0;
   var nextPurchaseId = 0;
   var nextCustomerId = 0;
-
+  var nextPaymentRecordId = 0;
   let fortyEightHoursInNanoseconds : Int = 48 * 60 * 60 * 1_000_000_000;
   let oneYearInNanoseconds : Int = 365 * 24 * 60 * 60 * 1_000_000_000;
 
@@ -216,7 +209,14 @@ actor {
     false;
   };
 
-  public shared ({ caller }) func addPharmacy(name : Text, contact : Text, location : Text, code : Text) : async Nat {
+  public shared ({ caller }) func addPharmacy(
+    name : Text,
+    contact : Text,
+    location : Text,
+    code : Text,
+    ntn : Text,
+    cnic : Text,
+  ) : async Nat {
     let id = nextPharmacyId;
     nextPharmacyId += 1;
 
@@ -226,6 +226,8 @@ actor {
       contact;
       location;
       code;
+      ntn;
+      cnic;
     };
 
     pharmacies.add(id, pharmacy);
@@ -238,8 +240,27 @@ actor {
     result;
   };
 
+  public shared ({ caller }) func updatePharmacy(id : Nat, name : Text, contact : Text, location : Text, code : Text, ntn : Text, cnic : Text) : async Bool {
+    switch (pharmacies.get(id)) {
+      case (null) { false };
+      case (?_) {
+        let updatedPharmacy : Pharmacy = {
+          id;
+          name;
+          contact;
+          location;
+          code;
+          ntn;
+          cnic;
+        };
+        pharmacies.add(id, updatedPharmacy);
+        true;
+      };
+    };
+  };
+
   public query ({ caller }) func getPharmacies() : async [Pharmacy] {
-    pharmacies.values().toArray().sort();
+    pharmacies.values().toArray().sort(Pharmacy.compareById);
   };
 
   public shared ({ caller }) func addCustomer(
@@ -250,6 +271,8 @@ actor {
     contactNo : Text,
     groupName : Text,
     code : Text,
+    ntn : Text,
+    cnic : Text,
   ) : async Nat {
     let id = nextCustomerId;
     nextCustomerId += 1;
@@ -263,6 +286,8 @@ actor {
       contactNo;
       groupName;
       code;
+      ntn;
+      cnic;
       timestamp = Time.now();
     };
 
@@ -317,8 +342,41 @@ actor {
     result;
   };
 
+  public shared ({ caller }) func updateMedicine(
+    id : Nat,
+    name : Text,
+    price : Nat,
+    description : Text,
+    company : Text,
+    strength : Text,
+    packSize : Text,
+    genericName : Text,
+    batchNo : Text,
+    medicineType : Text,
+  ) : async Bool {
+    switch (medicines.get(id)) {
+      case (null) { false };
+      case (?_) {
+        let updatedMedicine : Medicine = {
+          id;
+          name;
+          price;
+          description;
+          company;
+          strength;
+          packSize;
+          genericName;
+          batchNo;
+          medicineType;
+        };
+        medicines.add(id, updatedMedicine);
+        true;
+      };
+    };
+  };
+
   public query ({ caller }) func getMedicines() : async [Medicine] {
-    medicines.values().toArray().sort();
+    medicines.values().toArray().sort(Medicine.compareById);
   };
 
   public shared ({ caller }) func createOrder(
@@ -326,6 +384,7 @@ actor {
     orderLines : [MedicineItem],
     staffName : Text,
     staffCode : Text,
+    notes : Text,
   ) : async Nat {
     if (not staff.containsKey(caller)) {
       ignore registerStaff(staffName, staffCode);
@@ -341,7 +400,7 @@ actor {
       staffCode;
       pharmacyId;
       orderLines;
-      notes = "";
+      notes;
       status = #pending;
       timestamp = Time.now();
       paymentReceived = 0;
@@ -372,7 +431,6 @@ actor {
     paymentReceived : Nat,
     returnItems : [ReturnItem],
     returnReason : Text,
-    pharmacyCode : Text,
   ) : async Bool {
     switch (orders.get(orderId)) {
       case (null) { false };
@@ -382,10 +440,35 @@ actor {
           paymentReceived;
           returnItems;
           returnReason;
-          pharmacyCode;
         };
         orders.add(orderId, updatedOrder);
         true;
+      };
+    };
+  };
+
+  public shared ({ caller }) func updateOrderLines(
+    orderId : Nat,
+    pharmacyId : Nat,
+    orderLines : [MedicineItem],
+    notes : Text,
+  ) : async Bool {
+    switch (orders.get(orderId)) {
+      case (null) { false };
+      case (?order) {
+        switch (order.status) {
+          case (#pending) {
+            let updatedOrder : OrderRecord = {
+              order with
+              orderLines;
+              pharmacyId;
+              notes;
+            };
+            orders.add(orderId, updatedOrder);
+            true;
+          };
+          case (_) { false };
+        };
       };
     };
   };
@@ -403,7 +486,7 @@ actor {
           case (_) { true };
         };
       }
-    ).sort(OrderRecord.compareDescendingById);
+    ).sort(OrderRecord.compareByIdDescending);
   };
 
   public query ({ caller }) func getHistoryOrders() : async [OrderRecord] {
@@ -414,7 +497,7 @@ actor {
         order.timestamp < (currentTime - fortyEightHoursInNanoseconds) and
         order.timestamp >= (currentTime - oneYearInNanoseconds)
       }
-    ).sort(OrderRecord.compareDescendingById);
+    ).sort(OrderRecord.compareByIdDescending);
   };
 
   public query ({ caller }) func getStaffOrders(staffId : Principal.Principal) : async [OrderRecord] {
@@ -464,36 +547,7 @@ actor {
   };
 
   public query ({ caller }) func getPurchases() : async [PurchaseRecord] {
-    let purchaseArray = purchases.values().toArray();
-    purchaseArray.sort(PurchaseRecord.compareByIdDescending);
-  };
-
-  // New Functionality
-
-  public shared ({ caller }) func updateOrderLines(
-    orderId : Nat,
-    pharmacyId : Nat,
-    orderLines : [MedicineItem],
-    notes : Text,
-  ) : async Bool {
-    switch (orders.get(orderId)) {
-      case (null) { false };
-      case (?order) {
-        switch (order.status) {
-          case (#pending) {
-            let updatedOrder : OrderRecord = {
-              order with
-              orderLines;
-              pharmacyId;
-              notes;
-            };
-            orders.add(orderId, updatedOrder);
-            true;
-          };
-          case (_) { false };
-        };
-      };
-    };
+    purchases.values().toArray().sort(PurchaseRecord.compareByIdDescending);
   };
 
   public query ({ caller }) func getInventoryStock() : async [(Nat, Int)] {
@@ -514,4 +568,57 @@ actor {
     inventoryStock.add(medicineId, newQty);
     true;
   };
+
+  public shared ({ caller }) func updateStaffLocation(username : Text, role : Text, lat : Float, lng : Float, accuracy : Float, updatedAt : Text) : async Bool {
+    let newLocation : StaffLocation = {
+      username;
+      role;
+      lat;
+      lng;
+      accuracy;
+      updatedAt;
+    };
+
+    staffLocations.add(username, newLocation);
+    true;
+  };
+
+  public query ({ caller }) func getAllStaffLocations() : async [StaffLocation] {
+    staffLocations.values().toArray();
+  };
+
+  public shared ({ caller }) func addPaymentRecord(
+    date : Text,
+    amount : Nat,
+    orderId : Nat,
+    staffName : Text,
+    pharmacyName : Text,
+  ) : async Nat {
+    let id = nextPaymentRecordId;
+    nextPaymentRecordId += 1;
+
+    let payment : PaymentRecord = {
+      id;
+      date;
+      amount;
+      orderId;
+      staffName;
+      pharmacyName;
+      timestamp = Time.now();
+    };
+
+    paymentRecords.add(id, payment);
+    id;
+  };
+
+  public query ({ caller }) func getPaymentRecords() : async [PaymentRecord] {
+    paymentRecords.values().toArray();
+  };
+
+  public shared ({ caller }) func deletePaymentRecord(id : Nat) : async Bool {
+    let result = paymentRecords.containsKey(id);
+    paymentRecords.remove(id);
+    result;
+  };
 };
+

@@ -57,10 +57,9 @@ import type {
 import { OrderStatus as BackendOrderStatusEnum, CustomerType } from "./backend";
 import { useActor } from "./hooks/useActor";
 
-// ─── Extended Customer Type (includes Hospital which maps to Doctor) ──────────
-type ExtendedCustomerType = CustomerType | "hospital";
+// ─── Extended Customer Type (hospital now maps to real CustomerType.hospital) ──
+type ExtendedCustomerType = CustomerType;
 function toBackendCustomerType(t: ExtendedCustomerType): CustomerType {
-  if (t === "hospital") return CustomerType.doctor;
   return t;
 }
 
@@ -2140,7 +2139,7 @@ function OrderTakingScreen({
         const manualNetRate = bd.netRate;
         return {
           medicineId: ci.medicine.backendId,
-          quantity: BigInt(Math.round(ci.qty)),
+          quantity: Math.round(ci.qty),
           bonusQty: BigInt(Math.round(bd.bonus ?? 0)),
           discountPercent: BigInt(0),
           distributionDiscount: BigInt(Math.round(distDisc * 10)),
@@ -2155,6 +2154,7 @@ function OrderTakingScreen({
         orderLines,
         state.currentStaff?.name ?? "",
         state.currentStaff?.id ?? "",
+        notes,
       );
 
       const orderId = `ORD-${returnedId}`;
@@ -3025,7 +3025,7 @@ function OrderDetailScreen({
         const autoNet = line.unitPrice * (1 - (distD + compD) / 100);
         return {
           medicineId: BigInt(line.medicineId),
-          quantity: BigInt(Math.round(Number.parseFloat(line.qty) || 1)),
+          quantity: Math.round(Number.parseFloat(line.qty) || 1),
           bonusQty: BigInt(Math.round(Number.parseFloat(line.bonus) || 0)),
           discountPercent: BigInt(0),
           distributionDiscount: BigInt(Math.round(distD * 10)),
@@ -3800,6 +3800,8 @@ function ManageScreen({
         pharmContact.trim(),
         location,
         pharmCode.trim(),
+        pharmNTN.trim(),
+        pharmCNIC.trim(),
       );
       // Store NTN/CNIC for invoice lookup
       if (pharmNTN.trim()) {
@@ -4924,7 +4926,7 @@ function OrderDetailModal({
         const autoNet = line.unitPrice * (1 - (distD + compD) / 100);
         return {
           medicineId: line.medicineId,
-          quantity: BigInt(Math.round(Number.parseFloat(line.qty) || 1)),
+          quantity: Math.round(Number.parseFloat(line.qty) || 1),
           bonusQty: BigInt(Math.round(Number.parseFloat(line.bonus) || 0)),
           discountPercent: BigInt(0),
           distributionDiscount: BigInt(Math.round(distD * 10)),
@@ -7963,8 +7965,11 @@ function OfficeDashboard() {
   >([]);
   const [newOrderNotes, setNewOrderNotes] = useState("");
   const [isSubmittingNewOrder, setIsSubmittingNewOrder] = useState(false);
-  const [newOrderStaffName, setNewOrderStaffName] = useState("");
-  const [newOrderStaffCode, setNewOrderStaffCode] = useState("");
+  const newOrderStaffName = "Admin";
+  const newOrderStaffCode = "admin";
+  const [newOrderTab, setNewOrderTab] = useState<
+    "items" | "pharmacy" | "notes" | "submit"
+  >("items");
   const [newOrderPharmacySearch, setNewOrderPharmacySearch] = useState("");
   const [newOrderPharmacyDropdownOpen, setNewOrderPharmacyDropdownOpen] =
     useState(false);
@@ -8231,6 +8236,8 @@ function OfficeDashboard() {
         custContact.trim(),
         custGroup.trim(),
         custCode.trim(),
+        custNTN.trim(),
+        custCNIC.trim(),
       );
       // Store NTN/CNIC/name in localStorage for invoice lookup
       try {
@@ -8274,6 +8281,8 @@ function OfficeDashboard() {
             custContact.trim(),
             `${custAddress.trim()} | ${custArea.trim()}`,
             custCode.trim(),
+            custNTN.trim(),
+            custCNIC.trim(),
           );
         } catch {
           // non-critical — customer was added, pharmacy sync failed silently
@@ -8398,7 +8407,7 @@ function OfficeDashboard() {
         const autoNet = price * (1 - (distD + compD) / 100);
         return {
           medicineId: line.medicineId,
-          quantity: BigInt(Math.round(Number.parseFloat(line.qty) || 1)),
+          quantity: Math.round(Number.parseFloat(line.qty) || 1),
           bonusQty: BigInt(Math.round(Number.parseFloat(line.bonus) || 0)),
           discountPercent: BigInt(0),
           distributionDiscount: BigInt(Math.round(distD * 10)),
@@ -8413,6 +8422,7 @@ function OfficeDashboard() {
         orderLines,
         newOrderStaffName.trim() || "Office Admin",
         newOrderStaffCode.trim() || "admin",
+        newOrderNotes.trim(),
       );
       // Deduct stock for ordered items (localStorage)
       deductStock(
@@ -8435,9 +8445,8 @@ function OfficeDashboard() {
       toast.success("Order submit ho gaya! | Order submitted!");
       setNewOrderPharmacyId(null);
       setNewOrderLines([]);
-      setNewOrderStaffName("");
-      setNewOrderStaffCode("");
       setNewOrderNotes("");
+      setNewOrderTab("items");
       setActiveView("orders");
       await loadAllData();
     } catch (e: unknown) {
@@ -9956,387 +9965,472 @@ function OfficeDashboard() {
                   </p>
                 </div>
 
-                {/* Two column layout: LEFT = medicine items, RIGHT = form details */}
-                <div className="flex gap-4 items-start">
-                  {/* LEFT: Order Items panel */}
-                  <div className="w-3/5 bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-bold text-gray-700 uppercase tracking-wide">
-                        Order Items | اشیاء
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setNewOrderLines((prev) => [
-                            ...prev,
-                            {
-                              _key: `line-${Date.now()}-${Math.random()}`,
-                              medicineId:
-                                allMedicines[0]?.backendId ?? BigInt(0),
-                              medicineName: allMedicines[0]?.name ?? "",
-                              qty: "1",
-                              bonus: "0",
-                              discount: "0",
-                              distDisc: "0",
-                              compDisc: "0",
-                              netRate: "0",
-                            },
-                          ])
-                        }
-                        disabled={allMedicines.length === 0}
-                        data-ocid="add_order.add_item_button"
-                        className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors"
-                      >
-                        <Plus size={13} />
-                        Add Item | شامل کریں
-                      </button>
-                    </div>
+                {/* Tab bar */}
+                <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
+                  {(["items", "pharmacy", "notes", "submit"] as const).map(
+                    (tab) => {
+                      const labels: Record<string, string> = {
+                        items: "Order Items | اشیاء",
+                        pharmacy: "Pharmacy | فارمیسی",
+                        notes: "Notes | نوٹس",
+                        submit: "Submit Order | جمع کریں",
+                      };
+                      return (
+                        <button
+                          key={tab}
+                          type="button"
+                          data-ocid={`add_order.${tab}_tab`}
+                          onClick={() => setNewOrderTab(tab)}
+                          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${newOrderTab === tab ? "bg-white text-blue-700 shadow-sm font-semibold" : "text-gray-500 hover:text-gray-700"}`}
+                        >
+                          {labels[tab]}
+                        </button>
+                      );
+                    },
+                  )}
+                </div>
 
-                    {newOrderLines.length === 0 ? (
-                      <div
-                        className="text-center py-10 text-gray-400 text-sm border-2 border-dashed border-gray-200 rounded-xl"
-                        data-ocid="add_order.items_empty_state"
-                      >
-                        Click "Add Item" to add medicines | اوپر بٹن سے اشیاء
-                        شامل کریں
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        {newOrderLines.map((line) => (
-                          <div
-                            key={line._key}
-                            className="grid grid-cols-12 gap-1 items-center"
-                          >
-                            <div className="col-span-4 relative">
-                              <div className="relative">
-                                <Search
-                                  size={12}
-                                  className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
-                                />
-                                <input
-                                  type="text"
-                                  value={
-                                    newOrderMedicineDropdownOpen[line._key]
-                                      ? (newOrderMedicineSearch[line._key] ??
-                                        "")
-                                      : line.medicineName
-                                  }
-                                  onChange={(e) => {
-                                    setNewOrderMedicineSearch((prev) => ({
-                                      ...prev,
-                                      [line._key]: e.target.value,
-                                    }));
-                                    setNewOrderMedicineDropdownOpen((prev) => ({
-                                      ...prev,
-                                      [line._key]: true,
-                                    }));
-                                  }}
-                                  onFocus={() => {
-                                    setNewOrderMedicineSearch((prev) => ({
-                                      ...prev,
-                                      [line._key]: "",
-                                    }));
-                                    setNewOrderMedicineDropdownOpen((prev) => ({
-                                      ...prev,
-                                      [line._key]: true,
-                                    }));
-                                  }}
-                                  placeholder="Search medicine..."
-                                  className="w-full h-9 text-sm border border-gray-300 rounded-lg pl-7 pr-2 bg-white text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                  autoComplete="off"
-                                />
-                              </div>
-                              {newOrderMedicineDropdownOpen[line._key] && (
-                                <>
-                                  <div className="absolute z-20 top-full mt-0.5 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-40 overflow-y-auto">
-                                    {allMedicines
-                                      .filter((m) => {
-                                        const q = (
-                                          newOrderMedicineSearch[line._key] ??
-                                          ""
-                                        ).toLowerCase();
-                                        if (!q) return true;
-                                        return (
-                                          m.name.toLowerCase().includes(q) ||
-                                          m.company.toLowerCase().includes(q) ||
-                                          m.strength.toLowerCase().includes(q)
-                                        );
-                                      })
-                                      .map((m) => (
-                                        <button
-                                          type="button"
-                                          key={String(m.backendId)}
-                                          onClick={() => {
-                                            setNewOrderLines((prev) =>
-                                              prev.map((l) =>
-                                                l._key === line._key
-                                                  ? {
-                                                      ...l,
-                                                      medicineId: m.backendId,
-                                                      medicineName: m.name,
-                                                    }
-                                                  : l,
-                                              ),
-                                            );
-                                            setNewOrderMedicineDropdownOpen(
-                                              (prev) => ({
-                                                ...prev,
-                                                [line._key]: false,
-                                              }),
-                                            );
-                                            setNewOrderMedicineSearch(
-                                              (prev) => ({
-                                                ...prev,
-                                                [line._key]: "",
-                                              }),
-                                            );
-                                          }}
-                                          className={`w-full text-left px-2 py-2 text-xs hover:bg-blue-50 transition-colors ${line.medicineId === m.backendId ? "bg-blue-50 text-blue-700 font-semibold" : "text-gray-900"}`}
-                                        >
-                                          <span className="font-medium">
-                                            {m.name}
-                                          </span>
-                                          {m.strength && (
-                                            <span className="text-gray-400 ml-1">
-                                              ({m.strength})
-                                            </span>
-                                          )}
-                                          {m.company && (
-                                            <span className="text-gray-400 ml-1 text-[10px]">
-                                              · {m.company}
-                                            </span>
-                                          )}
-                                        </button>
-                                      ))}
-                                    {allMedicines.filter((m) => {
-                                      const q = (
-                                        newOrderMedicineSearch[line._key] ?? ""
-                                      ).toLowerCase();
-                                      if (!q) return true;
-                                      return (
-                                        m.name.toLowerCase().includes(q) ||
-                                        m.company.toLowerCase().includes(q) ||
-                                        m.strength.toLowerCase().includes(q)
-                                      );
-                                    }).length === 0 && (
-                                      <div className="px-2 py-2 text-xs text-gray-400 text-center">
-                                        No medicines found
-                                      </div>
-                                    )}
-                                  </div>
-                                  <div
-                                    className="fixed inset-0 z-10"
-                                    onClick={() =>
-                                      setNewOrderMedicineDropdownOpen(
-                                        (prev) => ({
-                                          ...prev,
-                                          [line._key]: false,
-                                        }),
-                                      )
-                                    }
-                                    onKeyDown={(e) =>
-                                      e.key === "Escape" &&
-                                      setNewOrderMedicineDropdownOpen(
-                                        (prev) => ({
-                                          ...prev,
-                                          [line._key]: false,
-                                        }),
-                                      )
-                                    }
-                                    aria-hidden="true"
-                                  />
-                                </>
-                              )}
-                            </div>
-                            <div className="col-span-1">
-                              <input
-                                type="number"
-                                min="0"
-                                step="any"
-                                placeholder="Qty"
-                                value={line.qty}
-                                onChange={(e) =>
-                                  setNewOrderLines((prev) =>
-                                    prev.map((l) =>
-                                      l._key === line._key
-                                        ? { ...l, qty: e.target.value }
-                                        : l,
-                                    ),
-                                  )
-                                }
-                                className="w-full h-9 border border-gray-300 rounded-lg px-1 text-xs text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                              />
-                            </div>
-                            <div className="col-span-1">
-                              <input
-                                type="number"
-                                min="0"
-                                step="any"
-                                placeholder="Bonus"
-                                value={line.bonus}
-                                onChange={(e) =>
-                                  setNewOrderLines((prev) =>
-                                    prev.map((l) =>
-                                      l._key === line._key
-                                        ? { ...l, bonus: e.target.value }
-                                        : l,
-                                    ),
-                                  )
-                                }
-                                className="w-full h-9 border border-emerald-300 bg-emerald-50 rounded-lg px-1 text-xs text-center text-emerald-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                              />
-                            </div>
-                            <div className="col-span-1">
-                              <input
-                                type="number"
-                                min="0"
-                                max="100"
-                                step="any"
-                                placeholder="Dist%"
-                                value={line.distDisc}
-                                onChange={(e) =>
-                                  setNewOrderLines((prev) =>
-                                    prev.map((l) =>
-                                      l._key === line._key
-                                        ? {
-                                            ...l,
-                                            distDisc: e.target.value,
-                                            discount: e.target.value,
-                                          }
-                                        : l,
-                                    ),
-                                  )
-                                }
-                                className="w-full h-9 border border-amber-300 bg-amber-50 rounded-lg px-1 text-xs text-center text-amber-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                              />
-                            </div>
-                            <div className="col-span-1">
-                              <input
-                                type="number"
-                                min="0"
-                                max="100"
-                                step="any"
-                                placeholder="Co%"
-                                value={line.compDisc}
-                                onChange={(e) =>
-                                  setNewOrderLines((prev) =>
-                                    prev.map((l) =>
-                                      l._key === line._key
-                                        ? { ...l, compDisc: e.target.value }
-                                        : l,
-                                    ),
-                                  )
-                                }
-                                className="w-full h-9 border border-blue-300 bg-blue-50 rounded-lg px-1 text-xs text-center text-blue-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                              />
-                            </div>
-                            <div className="col-span-2">
-                              <input
-                                type="number"
-                                min="0"
-                                step="any"
-                                placeholder="0"
-                                value={line.netRate === "0" ? "" : line.netRate}
-                                onChange={(e) =>
-                                  setNewOrderLines((prev) =>
-                                    prev.map((l) =>
-                                      l._key === line._key
-                                        ? {
-                                            ...l,
-                                            netRate: e.target.value || "0",
-                                          }
-                                        : l,
-                                    ),
-                                  )
-                                }
-                                className="w-full h-9 border border-purple-300 bg-purple-50 rounded-lg px-1 text-xs text-center text-purple-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                              />
-                            </div>
-                            <div className="col-span-1 flex justify-center">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setNewOrderLines((prev) =>
-                                    prev.filter((l) => l._key !== line._key),
-                                  )
-                                }
-                                className="w-8 h-8 flex items-center justify-center text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                aria-label="Remove item"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                            <div className="col-span-1" />
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* RIGHT: Order details & submit */}
-                  <div className="w-2/5 bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4 sticky top-0">
-                    {/* Admin badge */}
-                    <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
-                      <User size={14} className="text-blue-600 shrink-0" />
-                      <span className="text-xs font-semibold text-blue-700">
-                        Order by: Admin | آفس آرڈر
-                      </span>
-                    </div>
-
-                    {/* Pharmacy searchable select */}
-                    <div className="relative">
-                      <label
-                        htmlFor="new-order-pharmacy-search"
-                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
-                      >
-                        Pharmacy | فارمیسی *
-                      </label>
-                      <div className="relative">
-                        <Search
-                          size={14}
-                          className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
-                        />
-                        <input
-                          id="new-order-pharmacy-search"
-                          type="text"
-                          value={
-                            newOrderPharmacyId && !newOrderPharmacyDropdownOpen
-                              ? (allPharmacies.find(
-                                  (p) => p.id === newOrderPharmacyId,
-                                )?.name ?? newOrderPharmacySearch)
-                              : newOrderPharmacySearch
-                          }
-                          onChange={(e) => {
-                            setNewOrderPharmacySearch(e.target.value);
-                            setNewOrderPharmacyDropdownOpen(true);
-                            if (!e.target.value) setNewOrderPharmacyId(null);
-                          }}
-                          onFocus={() => {
-                            setNewOrderPharmacySearch("");
-                            setNewOrderPharmacyDropdownOpen(true);
-                          }}
-                          placeholder="Search pharmacy..."
-                          className="w-full h-10 text-sm border border-gray-300 rounded-lg pl-9 pr-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                          autoComplete="off"
-                        />
-                        {newOrderPharmacyId && (
+                {/* Tab content */}
+                <div>
+                  {/* TAB: Order Items */}
+                  {newOrderTab === "items" && (
+                    <>
+                      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-bold text-gray-700 uppercase tracking-wide">
+                            Order Items | اشیاء
+                          </span>
                           <button
                             type="button"
-                            onClick={() => {
-                              setNewOrderPharmacyId(null);
-                              setNewOrderPharmacySearch("");
-                            }}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                            aria-label="Clear pharmacy"
+                            onClick={() =>
+                              setNewOrderLines((prev) => [
+                                ...prev,
+                                {
+                                  _key: `line-${Date.now()}-${Math.random()}`,
+                                  medicineId:
+                                    allMedicines[0]?.backendId ?? BigInt(0),
+                                  medicineName: allMedicines[0]?.name ?? "",
+                                  qty: "1",
+                                  bonus: "0",
+                                  discount: "0",
+                                  distDisc: "0",
+                                  compDisc: "0",
+                                  netRate: "0",
+                                },
+                              ])
+                            }
+                            disabled={allMedicines.length === 0}
+                            data-ocid="add_order.add_item_button"
+                            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors"
                           >
-                            <X size={14} />
+                            <Plus size={13} />
+                            Add Item | شامل کریں
                           </button>
+                        </div>
+
+                        {newOrderLines.length === 0 ? (
+                          <div
+                            className="text-center py-10 text-gray-400 text-sm border-2 border-dashed border-gray-200 rounded-xl"
+                            data-ocid="add_order.items_empty_state"
+                          >
+                            Click "Add Item" to add medicines | اوپر بٹن سے
+                            اشیاء شامل کریں
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {newOrderLines.map((line) => (
+                              <div
+                                key={line._key}
+                                className="grid grid-cols-12 gap-1 items-center"
+                              >
+                                <div className="col-span-4 relative">
+                                  <div className="relative">
+                                    <Search
+                                      size={12}
+                                      className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+                                    />
+                                    <input
+                                      type="text"
+                                      value={
+                                        newOrderMedicineDropdownOpen[line._key]
+                                          ? (newOrderMedicineSearch[
+                                              line._key
+                                            ] ?? "")
+                                          : line.medicineName
+                                      }
+                                      onChange={(e) => {
+                                        setNewOrderMedicineSearch((prev) => ({
+                                          ...prev,
+                                          [line._key]: e.target.value,
+                                        }));
+                                        setNewOrderMedicineDropdownOpen(
+                                          (prev) => ({
+                                            ...prev,
+                                            [line._key]: true,
+                                          }),
+                                        );
+                                      }}
+                                      onFocus={() => {
+                                        setNewOrderMedicineSearch((prev) => ({
+                                          ...prev,
+                                          [line._key]: "",
+                                        }));
+                                        setNewOrderMedicineDropdownOpen(
+                                          (prev) => ({
+                                            ...prev,
+                                            [line._key]: true,
+                                          }),
+                                        );
+                                      }}
+                                      placeholder="Search medicine..."
+                                      className="w-full h-9 text-sm border border-gray-300 rounded-lg pl-7 pr-2 bg-white text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                      autoComplete="off"
+                                    />
+                                  </div>
+                                  {newOrderMedicineDropdownOpen[line._key] && (
+                                    <>
+                                      <div className="absolute z-20 top-full mt-0.5 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                                        {allMedicines
+                                          .filter((m) => {
+                                            const q = (
+                                              newOrderMedicineSearch[
+                                                line._key
+                                              ] ?? ""
+                                            ).toLowerCase();
+                                            if (!q) return true;
+                                            return (
+                                              m.name
+                                                .toLowerCase()
+                                                .includes(q) ||
+                                              m.company
+                                                .toLowerCase()
+                                                .includes(q) ||
+                                              m.strength
+                                                .toLowerCase()
+                                                .includes(q)
+                                            );
+                                          })
+                                          .map((m) => (
+                                            <button
+                                              type="button"
+                                              key={String(m.backendId)}
+                                              onClick={() => {
+                                                setNewOrderLines((prev) =>
+                                                  prev.map((l) =>
+                                                    l._key === line._key
+                                                      ? {
+                                                          ...l,
+                                                          medicineId:
+                                                            m.backendId,
+                                                          medicineName: m.name,
+                                                        }
+                                                      : l,
+                                                  ),
+                                                );
+                                                setNewOrderMedicineDropdownOpen(
+                                                  (prev) => ({
+                                                    ...prev,
+                                                    [line._key]: false,
+                                                  }),
+                                                );
+                                                setNewOrderMedicineSearch(
+                                                  (prev) => ({
+                                                    ...prev,
+                                                    [line._key]: "",
+                                                  }),
+                                                );
+                                              }}
+                                              className={`w-full text-left px-2 py-2 text-xs hover:bg-blue-50 transition-colors ${line.medicineId === m.backendId ? "bg-blue-50 text-blue-700 font-semibold" : "text-gray-900"}`}
+                                            >
+                                              <span className="font-medium">
+                                                {m.name}
+                                              </span>
+                                              {m.strength && (
+                                                <span className="text-gray-400 ml-1">
+                                                  ({m.strength})
+                                                </span>
+                                              )}
+                                              {m.company && (
+                                                <span className="text-gray-400 ml-1 text-[10px]">
+                                                  · {m.company}
+                                                </span>
+                                              )}
+                                            </button>
+                                          ))}
+                                        {allMedicines.filter((m) => {
+                                          const q = (
+                                            newOrderMedicineSearch[line._key] ??
+                                            ""
+                                          ).toLowerCase();
+                                          if (!q) return true;
+                                          return (
+                                            m.name.toLowerCase().includes(q) ||
+                                            m.company
+                                              .toLowerCase()
+                                              .includes(q) ||
+                                            m.strength.toLowerCase().includes(q)
+                                          );
+                                        }).length === 0 && (
+                                          <div className="px-2 py-2 text-xs text-gray-400 text-center">
+                                            No medicines found
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div
+                                        className="fixed inset-0 z-10"
+                                        onClick={() =>
+                                          setNewOrderMedicineDropdownOpen(
+                                            (prev) => ({
+                                              ...prev,
+                                              [line._key]: false,
+                                            }),
+                                          )
+                                        }
+                                        onKeyDown={(e) =>
+                                          e.key === "Escape" &&
+                                          setNewOrderMedicineDropdownOpen(
+                                            (prev) => ({
+                                              ...prev,
+                                              [line._key]: false,
+                                            }),
+                                          )
+                                        }
+                                        aria-hidden="true"
+                                      />
+                                    </>
+                                  )}
+                                </div>
+                                <div className="col-span-1">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    placeholder="Qty"
+                                    value={line.qty}
+                                    onChange={(e) =>
+                                      setNewOrderLines((prev) =>
+                                        prev.map((l) =>
+                                          l._key === line._key
+                                            ? { ...l, qty: e.target.value }
+                                            : l,
+                                        ),
+                                      )
+                                    }
+                                    className="w-full h-9 border border-gray-300 rounded-lg px-1 text-xs text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                  />
+                                </div>
+                                <div className="col-span-1">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    placeholder="Bonus"
+                                    value={line.bonus}
+                                    onChange={(e) =>
+                                      setNewOrderLines((prev) =>
+                                        prev.map((l) =>
+                                          l._key === line._key
+                                            ? { ...l, bonus: e.target.value }
+                                            : l,
+                                        ),
+                                      )
+                                    }
+                                    className="w-full h-9 border border-emerald-300 bg-emerald-50 rounded-lg px-1 text-xs text-center text-emerald-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                  />
+                                </div>
+                                <div className="col-span-1">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    step="any"
+                                    placeholder="Dist%"
+                                    value={line.distDisc}
+                                    onChange={(e) =>
+                                      setNewOrderLines((prev) =>
+                                        prev.map((l) =>
+                                          l._key === line._key
+                                            ? {
+                                                ...l,
+                                                distDisc: e.target.value,
+                                                discount: e.target.value,
+                                              }
+                                            : l,
+                                        ),
+                                      )
+                                    }
+                                    className="w-full h-9 border border-amber-300 bg-amber-50 rounded-lg px-1 text-xs text-center text-amber-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                  />
+                                </div>
+                                <div className="col-span-1">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    step="any"
+                                    placeholder="Co%"
+                                    value={line.compDisc}
+                                    onChange={(e) =>
+                                      setNewOrderLines((prev) =>
+                                        prev.map((l) =>
+                                          l._key === line._key
+                                            ? { ...l, compDisc: e.target.value }
+                                            : l,
+                                        ),
+                                      )
+                                    }
+                                    className="w-full h-9 border border-blue-300 bg-blue-50 rounded-lg px-1 text-xs text-center text-blue-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                  />
+                                </div>
+                                <div className="col-span-2">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    placeholder="0"
+                                    value={
+                                      line.netRate === "0" ? "" : line.netRate
+                                    }
+                                    onChange={(e) =>
+                                      setNewOrderLines((prev) =>
+                                        prev.map((l) =>
+                                          l._key === line._key
+                                            ? {
+                                                ...l,
+                                                netRate: e.target.value || "0",
+                                              }
+                                            : l,
+                                        ),
+                                      )
+                                    }
+                                    className="w-full h-9 border border-purple-300 bg-purple-50 rounded-lg px-1 text-xs text-center text-purple-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                  />
+                                </div>
+                                <div className="col-span-1 flex justify-center">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setNewOrderLines((prev) =>
+                                        prev.filter(
+                                          (l) => l._key !== line._key,
+                                        ),
+                                      )
+                                    }
+                                    className="w-8 h-8 flex items-center justify-center text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                    aria-label="Remove item"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                                <div className="col-span-1" />
+                              </div>
+                            ))}
+                          </div>
                         )}
                       </div>
-                      {newOrderPharmacyDropdownOpen && (
-                        <div className="absolute z-20 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                          {allPharmacies
-                            .filter((p) =>
+                      {/* Next button for items tab */}
+                      <div className="flex justify-end mt-4">
+                        <button
+                          type="button"
+                          onClick={() => setNewOrderTab("pharmacy")}
+                          disabled={newOrderLines.length === 0}
+                          className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-colors"
+                        >
+                          Next: Pharmacy →
+                        </button>
+                      </div>
+                    </>
+                  )}
+
+                  {/* TAB: Pharmacy */}
+                  {newOrderTab === "pharmacy" && (
+                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4 max-w-lg">
+                      {/* Admin badge */}
+                      <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                        <User size={14} className="text-blue-600 shrink-0" />
+                        <span className="text-xs font-semibold text-blue-700">
+                          Order by: Admin | آفس آرڈر
+                        </span>
+                      </div>
+
+                      {/* Pharmacy searchable select */}
+                      <div className="relative">
+                        <label
+                          htmlFor="new-order-pharmacy-search"
+                          className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                        >
+                          Pharmacy | فارمیسی *
+                        </label>
+                        <div className="relative">
+                          <Search
+                            size={14}
+                            className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+                          />
+                          <input
+                            id="new-order-pharmacy-search"
+                            type="text"
+                            value={
+                              newOrderPharmacyId &&
+                              !newOrderPharmacyDropdownOpen
+                                ? (allPharmacies.find(
+                                    (p) => p.id === newOrderPharmacyId,
+                                  )?.name ?? newOrderPharmacySearch)
+                                : newOrderPharmacySearch
+                            }
+                            onChange={(e) => {
+                              setNewOrderPharmacySearch(e.target.value);
+                              setNewOrderPharmacyDropdownOpen(true);
+                              if (!e.target.value) setNewOrderPharmacyId(null);
+                            }}
+                            onFocus={() => {
+                              setNewOrderPharmacySearch("");
+                              setNewOrderPharmacyDropdownOpen(true);
+                            }}
+                            placeholder="Search pharmacy..."
+                            className="w-full h-10 text-sm border border-gray-300 rounded-lg pl-9 pr-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            autoComplete="off"
+                          />
+                          {newOrderPharmacyId && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNewOrderPharmacyId(null);
+                                setNewOrderPharmacySearch("");
+                              }}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                              aria-label="Clear pharmacy"
+                            >
+                              <X size={14} />
+                            </button>
+                          )}
+                        </div>
+                        {newOrderPharmacyDropdownOpen && (
+                          <div className="absolute z-20 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                            {allPharmacies
+                              .filter((p) =>
+                                newOrderPharmacySearch
+                                  ? p.name
+                                      .toLowerCase()
+                                      .includes(
+                                        newOrderPharmacySearch.toLowerCase(),
+                                      )
+                                  : true,
+                              )
+                              .map((p) => (
+                                <button
+                                  type="button"
+                                  key={String(p.id)}
+                                  onClick={() => {
+                                    setNewOrderPharmacyId(p.id);
+                                    setNewOrderPharmacySearch("");
+                                    setNewOrderPharmacyDropdownOpen(false);
+                                  }}
+                                  className={`w-full text-left px-3 py-2.5 text-sm hover:bg-blue-50 transition-colors ${newOrderPharmacyId === p.id ? "bg-blue-50 text-blue-700 font-semibold" : "text-gray-900"}`}
+                                >
+                                  {p.name}
+                                </button>
+                              ))}
+                            {allPharmacies.filter((p) =>
                               newOrderPharmacySearch
                                 ? p.name
                                     .toLowerCase()
@@ -10344,99 +10438,139 @@ function OfficeDashboard() {
                                       newOrderPharmacySearch.toLowerCase(),
                                     )
                                 : true,
-                            )
-                            .map((p) => (
-                              <button
-                                type="button"
-                                key={String(p.id)}
-                                onClick={() => {
-                                  setNewOrderPharmacyId(p.id);
-                                  setNewOrderPharmacySearch("");
-                                  setNewOrderPharmacyDropdownOpen(false);
-                                }}
-                                className={`w-full text-left px-3 py-2.5 text-sm hover:bg-blue-50 transition-colors ${newOrderPharmacyId === p.id ? "bg-blue-50 text-blue-700 font-semibold" : "text-gray-900"}`}
-                              >
-                                {p.name}
-                              </button>
-                            ))}
-                          {allPharmacies.filter((p) =>
-                            newOrderPharmacySearch
-                              ? p.name
-                                  .toLowerCase()
-                                  .includes(
-                                    newOrderPharmacySearch.toLowerCase(),
-                                  )
-                              : true,
-                          ).length === 0 && (
-                            <div className="px-3 py-3 text-sm text-gray-400 text-center">
-                              No pharmacies found
-                            </div>
-                          )}
+                            ).length === 0 && (
+                              <div className="px-3 py-3 text-sm text-gray-400 text-center">
+                                No pharmacies found
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {newOrderPharmacyDropdownOpen && (
+                          <div
+                            className="fixed inset-0 z-10"
+                            onClick={() =>
+                              setNewOrderPharmacyDropdownOpen(false)
+                            }
+                            onKeyDown={(e) =>
+                              e.key === "Escape" &&
+                              setNewOrderPharmacyDropdownOpen(false)
+                            }
+                            aria-hidden="true"
+                          />
+                        )}
+                      </div>
+
+                      {/* Order summary */}
+                      {newOrderLines.length > 0 && (
+                        <div className="bg-gray-50 rounded-lg p-3 space-y-1">
+                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                            Summary
+                          </p>
+                          <p className="text-sm text-gray-700">
+                            {newOrderLines.length} item(s)
+                          </p>
                         </div>
                       )}
-                      {newOrderPharmacyDropdownOpen && (
-                        <div
-                          className="fixed inset-0 z-10"
-                          onClick={() => setNewOrderPharmacyDropdownOpen(false)}
-                          onKeyDown={(e) =>
-                            e.key === "Escape" &&
-                            setNewOrderPharmacyDropdownOpen(false)
-                          }
-                          aria-hidden="true"
-                        />
-                      )}
-                    </div>
 
-                    {/* Order summary */}
-                    {newOrderLines.length > 0 && (
-                      <div className="bg-gray-50 rounded-lg p-3 space-y-1">
-                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                          Summary
-                        </p>
-                        <p className="text-sm text-gray-700">
-                          {newOrderLines.length} item(s)
-                        </p>
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setNewOrderTab("notes")}
+                          disabled={!newOrderPharmacyId}
+                          className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-colors"
+                        >
+                          Next: Notes →
+                        </button>
                       </div>
-                    )}
-
-                    {/* Notes */}
-                    <div>
-                      <label
-                        htmlFor="new-order-notes"
-                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
-                      >
-                        Notes | نوٹس
-                      </label>
-                      <textarea
-                        id="new-order-notes"
-                        value={newOrderNotes}
-                        onChange={(e) => setNewOrderNotes(e.target.value)}
-                        placeholder="Special instructions..."
-                        rows={2}
-                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
-                      />
                     </div>
+                  )}
 
-                    {/* Submit */}
-                    <button
-                      type="button"
-                      onClick={handleSubmitNewOrder}
-                      disabled={
-                        isSubmittingNewOrder ||
-                        !newOrderPharmacyId ||
-                        newOrderLines.length === 0
-                      }
-                      data-ocid="add_order.submit_button"
-                      className="w-full h-11 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold rounded-lg transition-colors"
-                    >
-                      {isSubmittingNewOrder ? (
-                        <Loader2 size={16} className="animate-spin" />
-                      ) : (
-                        <Plus size={16} />
-                      )}
-                      Submit Order | آرڈر جمع کریں
-                    </button>
-                  </div>
+                  {/* TAB: Notes */}
+                  {newOrderTab === "notes" && (
+                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4 max-w-lg">
+                      <div>
+                        <label
+                          htmlFor="new-order-notes"
+                          className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                        >
+                          Notes | نوٹس
+                        </label>
+                        <textarea
+                          id="new-order-notes"
+                          value={newOrderNotes}
+                          onChange={(e) => setNewOrderNotes(e.target.value)}
+                          placeholder="Special instructions..."
+                          rows={4}
+                          className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+                        />
+                      </div>
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setNewOrderTab("submit")}
+                          className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors"
+                        >
+                          Next: Submit →
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TAB: Submit Order */}
+                  {newOrderTab === "submit" && (
+                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4 max-w-lg">
+                      <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                        <User size={14} className="text-blue-600 shrink-0" />
+                        <span className="text-xs font-semibold text-blue-700">
+                          Order by: Admin | آفس آرڈر
+                        </span>
+                      </div>
+                      {/* Summary review */}
+                      <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                          Order Summary | خلاصہ
+                        </p>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-500">Pharmacy</span>
+                          <span className="font-semibold text-gray-800">
+                            {allPharmacies.find(
+                              (p) => p.id === newOrderPharmacyId,
+                            )?.name ?? "—"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-500">Items</span>
+                          <span className="font-semibold text-gray-800">
+                            {newOrderLines.length}
+                          </span>
+                        </div>
+                        {newOrderNotes && (
+                          <div className="text-sm text-gray-500 pt-1 border-t border-gray-200">
+                            <span className="font-semibold">Notes:</span>{" "}
+                            {newOrderNotes}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSubmitNewOrder}
+                        disabled={
+                          isSubmittingNewOrder ||
+                          !newOrderPharmacyId ||
+                          newOrderLines.length === 0
+                        }
+                        data-ocid="add_order.submit_button"
+                        className="w-full h-11 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold rounded-lg transition-colors"
+                      >
+                        {isSubmittingNewOrder ? (
+                          <Loader2 size={16} className="animate-spin" />
+                        ) : (
+                          <Plus size={16} />
+                        )}
+                        Submit Order | آرڈر جمع کریں
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -11379,7 +11513,9 @@ function OfficeDashboard() {
                         <option value={CustomerType.doctor}>
                           Doctor | ڈاکٹر
                         </option>
-                        <option value="hospital">Hospital | ہسپتال</option>
+                        <option value={CustomerType.hospital}>
+                          Hospital | ہسپتال
+                        </option>
                         <option value={CustomerType.medicalStore}>
                           Medical Store | میڈیکل اسٹور
                         </option>
@@ -11574,7 +11710,7 @@ function OfficeDashboard() {
                             color: "bg-blue-100 text-blue-700",
                             icon: <Stethoscope size={12} />,
                           },
-                          hospital: {
+                          [CustomerType.hospital]: {
                             label: "Hospital",
                             urdu: "ہسپتال",
                             color: "bg-cyan-100 text-cyan-700",
@@ -13072,7 +13208,7 @@ function MobileApp() {
           // Seed backend
           await Promise.all(
             PHARMACY_SEEDS.map((s) =>
-              actor.addPharmacy(s.name, s.contact, s.location, ""),
+              actor.addPharmacy(s.name, s.contact, s.location, "", "", ""),
             ),
           );
           // Reload after seeding
@@ -13246,16 +13382,19 @@ function MobileApp() {
         }
         const lines = order.items.map((item) => ({
           medicineId: BigInt(item.medicineId),
-          quantity: BigInt(item.qty),
+          quantity: Math.round(item.qty),
           bonusQty: BigInt(item.bonusQty ?? 0),
-          discountPercent: BigInt(Math.round((item.discountPercent ?? 0) * 10)),
+          discountPercent: BigInt(0),
+          distributionDiscount: BigInt(0),
+          companyDiscount: BigInt(0),
+          netRate: BigInt(0),
         }));
-        await (actor as any).createOrder(
+        await actor.createOrder(
           pharmacy.backendId,
           lines,
-          order.notes ?? "",
           state.currentStaff?.name ?? "",
           state.currentStaff?.id ?? "",
+          order.notes ?? "",
         );
         synced++;
       } catch {
