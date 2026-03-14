@@ -50,6 +50,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { toast } from "sonner";
+import SuperAdminDashboard from "./SuperAdminDashboard";
 import type {
   OrderStatus as BackendOrderStatus,
   backendInterface,
@@ -65,7 +66,7 @@ function toBackendCustomerType(t: ExtendedCustomerType): CustomerType {
 
 // ─── Auth Types & User Database ──────────────────────────────────────────────
 
-type UserRole = "admin" | "staff" | "delivery";
+type UserRole = "admin" | "staff" | "delivery" | "superadmin";
 
 type AppUser = {
   username: string;
@@ -881,21 +882,11 @@ function SideDrawer({
   onClose,
   navigate,
   dispatch,
-  isOfflineMode,
-  onToggleOfflineMode,
-  pendingOfflineCount,
-  onSync,
-  isSyncing,
 }: {
   open: boolean;
   onClose: () => void;
   navigate: (s: Screen) => void;
   dispatch: React.Dispatch<Action>;
-  isOfflineMode?: boolean;
-  onToggleOfflineMode?: () => void;
-  pendingOfflineCount?: number;
-  onSync?: () => void;
-  isSyncing?: boolean;
 }) {
   const navItems = [
     {
@@ -989,80 +980,6 @@ function SideDrawer({
           ))}
         </div>
 
-        {/* Offline mode toggle */}
-        {onToggleOfflineMode && (
-          <div className="border-t border-border px-4 py-3">
-            <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold mb-2">
-              Connectivity | کنیکٹیوٹی
-            </p>
-            <button
-              type="button"
-              data-ocid="drawer.offline_toggle"
-              onClick={onToggleOfflineMode}
-              className={`w-full flex items-center gap-3 py-2.5 px-3 rounded-xl transition-colors text-left ${isOfflineMode ? "bg-amber-50 text-amber-700 border border-amber-200" : "hover:bg-muted text-foreground"}`}
-            >
-              {isOfflineMode ? (
-                <WifiOff size={17} className="text-amber-600" />
-              ) : (
-                <Wifi size={17} className="text-green-600" />
-              )}
-              <div className="flex-1">
-                <div className="text-sm font-medium">
-                  {isOfflineMode ? "Offline Mode ON" : "Offline Mode"}
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  {isOfflineMode
-                    ? "Orders saved locally"
-                    : "Tap to work offline"}
-                </div>
-              </div>
-              <div
-                className={`w-9 h-5 rounded-full flex items-center transition-colors ${isOfflineMode ? "bg-amber-400 justify-end" : "bg-gray-300 justify-start"} px-0.5`}
-              >
-                <div className="w-4 h-4 bg-white rounded-full shadow" />
-              </div>
-            </button>
-            {isOfflineMode && (pendingOfflineCount ?? 0) > 0 && onSync && (
-              <button
-                type="button"
-                data-ocid="drawer.sync_button"
-                onClick={() => {
-                  onSync();
-                  onClose();
-                }}
-                disabled={isSyncing}
-                className="mt-2 w-full flex items-center justify-center gap-2 py-2 px-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-semibold rounded-xl transition-colors"
-              >
-                {isSyncing ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <RefreshCw size={14} />
-                )}
-                Sync {pendingOfflineCount} Order(s)
-              </button>
-            )}
-            {!isOfflineMode && (pendingOfflineCount ?? 0) > 0 && onSync && (
-              <button
-                type="button"
-                data-ocid="drawer.sync_button"
-                onClick={() => {
-                  onSync();
-                  onClose();
-                }}
-                disabled={isSyncing}
-                className="mt-2 w-full flex items-center justify-center gap-2 py-2 px-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-semibold rounded-xl transition-colors"
-              >
-                {isSyncing ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <RefreshCw size={14} />
-                )}
-                Sync {pendingOfflineCount} Pending Order(s)
-              </button>
-            )}
-          </div>
-        )}
-
         {/* Logout at bottom */}
         <div className="border-t border-border p-4 pb-8">
           <button
@@ -1100,6 +1017,50 @@ function LoginScreen({
   const [error, setError] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [showSuperAdminLogin, setShowSuperAdminLogin] = useState(false);
+  const [superAdminPassword, setSuperAdminPassword] = useState("");
+  const [isSuperAdminLoggingIn, setIsSuperAdminLoggingIn] = useState(false);
+
+  const { actor: loginActor } = useActor();
+
+  async function handleSuperAdminLogin() {
+    if (!superAdminPassword.trim()) return;
+    setIsSuperAdminLoggingIn(true);
+    try {
+      // Check locally stored password first (fallback when canister is unavailable)
+      const localStoredPass =
+        localStorage.getItem("medorder_superadmin_pass") || "superadmin123";
+      // Accept hardcoded default OR locally stored password
+      let ok =
+        superAdminPassword === "superadmin123" ||
+        superAdminPassword === localStoredPass;
+
+      // Also try backend if actor available (non-blocking)
+      if (!ok && loginActor) {
+        try {
+          ok = await (loginActor as any).verifySuperAdmin(superAdminPassword);
+        } catch {
+          // backend unavailable, rely on local check only
+        }
+      }
+
+      if (ok) {
+        const sessionData = {
+          username: "superadmin",
+          role: "superadmin" as UserRole,
+          displayName: "Super Admin",
+        };
+        localStorage.setItem("medorder_session", JSON.stringify(sessionData));
+        window.location.href = "/superadmin";
+      } else {
+        toast.error("Invalid Super Admin password | غلط پاس ورڈ");
+      }
+    } catch {
+      toast.error("Login failed. Please try again.");
+    } finally {
+      setIsSuperAdminLoggingIn(false);
+    }
+  }
 
   async function handleLogin() {
     if (!username.trim() || !password.trim()) {
@@ -1146,11 +1107,13 @@ function LoginScreen({
     admin: "bg-purple-100 text-purple-700",
     staff: "bg-blue-100 text-blue-700",
     delivery: "bg-emerald-100 text-emerald-700",
+    superadmin: "bg-orange-100 text-orange-700",
   };
   const roleLabels: Record<UserRole, string> = {
     admin: "Admin",
     staff: "Staff / Booker",
     delivery: "Delivery",
+    superadmin: "Super Admin",
   };
 
   return (
@@ -1351,6 +1314,82 @@ function LoginScreen({
         </div>
       </div>
 
+      {/* Super Admin Login Toggle */}
+      <div className="mt-3 w-full max-w-sm">
+        <button
+          type="button"
+          onClick={() => setShowSuperAdminLogin((v) => !v)}
+          className="w-full text-center text-white/30 text-xs hover:text-white/50 transition-colors py-1"
+          data-ocid="superadmin.toggle"
+        >
+          {showSuperAdminLogin ? "Hide" : "Super Admin | سپر ایڈمن"}
+        </button>
+        {showSuperAdminLogin && (
+          <div
+            className="mt-2 rounded-2xl shadow-xl overflow-hidden"
+            style={{ background: "oklch(0.98 0 0)" }}
+          >
+            <div
+              className="px-5 py-3"
+              style={{ background: "oklch(0.35 0.15 260)" }}
+            >
+              <h3 className="text-sm font-bold text-white">
+                Super Admin Login | سپر ایڈمن لاگ ان
+              </h3>
+            </div>
+            <div className="p-5 space-y-3">
+              <div>
+                <p className="text-xs font-semibold text-gray-600 mb-1">
+                  Username
+                </p>
+                <Input
+                  id="sa-username"
+                  value="superadmin"
+                  readOnly
+                  className="h-9 text-sm bg-gray-50 text-gray-500"
+                />
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-gray-600 mb-1">
+                  Password | پاس ورڈ
+                </p>
+                <Input
+                  id="sa-password"
+                  type="password"
+                  value={superAdminPassword}
+                  onChange={(e) => setSuperAdminPassword(e.target.value)}
+                  placeholder="Super Admin password"
+                  className="h-9 text-sm"
+                  onKeyDown={(e) =>
+                    e.key === "Enter" && handleSuperAdminLogin()
+                  }
+                  data-ocid="superadmin.input"
+                />
+              </div>
+              <Button
+                onClick={handleSuperAdminLogin}
+                disabled={isSuperAdminLoggingIn}
+                className="w-full h-9 text-sm font-bold"
+                style={{
+                  background:
+                    "linear-gradient(135deg, oklch(0.35 0.15 260), oklch(0.25 0.12 255))",
+                }}
+                data-ocid="superadmin.submit_button"
+              >
+                {isSuperAdminLoggingIn ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Logging in...
+                  </>
+                ) : (
+                  "Login | لاگ ان"
+                )}
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Footer */}
       <div className="relative text-center py-4 text-white/30 text-xs pb-8">
         © {new Date().getFullYear()}. Built with ♥ using{" "}
@@ -1376,8 +1415,6 @@ function DashboardScreen({
   isLoadingData,
   onRefreshOrders,
   onOpenMenu,
-  isOfflineMode,
-  pendingOfflineCount,
   actor,
 }: {
   state: AppState;
@@ -1386,8 +1423,6 @@ function DashboardScreen({
   isLoadingData: boolean;
   onRefreshOrders: () => void;
   onOpenMenu: () => void;
-  isOfflineMode?: boolean;
-  pendingOfflineCount?: number;
   actor: backendInterface | null;
 }) {
   const todayStr = new Date().toISOString().split("T")[0];
@@ -1510,19 +1545,6 @@ function DashboardScreen({
           </div>
         </div>
       </div>
-
-      {/* Offline banner */}
-      {isOfflineMode && (
-        <div className="flex items-center gap-2.5 bg-amber-500 text-white px-4 py-2.5 text-sm font-medium">
-          <WifiOff size={15} className="shrink-0" />
-          <span className="flex-1">
-            Offline Mode — orders saved locally
-            {(pendingOfflineCount ?? 0) > 0
-              ? ` (${pendingOfflineCount} pending)`
-              : ""}
-          </span>
-        </div>
-      )}
 
       {/* Location permission banner */}
       {!locationAsked && (
@@ -1951,6 +1973,7 @@ function OrderTakingScreen({
   actor,
   isOfflineMode,
   onSaveOfflineOrder,
+  stockMap,
 }: {
   state: AppState;
   dispatch: React.Dispatch<Action>;
@@ -1961,6 +1984,7 @@ function OrderTakingScreen({
   actor: backendInterface | null;
   isOfflineMode?: boolean;
   onSaveOfflineOrder?: (order: Order) => void;
+  stockMap?: Record<string, number>;
 }) {
   const pharmacy = pharmacies.find((p) => p.id === pharmacyId);
   const [search, setSearch] = useState("");
@@ -2291,10 +2315,19 @@ function OrderTakingScreen({
         ) : (
           filteredMeds.map((med) => {
             const qty = getQty(med.id);
-            const stockQty = getStock(med.backendId);
+            const stockMapVal = stockMap
+              ? stockMap[String(med.backendId)]
+              : undefined;
+            const localStockVal = getStock(med.backendId);
+            // If not in backend stockMap, use localStorage; if neither has data, show 0 (Out of Stock)
+            const stockQty =
+              stockMapVal !== undefined
+                ? stockMapVal
+                : localStockVal !== null
+                  ? localStockVal
+                  : 0;
             // Compute stock badge props
             const stockBadge = (() => {
-              if (stockQty === null) return null;
               if (stockQty === 0)
                 return { text: "Out of Stock", cls: "bg-red-100 text-red-700" };
               if (qty > 0 && qty > stockQty)
@@ -7354,6 +7387,10 @@ function UserManagementPanel() {
       label: "Delivery",
       class: "bg-emerald-100 text-emerald-700 border-emerald-200",
     },
+    superadmin: {
+      label: "Super Admin",
+      class: "bg-orange-100 text-orange-700 border-orange-200",
+    },
   };
 
   const isBuiltIn = (username: string) =>
@@ -7967,16 +8004,27 @@ function OfficeDashboard() {
   const [isSubmittingNewOrder, setIsSubmittingNewOrder] = useState(false);
   const newOrderStaffName = "Admin";
   const newOrderStaffCode = "admin";
-  const [newOrderTab, setNewOrderTab] = useState<
+  const [_newOrderTab, _setNewOrderTab] = useState<
     "items" | "pharmacy" | "notes" | "submit"
   >("items");
   const [newOrderPharmacySearch, setNewOrderPharmacySearch] = useState("");
   const [newOrderPharmacyDropdownOpen, setNewOrderPharmacyDropdownOpen] =
     useState(false);
-  const [newOrderMedicineSearch, setNewOrderMedicineSearch] = useState<
+  const [showOfficeCart, setShowOfficeCart] = useState(false);
+  const [officeOrderSearch, setOfficeOrderSearch] = useState("");
+  const [officeOrderCategory, setOfficeOrderCategory] = useState<
+    | "all"
+    | "tablets"
+    | "syrups"
+    | "injections"
+    | "capsules"
+    | "drops"
+    | "creams"
+  >("all");
+  const [_newOrderMedicineSearch, _setNewOrderMedicineSearch] = useState<
     Record<string, string>
   >({});
-  const [newOrderMedicineDropdownOpen, setNewOrderMedicineDropdownOpen] =
+  const [_newOrderMedicineDropdownOpen, _setNewOrderMedicineDropdownOpen] =
     useState<Record<string, boolean>>({});
   const [purchases, setPurchases] = useState<
     Array<{
@@ -8002,6 +8050,7 @@ function OfficeDashboard() {
   const [purchasePackSize, setPurchasePackSize] = useState("");
   const [purchaseCompanyName, setPurchaseCompanyName] = useState("");
   const [purchaseMedicineType, setPurchaseMedicineType] = useState("Tablet");
+  const [purchaseStrength, setPurchaseStrength] = useState("");
   const [isAddingPurchase, setIsAddingPurchase] = useState(false);
   const [deletingPurchaseId, setDeletingPurchaseId] = useState<bigint | null>(
     null,
@@ -8032,14 +8081,42 @@ function OfficeDashboard() {
     try {
       const [rawActiveOrders, rawHistoryOrders, rawPharmacies, rawMedicines] =
         await Promise.all([
-          actor.getActiveOrders(),
-          actor.getHistoryOrders(),
-          actor.getPharmacies(),
-          actor.getMedicines(),
+          actor.getActiveOrders().catch(async () => {
+            const all = await actor
+              .getAllStaffOrders()
+              .catch(() => [] as any[]);
+            const now = Date.now();
+            const hrs48 = 48 * 60 * 60 * 1000;
+            return all.filter((o: any) => {
+              if (o.status !== "delivered") return true;
+              const ts = Number(o.timestamp / BigInt(1_000_000));
+              return now - ts < hrs48;
+            });
+          }),
+          actor.getHistoryOrders().catch(async () => {
+            const all = await actor
+              .getAllStaffOrders()
+              .catch(() => [] as any[]);
+            const now = Date.now();
+            const hrs48 = 48 * 60 * 60 * 1000;
+            const yr1 = 365 * 24 * 60 * 60 * 1000;
+            return all.filter((o: any) => {
+              if (o.status !== "delivered") return false;
+              const ts = Number(o.timestamp / BigInt(1_000_000));
+              const age = now - ts;
+              return age >= hrs48 && age < yr1;
+            });
+          }),
+          actor.getPharmacies().catch(() => [] as any[]),
+          actor.getMedicines().catch(() => [] as any[]),
         ]);
 
-      const pharmacyMap = new Map(rawPharmacies.map((p) => [String(p.id), p]));
-      const medicineMap = new Map(rawMedicines.map((m) => [String(m.id), m]));
+      const pharmacyMap = new Map(
+        (rawPharmacies as any[]).map((p) => [String(p.id), p]),
+      );
+      const medicineMap = new Map(
+        (rawMedicines as any[]).map((m) => [String(m.id), m]),
+      );
 
       // Store pharmacies for add-order form
       setAllPharmacies(
@@ -8091,10 +8168,81 @@ function OfficeDashboard() {
       setHistoryOrders(historyWithLines);
 
       setBackendError(null);
+      // Cache for offline use
+      try {
+        localStorage.setItem(
+          "medorder_cached_pharmacies",
+          JSON.stringify(rawPharmacies),
+        );
+      } catch {
+        /* ignore */
+      }
+      try {
+        localStorage.setItem(
+          "medorder_cached_medicines",
+          JSON.stringify(rawMedicines),
+        );
+      } catch {
+        /* ignore */
+      }
+      try {
+        localStorage.setItem(
+          "medorder_cached_orders_active",
+          JSON.stringify(activeWithLines),
+        );
+      } catch {
+        /* ignore */
+      }
+      try {
+        localStorage.setItem(
+          "medorder_cached_orders_history",
+          JSON.stringify(historyWithLines),
+        );
+      } catch {
+        /* ignore */
+      }
+
+      // Sync inventory stock from backend to localStorage
+      // Only overwrite localStorage if backend returns a positive value (prevents canister-stop from wiping stock)
+      actor
+        .getInventoryStock()
+        .then((stockArr) => {
+          for (const [medId, qty] of stockArr) {
+            const numQty = Number(qty);
+            if (numQty > 0) {
+              setStock(medId, numQty);
+            }
+            // If backend says 0, keep whatever localStorage has (may be more accurate)
+          }
+        })
+        .catch(() => {});
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Unknown error";
       setBackendError(msg);
       toast.error(`Backend error: ${msg}`);
+      // Load cached data for offline use
+      try {
+        const cachedPharma = localStorage.getItem("medorder_cached_pharmacies");
+        const cachedMeds = localStorage.getItem("medorder_cached_medicines");
+        const cachedActive = localStorage.getItem(
+          "medorder_cached_orders_active",
+        );
+        const cachedHistory = localStorage.getItem(
+          "medorder_cached_orders_history",
+        );
+        if (cachedPharma) setAllPharmacies(JSON.parse(cachedPharma));
+        if (cachedMeds) setAllMedicines(JSON.parse(cachedMeds));
+        if (cachedActive) {
+          setOrdersWithLines(JSON.parse(cachedActive));
+          setOrders(JSON.parse(cachedActive));
+        }
+        if (cachedHistory) {
+          setHistoryOrdersWithLines(JSON.parse(cachedHistory));
+          setHistoryOrders(JSON.parse(cachedHistory));
+        }
+      } catch {
+        /* ignore */
+      }
     } finally {
       setIsLoading(false);
     }
@@ -8358,8 +8506,23 @@ function OfficeDashboard() {
         purchaseCompanyName.trim(),
         purchaseMedicineType,
       );
+
+      // Auto-update inventory: find matching medicine by name and increase stock
+      const matchedMed = allMedicines.find(
+        (m) =>
+          m.name.toLowerCase().trim() ===
+          purchaseProductName.toLowerCase().trim(),
+      );
+      if (matchedMed && actor) {
+        const currentStock = getStock(matchedMed.backendId) ?? 0;
+        setStock(matchedMed.backendId, currentStock + qty);
+        actor
+          .adjustInventoryStock(matchedMed.backendId, BigInt(Math.round(qty)))
+          .catch(() => {});
+      }
+
       toast.success(
-        `Purchase record added for "${purchaseProductName.trim()}"!`,
+        `Purchase record added for "${purchaseProductName.trim()}"!${matchedMed ? ` Inventory +${qty} updated.` : " (Add medicine to inventory to auto-sync stock.)"}`,
       );
       setPurchaseProductName("");
       setPurchaseGenericName("");
@@ -8369,6 +8532,7 @@ function OfficeDashboard() {
       setPurchasePackSize("");
       setPurchaseCompanyName("");
       setPurchaseMedicineType("Tablet");
+      setPurchaseStrength("");
       await loadPurchases();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Unknown error";
@@ -8446,7 +8610,10 @@ function OfficeDashboard() {
       setNewOrderPharmacyId(null);
       setNewOrderLines([]);
       setNewOrderNotes("");
-      setNewOrderTab("items");
+      _setNewOrderTab("items");
+      setShowOfficeCart(false);
+      setOfficeOrderSearch("");
+      setOfficeOrderCategory("all");
       setActiveView("orders");
       await loadAllData();
     } catch (e: unknown) {
@@ -9576,8 +9743,28 @@ function OfficeDashboard() {
                                     min="0"
                                     defaultValue={stockVal}
                                     onChange={(e) => {
+                                      // Save to localStorage immediately on every change
+                                      localStorage.setItem(
+                                        stockKey,
+                                        e.target.value,
+                                      );
+                                    }}
+                                    onBlur={(e) => {
+                                      // Save to backend only on blur (single call, not every keystroke)
                                       const val = e.target.value;
                                       localStorage.setItem(stockKey, val);
+                                      const numVal = Number(val);
+                                      if (!Number.isNaN(numVal) && actor) {
+                                        actor
+                                          .setInventoryStock(
+                                            med.backendId,
+                                            BigInt(Math.round(numVal)),
+                                          )
+                                          .then(() => {
+                                            // Force staff stockMap update in office localStorage too
+                                          })
+                                          .catch(() => {});
+                                      }
                                     }}
                                     className="w-20 text-center text-sm font-bold text-gray-900 border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                                     aria-label={`Stock quantity for ${med.name}`}
@@ -9736,6 +9923,24 @@ function OfficeDashboard() {
                         placeholder="e.g. GlaxoSmithKline"
                         disabled={isAddingPurchase}
                         className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="pur-strength"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Product Strength | طاقت
+                      </label>
+                      <input
+                        id="pur-strength"
+                        type="text"
+                        value={purchaseStrength}
+                        onChange={(e) => setPurchaseStrength(e.target.value)}
+                        placeholder="e.g. 500mg"
+                        disabled={isAddingPurchase}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
+                        data-ocid="purchasing.strength.input"
                       />
                     </div>
                     <div>
@@ -9955,358 +10160,399 @@ function OfficeDashboard() {
             )}
 
             {activeView === "add-order" && (
-              <div className="space-y-4">
-                <div>
-                  <h2 className="text-xl font-bold text-gray-900 font-heading">
-                    Add New Order | نیا آرڈر شامل کریں
-                  </h2>
-                  <p className="text-sm text-gray-500 mt-0.5">
-                    Office se naya order banayein | آفس سے آرڈر بنائیں
-                  </p>
-                </div>
-
-                {/* Tab bar */}
-                <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
-                  {(["items", "pharmacy", "notes", "submit"] as const).map(
-                    (tab) => {
-                      const labels: Record<string, string> = {
-                        items: "Order Items | اشیاء",
-                        pharmacy: "Pharmacy | فارمیسی",
-                        notes: "Notes | نوٹس",
-                        submit: "Submit Order | جمع کریں",
-                      };
-                      return (
-                        <button
-                          key={tab}
-                          type="button"
-                          data-ocid={`add_order.${tab}_tab`}
-                          onClick={() => setNewOrderTab(tab)}
-                          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${newOrderTab === tab ? "bg-white text-blue-700 shadow-sm font-semibold" : "text-gray-500 hover:text-gray-700"}`}
-                        >
-                          {labels[tab]}
-                        </button>
-                      );
-                    },
+              <div className="flex flex-col gap-3 h-full">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-xl font-bold text-gray-900">
+                      Add Order | آرڈر شامل کریں
+                    </h2>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      آفس آرڈر | Admin
+                    </p>
+                  </div>
+                  {newOrderLines.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowOfficeCart(true)}
+                      data-ocid="add_order.cart_button"
+                      className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow"
+                    >
+                      <ShoppingCart size={16} />
+                      Cart (
+                      {newOrderLines.reduce(
+                        (s, l) => s + (Number(l.qty) || 1),
+                        0,
+                      )}{" "}
+                      items)
+                    </button>
                   )}
                 </div>
 
-                {/* Tab content */}
-                <div>
-                  {/* TAB: Order Items */}
-                  {newOrderTab === "items" && (
+                {/* Pharmacy selector */}
+                <div className="relative max-w-sm">
+                  <div className="relative">
+                    <Search
+                      size={13}
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+                    />
+                    <input
+                      type="text"
+                      value={
+                        newOrderPharmacyId && !newOrderPharmacyDropdownOpen
+                          ? (allPharmacies.find(
+                              (p) => p.id === newOrderPharmacyId,
+                            )?.name ?? newOrderPharmacySearch)
+                          : newOrderPharmacySearch
+                      }
+                      onChange={(e) => {
+                        setNewOrderPharmacySearch(e.target.value);
+                        setNewOrderPharmacyDropdownOpen(true);
+                        if (!e.target.value) setNewOrderPharmacyId(null);
+                      }}
+                      onFocus={() => {
+                        setNewOrderPharmacySearch("");
+                        setNewOrderPharmacyDropdownOpen(true);
+                      }}
+                      placeholder="فارمیسی منتخب کریں | Select Pharmacy..."
+                      data-ocid="add_order.pharmacy_input"
+                      className="w-full h-10 text-sm border border-gray-300 rounded-xl pl-8 pr-8 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      autoComplete="off"
+                    />
+                    {newOrderPharmacyId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewOrderPharmacyId(null);
+                          setNewOrderPharmacySearch("");
+                        }}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400"
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+                  {newOrderPharmacyDropdownOpen && (
                     <>
-                      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-bold text-gray-700 uppercase tracking-wide">
-                            Order Items | اشیاء
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setNewOrderLines((prev) => [
-                                ...prev,
-                                {
-                                  _key: `line-${Date.now()}-${Math.random()}`,
-                                  medicineId:
-                                    allMedicines[0]?.backendId ?? BigInt(0),
-                                  medicineName: allMedicines[0]?.name ?? "",
-                                  qty: "1",
-                                  bonus: "0",
-                                  discount: "0",
-                                  distDisc: "0",
-                                  compDisc: "0",
-                                  netRate: "0",
-                                },
-                              ])
-                            }
-                            disabled={allMedicines.length === 0}
-                            data-ocid="add_order.add_item_button"
-                            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors"
-                          >
-                            <Plus size={13} />
-                            Add Item | شامل کریں
-                          </button>
-                        </div>
+                      <div className="absolute z-20 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto">
+                        {allPharmacies
+                          .filter(
+                            (p) =>
+                              !newOrderPharmacySearch ||
+                              p.name
+                                .toLowerCase()
+                                .includes(newOrderPharmacySearch.toLowerCase()),
+                          )
+                          .map((p) => (
+                            <button
+                              type="button"
+                              key={String(p.id)}
+                              onClick={() => {
+                                setNewOrderPharmacyId(p.id);
+                                setNewOrderPharmacySearch("");
+                                setNewOrderPharmacyDropdownOpen(false);
+                              }}
+                              className={`w-full text-left px-3 py-2.5 text-sm hover:bg-blue-50 ${newOrderPharmacyId === p.id ? "bg-blue-50 text-blue-700 font-semibold" : "text-gray-900"}`}
+                            >
+                              {p.name}
+                            </button>
+                          ))}
+                        {allPharmacies.filter(
+                          (p) =>
+                            !newOrderPharmacySearch ||
+                            p.name
+                              .toLowerCase()
+                              .includes(newOrderPharmacySearch.toLowerCase()),
+                        ).length === 0 && (
+                          <div className="px-3 py-3 text-sm text-gray-400 text-center">
+                            No pharmacies found
+                          </div>
+                        )}
+                      </div>
+                      <div
+                        className="fixed inset-0 z-10"
+                        onClick={() => setNewOrderPharmacyDropdownOpen(false)}
+                        onKeyDown={() => setNewOrderPharmacyDropdownOpen(false)}
+                        role="button"
+                        tabIndex={-1}
+                        aria-label="Close dropdown"
+                      />
+                    </>
+                  )}
+                </div>
 
+                {/* Category tabs */}
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {(
+                    [
+                      "all",
+                      "tablets",
+                      "syrups",
+                      "injections",
+                      "capsules",
+                      "drops",
+                      "creams",
+                    ] as const
+                  ).map((cat) => {
+                    const labels: Record<string, string> = {
+                      all: "All",
+                      tablets: "Tablets",
+                      syrups: "Syrups",
+                      injections: "Inj",
+                      capsules: "Capsules",
+                      drops: "Drops",
+                      creams: "Creams",
+                    };
+                    return (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => setOfficeOrderCategory(cat)}
+                        data-ocid={`add_order.${cat}_tab`}
+                        className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${officeOrderCategory === cat ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+                      >
+                        {labels[cat]}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Search */}
+                <div className="relative">
+                  <Search
+                    size={14}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                  />
+                  <input
+                    type="text"
+                    value={officeOrderSearch}
+                    onChange={(e) => setOfficeOrderSearch(e.target.value)}
+                    placeholder="دوائی تلاش کریں | Search medicines..."
+                    data-ocid="add_order.search_input"
+                    className="w-full h-9 text-sm border border-gray-200 rounded-xl pl-9 pr-8 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  {officeOrderSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setOfficeOrderSearch("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+
+                {/* Medicine grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 pb-4">
+                  {allMedicines
+                    .filter((m) => {
+                      const matchCat =
+                        officeOrderCategory === "all" ||
+                        m.category === officeOrderCategory;
+                      const q = officeOrderSearch.toLowerCase();
+                      const matchQ =
+                        !q ||
+                        m.name.toLowerCase().includes(q) ||
+                        m.company.toLowerCase().includes(q) ||
+                        m.strength.toLowerCase().includes(q);
+                      return matchCat && matchQ;
+                    })
+                    .map((m) => {
+                      const existingLine = newOrderLines.find(
+                        (l) => l.medicineId === m.backendId,
+                      );
+                      const qty = existingLine ? Number(existingLine.qty) : 0;
+                      const stockQty = getStock(m.backendId);
+                      const stockBadge =
+                        stockQty === null
+                          ? null
+                          : stockQty === 0
+                            ? {
+                                text: "Out of Stock",
+                                cls: "bg-red-100 text-red-600",
+                              }
+                            : stockQty <= 10
+                              ? {
+                                  text: `Stock: ${stockQty}`,
+                                  cls: "bg-amber-100 text-amber-700",
+                                }
+                              : {
+                                  text: `Stock: ${stockQty}`,
+                                  cls: "bg-emerald-100 text-emerald-700",
+                                };
+                      return (
+                        <div
+                          key={String(m.backendId)}
+                          className={`bg-white rounded-xl border p-3 flex flex-col gap-1.5 ${qty > 0 ? "border-blue-300 ring-1 ring-blue-200" : "border-gray-200"}`}
+                        >
+                          <div className="flex-1">
+                            <p className="text-sm font-semibold text-gray-900 leading-tight">
+                              {m.name}
+                            </p>
+                            {m.strength && (
+                              <p className="text-xs text-gray-400">
+                                {m.strength}
+                              </p>
+                            )}
+                            <p className="text-xs text-gray-500">{m.company}</p>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-bold text-blue-700">
+                              Rs {m.price.toFixed(2)}
+                            </span>
+                            {stockBadge && (
+                              <span
+                                className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${stockBadge.cls}`}
+                              >
+                                {stockBadge.text}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 mt-1">
+                            {qty === 0 ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setNewOrderLines((prev) => [
+                                    ...prev,
+                                    {
+                                      _key: `line-${Date.now()}-${Math.random()}`,
+                                      medicineId: m.backendId,
+                                      medicineName: m.name,
+                                      qty: "1",
+                                      bonus: "0",
+                                      discount: "0",
+                                      distDisc: "0",
+                                      compDisc: "0",
+                                      netRate: "0",
+                                    },
+                                  ])
+                                }
+                                data-ocid="add_order.add_item_button"
+                                className="w-full py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors"
+                              >
+                                + Add
+                              </button>
+                            ) : (
+                              <div className="flex items-center gap-2 w-full justify-between">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (qty <= 1)
+                                      setNewOrderLines((prev) =>
+                                        prev.filter(
+                                          (l) => l.medicineId !== m.backendId,
+                                        ),
+                                      );
+                                    else
+                                      setNewOrderLines((prev) =>
+                                        prev.map((l) =>
+                                          l.medicineId === m.backendId
+                                            ? { ...l, qty: String(qty - 1) }
+                                            : l,
+                                        ),
+                                      );
+                                  }}
+                                  className="w-8 h-8 rounded-full bg-gray-100 hover:bg-red-50 text-gray-700 font-bold text-base flex items-center justify-center"
+                                >
+                                  −
+                                </button>
+                                <span className="text-sm font-bold text-blue-700">
+                                  {qty}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setNewOrderLines((prev) =>
+                                      prev.map((l) =>
+                                        l.medicineId === m.backendId
+                                          ? { ...l, qty: String(qty + 1) }
+                                          : l,
+                                      ),
+                                    )
+                                  }
+                                  className="w-8 h-8 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-base flex items-center justify-center"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  {allMedicines.filter((m) => {
+                    const matchCat =
+                      officeOrderCategory === "all" ||
+                      m.category === officeOrderCategory;
+                    const q = officeOrderSearch.toLowerCase();
+                    return (
+                      matchCat &&
+                      (!q ||
+                        m.name.toLowerCase().includes(q) ||
+                        m.company.toLowerCase().includes(q) ||
+                        m.strength.toLowerCase().includes(q))
+                    );
+                  }).length === 0 && (
+                    <div
+                      className="col-span-3 text-center py-12 text-gray-400 text-sm"
+                      data-ocid="add_order.items_empty_state"
+                    >
+                      No medicines found | کوئی دوائی نہیں ملی
+                    </div>
+                  )}
+                </div>
+
+                {/* Cart sheet */}
+                {showOfficeCart && (
+                  <div className="fixed inset-0 z-50 flex">
+                    <div
+                      className="fixed inset-0 bg-black/40"
+                      onClick={() => setShowOfficeCart(false)}
+                      onKeyDown={() => setShowOfficeCart(false)}
+                      role="button"
+                      tabIndex={-1}
+                      aria-label="Close cart"
+                    />
+                    <div className="relative ml-auto w-full max-w-md bg-white h-full flex flex-col shadow-2xl">
+                      <div className="flex items-center justify-between px-5 py-4 border-b">
+                        <h3 className="font-bold text-gray-900">Cart | کارٹ</h3>
+                        <button
+                          type="button"
+                          onClick={() => setShowOfficeCart(false)}
+                          className="text-gray-400 hover:text-gray-600"
+                        >
+                          <X size={20} />
+                        </button>
+                      </div>
+                      <div className="flex-1 overflow-y-auto p-4 space-y-3">
                         {newOrderLines.length === 0 ? (
                           <div
-                            className="text-center py-10 text-gray-400 text-sm border-2 border-dashed border-gray-200 rounded-xl"
-                            data-ocid="add_order.items_empty_state"
+                            className="text-center py-12 text-gray-400 text-sm"
+                            data-ocid="add_order.cart_empty_state"
                           >
-                            Click "Add Item" to add medicines | اوپر بٹن سے
-                            اشیاء شامل کریں
+                            Cart is empty | کارٹ خالی ہے
                           </div>
                         ) : (
-                          <div className="space-y-2">
-                            {newOrderLines.map((line) => (
+                          newOrderLines.map((line) => {
+                            const med = allMedicines.find(
+                              (m) => m.backendId === line.medicineId,
+                            );
+                            return (
                               <div
                                 key={line._key}
-                                className="grid grid-cols-12 gap-1 items-center"
+                                className="bg-gray-50 rounded-xl p-3 space-y-2"
                               >
-                                <div className="col-span-4 relative">
-                                  <div className="relative">
-                                    <Search
-                                      size={12}
-                                      className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
-                                    />
-                                    <input
-                                      type="text"
-                                      value={
-                                        newOrderMedicineDropdownOpen[line._key]
-                                          ? (newOrderMedicineSearch[
-                                              line._key
-                                            ] ?? "")
-                                          : line.medicineName
-                                      }
-                                      onChange={(e) => {
-                                        setNewOrderMedicineSearch((prev) => ({
-                                          ...prev,
-                                          [line._key]: e.target.value,
-                                        }));
-                                        setNewOrderMedicineDropdownOpen(
-                                          (prev) => ({
-                                            ...prev,
-                                            [line._key]: true,
-                                          }),
-                                        );
-                                      }}
-                                      onFocus={() => {
-                                        setNewOrderMedicineSearch((prev) => ({
-                                          ...prev,
-                                          [line._key]: "",
-                                        }));
-                                        setNewOrderMedicineDropdownOpen(
-                                          (prev) => ({
-                                            ...prev,
-                                            [line._key]: true,
-                                          }),
-                                        );
-                                      }}
-                                      placeholder="Search medicine..."
-                                      className="w-full h-9 text-sm border border-gray-300 rounded-lg pl-7 pr-2 bg-white text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                      autoComplete="off"
-                                    />
+                                <div className="flex items-start justify-between">
+                                  <div>
+                                    <p className="text-sm font-semibold text-gray-900">
+                                      {line.medicineName}
+                                    </p>
+                                    {med && (
+                                      <p className="text-xs text-gray-400">
+                                        Rs {med.price.toFixed(2)} each
+                                      </p>
+                                    )}
                                   </div>
-                                  {newOrderMedicineDropdownOpen[line._key] && (
-                                    <>
-                                      <div className="absolute z-20 top-full mt-0.5 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-40 overflow-y-auto">
-                                        {allMedicines
-                                          .filter((m) => {
-                                            const q = (
-                                              newOrderMedicineSearch[
-                                                line._key
-                                              ] ?? ""
-                                            ).toLowerCase();
-                                            if (!q) return true;
-                                            return (
-                                              m.name
-                                                .toLowerCase()
-                                                .includes(q) ||
-                                              m.company
-                                                .toLowerCase()
-                                                .includes(q) ||
-                                              m.strength
-                                                .toLowerCase()
-                                                .includes(q)
-                                            );
-                                          })
-                                          .map((m) => (
-                                            <button
-                                              type="button"
-                                              key={String(m.backendId)}
-                                              onClick={() => {
-                                                setNewOrderLines((prev) =>
-                                                  prev.map((l) =>
-                                                    l._key === line._key
-                                                      ? {
-                                                          ...l,
-                                                          medicineId:
-                                                            m.backendId,
-                                                          medicineName: m.name,
-                                                        }
-                                                      : l,
-                                                  ),
-                                                );
-                                                setNewOrderMedicineDropdownOpen(
-                                                  (prev) => ({
-                                                    ...prev,
-                                                    [line._key]: false,
-                                                  }),
-                                                );
-                                                setNewOrderMedicineSearch(
-                                                  (prev) => ({
-                                                    ...prev,
-                                                    [line._key]: "",
-                                                  }),
-                                                );
-                                              }}
-                                              className={`w-full text-left px-2 py-2 text-xs hover:bg-blue-50 transition-colors ${line.medicineId === m.backendId ? "bg-blue-50 text-blue-700 font-semibold" : "text-gray-900"}`}
-                                            >
-                                              <span className="font-medium">
-                                                {m.name}
-                                              </span>
-                                              {m.strength && (
-                                                <span className="text-gray-400 ml-1">
-                                                  ({m.strength})
-                                                </span>
-                                              )}
-                                              {m.company && (
-                                                <span className="text-gray-400 ml-1 text-[10px]">
-                                                  · {m.company}
-                                                </span>
-                                              )}
-                                            </button>
-                                          ))}
-                                        {allMedicines.filter((m) => {
-                                          const q = (
-                                            newOrderMedicineSearch[line._key] ??
-                                            ""
-                                          ).toLowerCase();
-                                          if (!q) return true;
-                                          return (
-                                            m.name.toLowerCase().includes(q) ||
-                                            m.company
-                                              .toLowerCase()
-                                              .includes(q) ||
-                                            m.strength.toLowerCase().includes(q)
-                                          );
-                                        }).length === 0 && (
-                                          <div className="px-2 py-2 text-xs text-gray-400 text-center">
-                                            No medicines found
-                                          </div>
-                                        )}
-                                      </div>
-                                      <div
-                                        className="fixed inset-0 z-10"
-                                        onClick={() =>
-                                          setNewOrderMedicineDropdownOpen(
-                                            (prev) => ({
-                                              ...prev,
-                                              [line._key]: false,
-                                            }),
-                                          )
-                                        }
-                                        onKeyDown={(e) =>
-                                          e.key === "Escape" &&
-                                          setNewOrderMedicineDropdownOpen(
-                                            (prev) => ({
-                                              ...prev,
-                                              [line._key]: false,
-                                            }),
-                                          )
-                                        }
-                                        aria-hidden="true"
-                                      />
-                                    </>
-                                  )}
-                                </div>
-                                <div className="col-span-1">
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    step="any"
-                                    placeholder="Qty"
-                                    value={line.qty}
-                                    onChange={(e) =>
-                                      setNewOrderLines((prev) =>
-                                        prev.map((l) =>
-                                          l._key === line._key
-                                            ? { ...l, qty: e.target.value }
-                                            : l,
-                                        ),
-                                      )
-                                    }
-                                    className="w-full h-9 border border-gray-300 rounded-lg px-1 text-xs text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                  />
-                                </div>
-                                <div className="col-span-1">
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    step="any"
-                                    placeholder="Bonus"
-                                    value={line.bonus}
-                                    onChange={(e) =>
-                                      setNewOrderLines((prev) =>
-                                        prev.map((l) =>
-                                          l._key === line._key
-                                            ? { ...l, bonus: e.target.value }
-                                            : l,
-                                        ),
-                                      )
-                                    }
-                                    className="w-full h-9 border border-emerald-300 bg-emerald-50 rounded-lg px-1 text-xs text-center text-emerald-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                  />
-                                </div>
-                                <div className="col-span-1">
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    max="100"
-                                    step="any"
-                                    placeholder="Dist%"
-                                    value={line.distDisc}
-                                    onChange={(e) =>
-                                      setNewOrderLines((prev) =>
-                                        prev.map((l) =>
-                                          l._key === line._key
-                                            ? {
-                                                ...l,
-                                                distDisc: e.target.value,
-                                                discount: e.target.value,
-                                              }
-                                            : l,
-                                        ),
-                                      )
-                                    }
-                                    className="w-full h-9 border border-amber-300 bg-amber-50 rounded-lg px-1 text-xs text-center text-amber-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                  />
-                                </div>
-                                <div className="col-span-1">
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    max="100"
-                                    step="any"
-                                    placeholder="Co%"
-                                    value={line.compDisc}
-                                    onChange={(e) =>
-                                      setNewOrderLines((prev) =>
-                                        prev.map((l) =>
-                                          l._key === line._key
-                                            ? { ...l, compDisc: e.target.value }
-                                            : l,
-                                        ),
-                                      )
-                                    }
-                                    className="w-full h-9 border border-blue-300 bg-blue-50 rounded-lg px-1 text-xs text-center text-blue-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                  />
-                                </div>
-                                <div className="col-span-2">
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    step="any"
-                                    placeholder="0"
-                                    value={
-                                      line.netRate === "0" ? "" : line.netRate
-                                    }
-                                    onChange={(e) =>
-                                      setNewOrderLines((prev) =>
-                                        prev.map((l) =>
-                                          l._key === line._key
-                                            ? {
-                                                ...l,
-                                                netRate: e.target.value || "0",
-                                              }
-                                            : l,
-                                        ),
-                                      )
-                                    }
-                                    className="w-full h-9 border border-purple-300 bg-purple-50 rounded-lg px-1 text-xs text-center text-purple-700 font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                  />
-                                </div>
-                                <div className="col-span-1 flex justify-center">
                                   <button
                                     type="button"
                                     onClick={() =>
@@ -10316,262 +10562,148 @@ function OfficeDashboard() {
                                         ),
                                       )
                                     }
-                                    className="w-8 h-8 flex items-center justify-center text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                    aria-label="Remove item"
+                                    className="text-red-400 hover:text-red-600"
                                   >
-                                    <Trash2 size={14} />
+                                    <X size={15} />
                                   </button>
                                 </div>
-                                <div className="col-span-1" />
+                                <div className="grid grid-cols-4 gap-1.5">
+                                  <div>
+                                    <span className="text-[10px] text-gray-500 font-medium block">
+                                      Qty
+                                    </span>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      value={line.qty}
+                                      onChange={(e) =>
+                                        setNewOrderLines((prev) =>
+                                          prev.map((l) =>
+                                            l._key === line._key
+                                              ? { ...l, qty: e.target.value }
+                                              : l,
+                                          ),
+                                        )
+                                      }
+                                      className="w-full h-8 text-xs border border-gray-200 rounded-lg px-2 text-center"
+                                    />
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] text-gray-500 font-medium block">
+                                      Bonus
+                                    </span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={line.bonus}
+                                      onChange={(e) =>
+                                        setNewOrderLines((prev) =>
+                                          prev.map((l) =>
+                                            l._key === line._key
+                                              ? { ...l, bonus: e.target.value }
+                                              : l,
+                                          ),
+                                        )
+                                      }
+                                      className="w-full h-8 text-xs border border-gray-200 rounded-lg px-2 text-center"
+                                    />
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] text-gray-500 font-medium block">
+                                      Dist%
+                                    </span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      max="100"
+                                      value={line.distDisc}
+                                      onChange={(e) =>
+                                        setNewOrderLines((prev) =>
+                                          prev.map((l) =>
+                                            l._key === line._key
+                                              ? {
+                                                  ...l,
+                                                  distDisc: e.target.value,
+                                                }
+                                              : l,
+                                          ),
+                                        )
+                                      }
+                                      className="w-full h-8 text-xs border border-gray-200 rounded-lg px-2 text-center"
+                                    />
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] text-gray-500 font-medium block">
+                                      Comp%
+                                    </span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      max="100"
+                                      value={line.compDisc}
+                                      onChange={(e) =>
+                                        setNewOrderLines((prev) =>
+                                          prev.map((l) =>
+                                            l._key === line._key
+                                              ? {
+                                                  ...l,
+                                                  compDisc: e.target.value,
+                                                }
+                                              : l,
+                                          ),
+                                        )
+                                      }
+                                      className="w-full h-8 text-xs border border-gray-200 rounded-lg px-2 text-center"
+                                    />
+                                  </div>
+                                </div>
                               </div>
-                            ))}
+                            );
+                          })
+                        )}
+                        {newOrderLines.length > 0 && (
+                          <div>
+                            <span className="text-xs font-semibold text-gray-600 mb-1 block">
+                              Notes | نوٹس
+                            </span>
+                            <textarea
+                              value={newOrderNotes}
+                              onChange={(e) => setNewOrderNotes(e.target.value)}
+                              rows={2}
+                              className="w-full text-sm border border-gray-200 rounded-xl p-2 resize-none"
+                              placeholder="Optional notes..."
+                            />
                           </div>
                         )}
                       </div>
-                      {/* Next button for items tab */}
-                      <div className="flex justify-end mt-4">
-                        <button
-                          type="button"
-                          onClick={() => setNewOrderTab("pharmacy")}
-                          disabled={newOrderLines.length === 0}
-                          className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-colors"
-                        >
-                          Next: Pharmacy →
-                        </button>
-                      </div>
-                    </>
-                  )}
-
-                  {/* TAB: Pharmacy */}
-                  {newOrderTab === "pharmacy" && (
-                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4 max-w-lg">
-                      {/* Admin badge */}
-                      <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
-                        <User size={14} className="text-blue-600 shrink-0" />
-                        <span className="text-xs font-semibold text-blue-700">
-                          Order by: Admin | آفس آرڈر
-                        </span>
-                      </div>
-
-                      {/* Pharmacy searchable select */}
-                      <div className="relative">
-                        <label
-                          htmlFor="new-order-pharmacy-search"
-                          className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
-                        >
-                          Pharmacy | فارمیسی *
-                        </label>
-                        <div className="relative">
-                          <Search
-                            size={14}
-                            className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
-                          />
-                          <input
-                            id="new-order-pharmacy-search"
-                            type="text"
-                            value={
-                              newOrderPharmacyId &&
-                              !newOrderPharmacyDropdownOpen
-                                ? (allPharmacies.find(
-                                    (p) => p.id === newOrderPharmacyId,
-                                  )?.name ?? newOrderPharmacySearch)
-                                : newOrderPharmacySearch
-                            }
-                            onChange={(e) => {
-                              setNewOrderPharmacySearch(e.target.value);
-                              setNewOrderPharmacyDropdownOpen(true);
-                              if (!e.target.value) setNewOrderPharmacyId(null);
-                            }}
-                            onFocus={() => {
-                              setNewOrderPharmacySearch("");
-                              setNewOrderPharmacyDropdownOpen(true);
-                            }}
-                            placeholder="Search pharmacy..."
-                            className="w-full h-10 text-sm border border-gray-300 rounded-lg pl-9 pr-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                            autoComplete="off"
-                          />
-                          {newOrderPharmacyId && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setNewOrderPharmacyId(null);
-                                setNewOrderPharmacySearch("");
-                              }}
-                              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                              aria-label="Clear pharmacy"
-                            >
-                              <X size={14} />
-                            </button>
-                          )}
-                        </div>
-                        {newOrderPharmacyDropdownOpen && (
-                          <div className="absolute z-20 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                            {allPharmacies
-                              .filter((p) =>
-                                newOrderPharmacySearch
-                                  ? p.name
-                                      .toLowerCase()
-                                      .includes(
-                                        newOrderPharmacySearch.toLowerCase(),
-                                      )
-                                  : true,
-                              )
-                              .map((p) => (
-                                <button
-                                  type="button"
-                                  key={String(p.id)}
-                                  onClick={() => {
-                                    setNewOrderPharmacyId(p.id);
-                                    setNewOrderPharmacySearch("");
-                                    setNewOrderPharmacyDropdownOpen(false);
-                                  }}
-                                  className={`w-full text-left px-3 py-2.5 text-sm hover:bg-blue-50 transition-colors ${newOrderPharmacyId === p.id ? "bg-blue-50 text-blue-700 font-semibold" : "text-gray-900"}`}
-                                >
-                                  {p.name}
-                                </button>
-                              ))}
-                            {allPharmacies.filter((p) =>
-                              newOrderPharmacySearch
-                                ? p.name
-                                    .toLowerCase()
-                                    .includes(
-                                      newOrderPharmacySearch.toLowerCase(),
-                                    )
-                                : true,
-                            ).length === 0 && (
-                              <div className="px-3 py-3 text-sm text-gray-400 text-center">
-                                No pharmacies found
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {newOrderPharmacyDropdownOpen && (
-                          <div
-                            className="fixed inset-0 z-10"
-                            onClick={() =>
-                              setNewOrderPharmacyDropdownOpen(false)
-                            }
-                            onKeyDown={(e) =>
-                              e.key === "Escape" &&
-                              setNewOrderPharmacyDropdownOpen(false)
-                            }
-                            aria-hidden="true"
-                          />
-                        )}
-                      </div>
-
-                      {/* Order summary */}
                       {newOrderLines.length > 0 && (
-                        <div className="bg-gray-50 rounded-lg p-3 space-y-1">
-                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                            Summary
-                          </p>
-                          <p className="text-sm text-gray-700">
-                            {newOrderLines.length} item(s)
-                          </p>
+                        <div className="p-4 border-t space-y-3">
+                          {!newOrderPharmacyId && (
+                            <p className="text-xs text-red-500 font-medium">
+                              ⚠ پہلے فارمیسی منتخب کریں | Select pharmacy first
+                            </p>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              handleSubmitNewOrder();
+                              setShowOfficeCart(false);
+                            }}
+                            disabled={
+                              !newOrderPharmacyId || isSubmittingNewOrder
+                            }
+                            data-ocid="add_order.submit_button"
+                            className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold rounded-xl transition-colors"
+                          >
+                            {isSubmittingNewOrder
+                              ? "Submitting... | جمع ہو رہا ہے..."
+                              : "Submit Order | آرڈر جمع کریں"}
+                          </button>
                         </div>
                       )}
-
-                      <div className="flex justify-end">
-                        <button
-                          type="button"
-                          onClick={() => setNewOrderTab("notes")}
-                          disabled={!newOrderPharmacyId}
-                          className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-colors"
-                        >
-                          Next: Notes →
-                        </button>
-                      </div>
                     </div>
-                  )}
-
-                  {/* TAB: Notes */}
-                  {newOrderTab === "notes" && (
-                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4 max-w-lg">
-                      <div>
-                        <label
-                          htmlFor="new-order-notes"
-                          className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
-                        >
-                          Notes | نوٹس
-                        </label>
-                        <textarea
-                          id="new-order-notes"
-                          value={newOrderNotes}
-                          onChange={(e) => setNewOrderNotes(e.target.value)}
-                          placeholder="Special instructions..."
-                          rows={4}
-                          className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
-                        />
-                      </div>
-                      <div className="flex justify-end">
-                        <button
-                          type="button"
-                          onClick={() => setNewOrderTab("submit")}
-                          className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors"
-                        >
-                          Next: Submit →
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* TAB: Submit Order */}
-                  {newOrderTab === "submit" && (
-                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4 max-w-lg">
-                      <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
-                        <User size={14} className="text-blue-600 shrink-0" />
-                        <span className="text-xs font-semibold text-blue-700">
-                          Order by: Admin | آفس آرڈر
-                        </span>
-                      </div>
-                      {/* Summary review */}
-                      <div className="bg-gray-50 rounded-lg p-4 space-y-2">
-                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                          Order Summary | خلاصہ
-                        </p>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-gray-500">Pharmacy</span>
-                          <span className="font-semibold text-gray-800">
-                            {allPharmacies.find(
-                              (p) => p.id === newOrderPharmacyId,
-                            )?.name ?? "—"}
-                          </span>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-gray-500">Items</span>
-                          <span className="font-semibold text-gray-800">
-                            {newOrderLines.length}
-                          </span>
-                        </div>
-                        {newOrderNotes && (
-                          <div className="text-sm text-gray-500 pt-1 border-t border-gray-200">
-                            <span className="font-semibold">Notes:</span>{" "}
-                            {newOrderNotes}
-                          </div>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleSubmitNewOrder}
-                        disabled={
-                          isSubmittingNewOrder ||
-                          !newOrderPharmacyId ||
-                          newOrderLines.length === 0
-                        }
-                        data-ocid="add_order.submit_button"
-                        className="w-full h-11 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold rounded-lg transition-colors"
-                      >
-                        {isSubmittingNewOrder ? (
-                          <Loader2 size={16} className="animate-spin" />
-                        ) : (
-                          <Plus size={16} />
-                        )}
-                        Submit Order | آرڈر جمع کریں
-                      </button>
-                    </div>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -12044,7 +12176,6 @@ function DeliveryDashboard() {
       return [];
     }
   });
-  const [isSyncingDeliveries, setIsSyncingDeliveries] = useState(false);
   // Pharmacy search for delivery
   const [pharmacySearch, setPharmacySearch] = useState("");
 
@@ -12113,55 +12244,31 @@ function DeliveryDashboard() {
     }
   }
 
-  async function handleSyncDeliveries() {
-    if (!actor || offlineDeliveries.length === 0) return;
-    setIsSyncingDeliveries(true);
-    let synced = 0;
-    const remaining: string[] = [];
-    for (const orderId of offlineDeliveries) {
-      const order = allOrders.find((o) => o.orderId === orderId);
-      if (!order) continue;
-      try {
-        await actor.updateOrderStatus(
-          order.backendId,
-          mapLocalStatusToBackend("delivered"),
-        );
-        synced++;
-      } catch {
-        remaining.push(orderId);
-      }
-    }
-    setOfflineDeliveries(remaining);
-    try {
-      localStorage.setItem(
-        "medorder_offline_deliveries",
-        JSON.stringify(remaining),
-      );
-    } catch {
-      /* ignore */
-    }
-    if (synced > 0) {
-      toast.success(`${synced} deliveries synced!`);
-      await loadData();
-    }
-    if (remaining.length > 0) {
-      toast.error(`${remaining.length} delivery/deliveries failed to sync`);
-    }
-    setIsSyncingDeliveries(false);
-  }
-
   const loadData = useCallback(async () => {
     if (!actor || isActorFetching) return;
     setIsLoading(true);
     try {
       const [rawOrders, rawPharmacies, rawMedicines] = await Promise.all([
-        actor.getActiveOrders(),
-        actor.getPharmacies(),
-        actor.getMedicines(),
+        actor.getActiveOrders().catch(async () => {
+          const all = await actor.getAllStaffOrders().catch(() => [] as any[]);
+          const now = Date.now();
+          const hrs48 = 48 * 60 * 60 * 1000;
+          return all.filter((o: any) => {
+            if (o.status !== "delivered") return true;
+            const ts = Number(o.timestamp / BigInt(1_000_000));
+            return now - ts < hrs48;
+          });
+        }),
+        actor.getPharmacies().catch(() => [] as any[]),
+        actor.getMedicines().catch(() => [] as any[]),
       ]);
 
-      const pharmacyMap = new Map(rawPharmacies.map((p) => [String(p.id), p]));
-      const medicineMap = new Map(rawMedicines.map((m) => [String(m.id), m]));
+      const pharmacyMap = new Map(
+        (rawPharmacies as any[]).map((p) => [String(p.id), p]),
+      );
+      const medicineMap = new Map(
+        (rawMedicines as any[]).map((m) => [String(m.id), m]),
+      );
 
       const mapped: DeliveryOrder[] = (rawOrders as unknown as RawOrder[]).map(
         (rec) => {
@@ -12219,6 +12326,23 @@ function DeliveryDashboard() {
       );
 
       setAllOrders(mapped); // all orders regardless of status
+      // Cache for offline use
+      try {
+        localStorage.setItem(
+          "medorder_cached_pharmacies",
+          JSON.stringify(rawPharmacies),
+        );
+      } catch {
+        /* ignore */
+      }
+      try {
+        localStorage.setItem(
+          "medorder_cached_orders_active",
+          JSON.stringify(mapped),
+        );
+      } catch {
+        /* ignore */
+      }
       const confirmed = mapped.filter((o) => o.status === "confirmed");
       confirmed.sort((a, b) => b.orderId.localeCompare(a.orderId));
       setPendingOrders(confirmed);
@@ -12240,10 +12364,35 @@ function DeliveryDashboard() {
         setPaymentsClearedAt(latestCleared);
       }
       setBackendError(null);
+
+      // Sync inventory stock to localStorage
+      actor
+        .getInventoryStock()
+        .then((stockArr) => {
+          for (const [medId, qty] of stockArr) {
+            setStock(medId, Number(qty));
+          }
+        })
+        .catch(() => {});
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Unknown error";
       setBackendError(msg);
       toast.error(`Backend error: ${msg}`);
+      // Load cached data for offline use
+      try {
+        const cachedOrders = localStorage.getItem(
+          "medorder_cached_orders_active",
+        );
+        if (cachedOrders) {
+          const parsed = JSON.parse(cachedOrders) as DeliveryOrder[];
+          setAllOrders(parsed);
+          const confirmed = parsed.filter((o) => o.status === "confirmed");
+          confirmed.sort((a, b) => b.orderId.localeCompare(a.orderId));
+          setPendingOrders(confirmed);
+        }
+      } catch {
+        /* ignore */
+      }
     } finally {
       setIsLoading(false);
     }
@@ -12469,34 +12618,6 @@ function DeliveryDashboard() {
           </div>
         </div>
       </header>
-      {/* Delivery offline banner */}
-      {isDeliveryOffline && (
-        <div className="flex items-center gap-2.5 bg-amber-500 text-white px-4 py-2.5 text-sm font-medium">
-          <WifiOff size={15} className="shrink-0" />
-          <span className="flex-1">
-            Offline Mode — deliveries saved locally
-            {offlineDeliveries.length > 0
-              ? ` (${offlineDeliveries.length} pending)`
-              : ""}
-          </span>
-          {offlineDeliveries.length > 0 && (
-            <button
-              type="button"
-              data-ocid="delivery.sync_button"
-              onClick={handleSyncDeliveries}
-              disabled={isSyncingDeliveries}
-              className="flex items-center gap-1.5 bg-white/25 hover:bg-white/40 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors disabled:opacity-60 shrink-0"
-            >
-              {isSyncingDeliveries ? (
-                <Loader2 size={12} className="animate-spin" />
-              ) : (
-                <RefreshCw size={12} />
-              )}
-              Sync
-            </button>
-          )}
-        </div>
-      )}
 
       {/* Location permission banner */}
       {!locationAsked && (
@@ -12681,9 +12802,32 @@ function DeliveryDashboard() {
                             {order.itemCount}
                           </span>{" "}
                           items ·{" "}
-                          <span className="font-bold text-gray-900">
+                          <span
+                            className={`font-bold ${order.returnItems && order.returnItems.length > 0 ? "line-through text-gray-400" : "text-gray-900"}`}
+                          >
                             {formatCurrency(order.totalAmount)}
                           </span>
+                          {order.returnItems &&
+                            order.returnItems.length > 0 &&
+                            (() => {
+                              const returnedValue = order.items
+                                .filter((item) =>
+                                  order.returnItems.some(
+                                    (r) => r.medicineId === item.medicineId,
+                                  ),
+                                )
+                                .reduce((sum, item) => sum + item.total, 0);
+                              const netAmount =
+                                order.totalAmount - returnedValue;
+                              return (
+                                <span className="ml-1.5 font-bold text-orange-700">
+                                  → {formatCurrency(netAmount)}{" "}
+                                  <span className="text-xs font-normal">
+                                    (returns minus)
+                                  </span>
+                                </span>
+                              );
+                            })()}
                         </div>
                       </div>
 
@@ -12723,7 +12867,18 @@ function DeliveryDashboard() {
                               order.paymentReceived ??
                               0,
                           );
-                          const balance = order.totalAmount - received;
+                          const returnedValue =
+                            order.returnItems && order.returnItems.length > 0
+                              ? order.items
+                                  .filter((item) =>
+                                    order.returnItems.some(
+                                      (r) => r.medicineId === item.medicineId,
+                                    ),
+                                  )
+                                  .reduce((sum, item) => sum + item.total, 0)
+                              : 0;
+                          const netPayable = order.totalAmount - returnedValue;
+                          const balance = netPayable - received;
                           if (received === 0) return null;
                           return (
                             <div
@@ -13027,14 +13182,8 @@ function MobileApp() {
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
   const [sideMenuOpen, setSideMenuOpen] = useState(false);
   const [backendError, setBackendError] = useState<string | null>(null);
-  // Offline mode
-  const [isOfflineMode, setIsOfflineMode] = useState(() => {
-    try {
-      return localStorage.getItem("medorder_offline_mode") === "true";
-    } catch {
-      return false;
-    }
-  });
+  // Offline mode (always false - banner removed)
+  const isOfflineMode = false;
   const [pendingOfflineOrders, setPendingOfflineOrders] = useState<Order[]>(
     () => {
       try {
@@ -13045,12 +13194,26 @@ function MobileApp() {
       }
     },
   );
-  const [isSyncing, setIsSyncing] = useState(false);
+  const [stockMap, setStockMap] = useState<Record<string, number>>(() => {
+    const map: Record<string, number> = {};
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith("medorder_stock_")) {
+          const id = key.replace("medorder_stock_", "");
+          const val = localStorage.getItem(key);
+          if (val !== null && val !== "") map[id] = Number(val);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return map;
+  });
 
   const { actor, isFetching: isActorFetching } = useActor();
 
   // ── Session persistence: restore login on page load ───────────────────
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally run once on mount
   useEffect(() => {
     const session = getSession();
     if (!session) return;
@@ -13078,8 +13241,32 @@ function MobileApp() {
       try {
         // Load both active (48hr) and history (1yr) orders in parallel
         const [activeRecords, historyRecords] = await Promise.all([
-          actorInstance.getActiveOrders(),
-          actorInstance.getHistoryOrders(),
+          actorInstance.getActiveOrders().catch(async () => {
+            const all = await actorInstance
+              .getAllStaffOrders()
+              .catch(() => [] as any[]);
+            const now = Date.now();
+            const hrs48 = 48 * 60 * 60 * 1000;
+            return all.filter((o: any) => {
+              if (o.status !== "delivered") return true;
+              const ts = Number(o.timestamp / BigInt(1_000_000));
+              return now - ts < hrs48;
+            });
+          }),
+          actorInstance.getHistoryOrders().catch(async () => {
+            const all = await actorInstance
+              .getAllStaffOrders()
+              .catch(() => [] as any[]);
+            const now = Date.now();
+            const hrs48 = 48 * 60 * 60 * 1000;
+            const yr1 = 365 * 24 * 60 * 60 * 1000;
+            return all.filter((o: any) => {
+              if (o.status !== "delivered") return false;
+              const ts = Number(o.timestamp / BigInt(1_000_000));
+              const age = now - ts;
+              return age >= hrs48 && age < yr1;
+            });
+          }),
         ]);
         const allRecords = [...activeRecords, ...historyRecords];
 
@@ -13172,11 +13359,30 @@ function MobileApp() {
         // Sort newest first
         filteredOrders.sort((a, b) => b.id.localeCompare(a.id));
         dispatch({ type: "SET_ORDERS", orders: filteredOrders });
+        // Cache orders for offline use
+        try {
+          localStorage.setItem(
+            "medorder_cached_orders_active",
+            JSON.stringify(filteredOrders),
+          );
+        } catch {
+          /* ignore */
+        }
         setBackendError(null);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Unknown error";
         setBackendError(msg);
         toast.error(`Backend error: ${msg}`);
+        // Load cached orders for offline use
+        try {
+          const cachedOrders = localStorage.getItem(
+            "medorder_cached_orders_active",
+          );
+          if (cachedOrders)
+            dispatch({ type: "SET_ORDERS", orders: JSON.parse(cachedOrders) });
+        } catch {
+          /* ignore */
+        }
       } finally {
         setIsLoadingOrders(false);
       }
@@ -13196,8 +13402,8 @@ function MobileApp() {
       try {
         // Load pharmacies and medicines in parallel
         const [backendPharmacies, backendMedicines] = await Promise.all([
-          actor.getPharmacies(),
-          actor.getMedicines(),
+          actor.getPharmacies().catch(() => [] as any[]),
+          actor.getMedicines().catch(() => [] as any[]),
         ]);
 
         let pharmacyList: Pharmacy[];
@@ -13205,14 +13411,16 @@ function MobileApp() {
 
         // ── Pharmacies ──
         if (backendPharmacies.length === 0) {
-          // Seed backend
+          // Seed backend (ignore errors -- canister may not support addPharmacy yet)
           await Promise.all(
             PHARMACY_SEEDS.map((s) =>
-              actor.addPharmacy(s.name, s.contact, s.location, "", "", ""),
+              actor
+                .addPharmacy(s.name, s.contact, s.location, "", "", "")
+                .catch(() => null),
             ),
-          );
+          ).catch(() => {});
           // Reload after seeding
-          const reloaded = await actor.getPharmacies();
+          const reloaded = await actor.getPharmacies().catch(() => [] as any[]);
           pharmacyList = reloaded.map((p) => {
             const { address, area } = parseLocation(p.location);
             return {
@@ -13303,7 +13511,90 @@ function MobileApp() {
 
         setPharmacies(pharmacyList);
         setMedicines(medicineList);
+        // Cache for offline use
+        try {
+          localStorage.setItem(
+            "medorder_cached_pharmacies",
+            JSON.stringify(pharmacyList),
+          );
+        } catch {
+          /* ignore */
+        }
+        try {
+          localStorage.setItem(
+            "medorder_cached_medicines",
+            JSON.stringify(medicineList),
+          );
+        } catch {
+          /* ignore */
+        }
         setBackendError(null);
+
+        // Sync inventory stock from backend
+        // If backend returns data, merge with localStorage (don't wipe localStorage if backend is empty/zero)
+        actor
+          .getInventoryStock()
+          .then((stockArr) => {
+            // Build localStorage map first as fallback
+            const localMap: Record<string, number> = {};
+            try {
+              for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key?.startsWith("medorder_stock_")) {
+                  const id = key.replace("medorder_stock_", "");
+                  const val = localStorage.getItem(key);
+                  if (val !== null && val !== "") localMap[id] = Number(val);
+                }
+              }
+            } catch {
+              /* ignore */
+            }
+
+            const backendMap: Record<string, number> = {};
+            for (const [medId, qty] of stockArr) {
+              backendMap[String(medId)] = Number(qty);
+            }
+
+            // Merge: backend value wins IF it is > 0; otherwise keep localStorage value
+            // This prevents canister-stop/reset from wiping all stock display
+            const mergedMap: Record<string, number> = { ...localMap };
+            for (const [id, qty] of Object.entries(backendMap)) {
+              if (qty > 0) {
+                mergedMap[id] = qty;
+              } else if (!(id in localMap)) {
+                mergedMap[id] = qty; // backend says 0 and no local fallback
+              }
+              // if backend says 0 but local has > 0, keep local (canister may be stale)
+            }
+
+            // Update localStorage with merged values
+            try {
+              for (const [id, qty] of Object.entries(mergedMap)) {
+                localStorage.setItem(`medorder_stock_${id}`, String(qty));
+              }
+            } catch {
+              /* ignore */
+            }
+
+            setStockMap({ ...mergedMap });
+          })
+          .catch(() => {
+            // Backend failed -- use localStorage as fallback
+            const localMap: Record<string, number> = {};
+            try {
+              for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key?.startsWith("medorder_stock_")) {
+                  const id = key.replace("medorder_stock_", "");
+                  const val = localStorage.getItem(key);
+                  if (val !== null && val !== "") localMap[id] = Number(val);
+                }
+              }
+            } catch {
+              /* ignore */
+            }
+            if (Object.keys(localMap).length > 0) setStockMap({ ...localMap });
+          });
 
         // Load orders
         await loadOrders(
@@ -13317,6 +13608,17 @@ function MobileApp() {
         const msg = e instanceof Error ? e.message : "Unknown error";
         setBackendError(msg);
         toast.error(`Failed to load data: ${msg}`);
+        // Load cached data for offline use
+        try {
+          const cachedPharma = localStorage.getItem(
+            "medorder_cached_pharmacies",
+          );
+          const cachedMeds = localStorage.getItem("medorder_cached_medicines");
+          if (cachedPharma) setPharmacies(JSON.parse(cachedPharma));
+          if (cachedMeds) setMedicines(JSON.parse(cachedMeds));
+        } catch {
+          /* ignore */
+        }
       } finally {
         setIsLoadingPharmacies(false);
         setIsLoadingMedicines(false);
@@ -13351,75 +13653,6 @@ function MobileApp() {
   const isLoadingData =
     isLoadingPharmacies || isLoadingMedicines || isLoadingOrders;
 
-  // Offline mode toggle
-  function handleToggleOfflineMode() {
-    const next = !isOfflineMode;
-    setIsOfflineMode(next);
-    try {
-      localStorage.setItem("medorder_offline_mode", String(next));
-    } catch {
-      /* ignore */
-    }
-    if (!next && pendingOfflineOrders.length > 0) {
-      toast.info(
-        `${pendingOfflineOrders.length} offline order(s) pending — tap Sync to upload`,
-      );
-    }
-  }
-
-  // Sync offline orders to backend
-  async function handleSyncOfflineOrders() {
-    if (!actor || pendingOfflineOrders.length === 0) return;
-    setIsSyncing(true);
-    let synced = 0;
-    const remaining: Order[] = [];
-    for (const order of pendingOfflineOrders) {
-      try {
-        const pharmacy = pharmacies.find((p) => p.id === order.pharmacyId);
-        if (!pharmacy) {
-          remaining.push(order);
-          continue;
-        }
-        const lines = order.items.map((item) => ({
-          medicineId: BigInt(item.medicineId),
-          quantity: Math.round(item.qty),
-          bonusQty: BigInt(item.bonusQty ?? 0),
-          discountPercent: BigInt(0),
-          distributionDiscount: BigInt(0),
-          companyDiscount: BigInt(0),
-          netRate: BigInt(0),
-        }));
-        await actor.createOrder(
-          pharmacy.backendId,
-          lines,
-          state.currentStaff?.name ?? "",
-          state.currentStaff?.id ?? "",
-          order.notes ?? "",
-        );
-        synced++;
-      } catch {
-        remaining.push(order);
-      }
-    }
-    setPendingOfflineOrders(remaining);
-    try {
-      localStorage.setItem(
-        "medorder_offline_orders",
-        JSON.stringify(remaining),
-      );
-    } catch {
-      /* ignore */
-    }
-    if (synced > 0) {
-      toast.success(`${synced} offline order(s) synced!`);
-      handleRefreshOrders();
-    }
-    if (remaining.length > 0) {
-      toast.error(`${remaining.length} order(s) failed to sync`);
-    }
-    setIsSyncing(false);
-  }
-
   // ── Called by ManageScreen after add/delete to sync state ────────────
   const handleManageDataReloaded = useCallback(
     (newPharmacies: Pharmacy[], newMedicines: Medicine[]) => {
@@ -13437,6 +13670,16 @@ function MobileApp() {
           <LoginScreen
             dispatch={dispatch}
             onRoleLogin={(role, username, displayName) => {
+              if (role === "admin") {
+                setSession({ username, role, displayName });
+                window.location.href = "/office";
+                return;
+              }
+              if (role === "delivery") {
+                setSession({ username, role, displayName });
+                window.location.href = "/delivery";
+                return;
+              }
               dispatch({
                 type: "LOGIN",
                 staff: { id: username, name: displayName, area: "" },
@@ -13454,8 +13697,6 @@ function MobileApp() {
             isLoadingData={isLoadingData}
             onRefreshOrders={handleRefreshOrders}
             onOpenMenu={() => setSideMenuOpen(true)}
-            isOfflineMode={isOfflineMode}
-            pendingOfflineCount={pendingOfflineOrders.length}
             actor={actor}
           />
         );
@@ -13478,6 +13719,7 @@ function MobileApp() {
             onOrderSubmitted={handleRefreshOrders}
             actor={actor}
             isOfflineMode={isOfflineMode}
+            stockMap={stockMap}
             onSaveOfflineOrder={(order) => {
               const updated = [...pendingOfflineOrders, order];
               setPendingOfflineOrders(updated);
@@ -13587,11 +13829,6 @@ function MobileApp() {
         onClose={() => setSideMenuOpen(false)}
         navigate={navigate}
         dispatch={dispatch}
-        isOfflineMode={isOfflineMode}
-        onToggleOfflineMode={handleToggleOfflineMode}
-        pendingOfflineCount={pendingOfflineOrders.length}
-        onSync={handleSyncOfflineOrders}
-        isSyncing={isSyncing}
       />
     </div>
   );
@@ -13725,14 +13962,8 @@ function OfficeAuthGuard() {
             setAuthed(true);
           } else if (role === "staff") {
             window.location.href = "/";
-            toast.error(
-              "Access denied — redirecting to Staff Dashboard | رسائی ممنوع",
-            );
           } else if (role === "delivery") {
             window.location.href = "/delivery";
-            toast.error(
-              "Access denied — redirecting to Delivery Dashboard | رسائی ممنوع",
-            );
           }
         }}
       />
@@ -13759,14 +13990,8 @@ function DeliveryAuthGuard() {
             setAuthed(true);
           } else if (role === "staff") {
             window.location.href = "/";
-            toast.error(
-              "Access denied — redirecting to Staff Dashboard | رسائی ممنوع",
-            );
           } else if (role === "admin") {
             window.location.href = "/office";
-            toast.error(
-              "Access denied — redirecting to Office Dashboard | رسائی ممنوع",
-            );
           }
         }}
       />
@@ -13774,6 +13999,37 @@ function DeliveryAuthGuard() {
   }
 
   return <DeliveryDashboard />;
+}
+
+// ─── Auth Guard: wraps SuperAdminDashboard ───────────────────────────────────
+
+function SuperAdminAuthGuard() {
+  const session = (() => {
+    try {
+      const s = localStorage.getItem("medorder_session");
+      return s ? JSON.parse(s) : null;
+    } catch {
+      return null;
+    }
+  })();
+  const [authed, setAuthed] = useState<boolean>(
+    () => session?.role === "superadmin",
+  );
+
+  if (!authed) {
+    return (
+      <LoginScreen
+        dispatch={() => {}}
+        onRoleLogin={(role) => {
+          if (role === "superadmin") setAuthed(true);
+          else if (role === "admin") window.location.href = "/office";
+          else if (role === "delivery") window.location.href = "/delivery";
+          else window.location.href = "/";
+        }}
+      />
+    );
+  }
+  return <SuperAdminDashboard />;
 }
 
 // ─── App Root (URL Router) ────────────────────────────────────────────────────
@@ -13792,6 +14048,13 @@ export default function App() {
       <>
         <Toaster richColors position="top-center" />
         <DeliveryAuthGuard />
+      </>
+    );
+  if (pathname === "/superadmin")
+    return (
+      <>
+        <Toaster richColors position="top-center" />
+        <SuperAdminAuthGuard />
       </>
     );
   if (pathname === "/test") return <TestView />;

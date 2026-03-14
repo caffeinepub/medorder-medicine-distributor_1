@@ -193,6 +193,13 @@ export enum OrderStatus {
     delivered = "delivered",
     confirmed = "confirmed"
 }
+export interface Distributor {
+    id: bigint;
+    name: string;
+    adminUsername: string;
+    adminPassword: string;
+    createdAt: bigint;
+}
 export interface backendInterface {
     addCustomer(name: string, customerType: CustomerType, address: string, area: string, contactNo: string, groupName: string, code: string, ntn: string, cnic: string): Promise<bigint>;
     addMedicine(name: string, price: bigint, description: string, company: string, strength: string, packSize: string, genericName: string, batchNo: string, medicineType: string): Promise<bigint>;
@@ -227,6 +234,12 @@ export interface backendInterface {
     updatePharmacy(id: bigint, name: string, contact: string, location: string, code: string, ntn: string, cnic: string): Promise<boolean>;
     updateStaffLocation(username: string, role: string, lat: number, lng: number, accuracy: number, updatedAt: string): Promise<boolean>;
     verifyPassword(name: string, password: string): Promise<boolean>;
+    addDistributor(arg0: string, arg1: string, arg2: string): Promise<bigint>;
+    changeSuperAdminPassword(arg0: string, arg1: string): Promise<boolean>;
+    deleteDistributor(arg0: bigint): Promise<boolean>;
+    getDistributors(): Promise<Array<Distributor>>;
+    updateDistributor(arg0: bigint, arg1: string, arg2: string, arg3: string): Promise<boolean>;
+    verifySuperAdmin(arg0: string): Promise<boolean>;
 }
 import type { Customer as _Customer, CustomerType as _CustomerType, MedicineItem as _MedicineItem, OrderRecord as _OrderRecord, OrderStatus as _OrderStatus, Principal as _Principal, ReturnItem as _ReturnItem, Time as _Time } from "./declarations/backend.did.d.ts";
 export class Backend implements backendInterface {
@@ -678,6 +691,26 @@ export class Backend implements backendInterface {
             const result = await this.actor.updateStaffLocation(arg0, arg1, arg2, arg3, arg4, arg5);
             return result;
         }
+    }
+    async addDistributor(arg0: string, arg1: string, arg2: string): Promise<bigint> {
+        const result = await (this.actor as any).addDistributor(arg0, arg1, arg2);
+        return BigInt(result as any);
+    }
+    async changeSuperAdminPassword(arg0: string, arg1: string): Promise<boolean> {
+        return await (this.actor as any).changeSuperAdminPassword(arg0, arg1);
+    }
+    async deleteDistributor(arg0: bigint): Promise<boolean> {
+        return await (this.actor as any).deleteDistributor(arg0);
+    }
+    async getDistributors(): Promise<Array<Distributor>> {
+        const result = await (this.actor as any).getDistributors();
+        return result as Array<Distributor>;
+    }
+    async updateDistributor(arg0: bigint, arg1: string, arg2: string, arg3: string): Promise<boolean> {
+        return await (this.actor as any).updateDistributor(arg0, arg1, arg2, arg3);
+    }
+    async verifySuperAdmin(arg0: string): Promise<boolean> {
+        return await (this.actor as any).verifySuperAdmin(arg0);
     }
     async verifyPassword(arg0: string, arg1: string): Promise<boolean> {
         if (this.processError) {

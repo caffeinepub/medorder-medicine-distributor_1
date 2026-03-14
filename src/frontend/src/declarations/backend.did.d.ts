@@ -107,6 +107,13 @@ export interface StaffLocation {
   'accuracy' : number,
 }
 export type Time = bigint;
+export interface Distributor {
+  'id' : bigint,
+  'name' : string,
+  'adminUsername' : string,
+  'adminPassword' : string,
+  'createdAt' : Time,
+}
 export interface _SERVICE {
   'addCustomer' : ActorMethod<
     [
@@ -195,6 +202,12 @@ export interface _SERVICE {
     boolean
   >,
   'verifyPassword' : ActorMethod<[string, string], boolean>,
+  'addDistributor' : ActorMethod<[string, string, string], bigint>,
+  'changeSuperAdminPassword' : ActorMethod<[string, string], boolean>,
+  'deleteDistributor' : ActorMethod<[bigint], boolean>,
+  'getDistributors' : ActorMethod<[], Array<Distributor>>,
+  'updateDistributor' : ActorMethod<[bigint, string, string, string], boolean>,
+  'verifySuperAdmin' : ActorMethod<[string], boolean>,
 }
 export declare const idlService: IDL.ServiceClass;
 export declare const idlInitArgs: IDL.Type[];

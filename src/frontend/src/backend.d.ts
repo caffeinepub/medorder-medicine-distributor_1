@@ -100,6 +100,13 @@ export interface ReturnItem {
     medicineId: bigint;
     returnedQty: bigint;
 }
+export interface Distributor {
+    id: bigint;
+    name: string;
+    adminUsername: string;
+    adminPassword: string;
+    createdAt: Time;
+}
 export enum CustomerType {
     hospital = "hospital",
     doctor = "doctor",
@@ -145,4 +152,10 @@ export interface backendInterface {
     updatePharmacy(id: bigint, name: string, contact: string, location: string, code: string, ntn: string, cnic: string): Promise<boolean>;
     updateStaffLocation(username: string, role: string, lat: number, lng: number, accuracy: number, updatedAt: string): Promise<boolean>;
     verifyPassword(name: string, password: string): Promise<boolean>;
+    verifySuperAdmin(password: string): Promise<boolean>;
+    changeSuperAdminPassword(oldPassword: string, newPassword: string): Promise<boolean>;
+    addDistributor(name: string, adminUsername: string, adminPassword: string): Promise<bigint>;
+    deleteDistributor(id: bigint): Promise<boolean>;
+    getDistributors(): Promise<Array<Distributor>>;
+    updateDistributor(id: bigint, name: string, adminUsername: string, adminPassword: string): Promise<boolean>;
 }

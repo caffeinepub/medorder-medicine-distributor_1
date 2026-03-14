@@ -113,6 +113,14 @@ export const PurchaseRecord = IDL.Record({
   'medicineType' : IDL.Text,
 });
 
+export const Distributor = IDL.Record({
+  'id' : IDL.Nat,
+  'name' : IDL.Text,
+  'adminUsername' : IDL.Text,
+  'adminPassword' : IDL.Text,
+  'createdAt' : Time,
+});
+
 export const idlService = IDL.Service({
   'addCustomer' : IDL.Func(
       [
@@ -345,6 +353,13 @@ export const idlFactory = ({ IDL }) => {
     'medicineType' : IDL.Text,
   });
   
+  const Distributor = IDL.Record({
+    'id' : IDL.Nat,
+    'name' : IDL.Text,
+    'adminUsername' : IDL.Text,
+    'adminPassword' : IDL.Text,
+    'createdAt' : Time,
+  });
   return IDL.Service({
     'addCustomer' : IDL.Func(
         [
@@ -466,6 +481,12 @@ export const idlFactory = ({ IDL }) => {
         [IDL.Bool],
         [],
       ),
+    'addDistributor' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [IDL.Nat], []),
+    'changeSuperAdminPassword' : IDL.Func([IDL.Text, IDL.Text], [IDL.Bool], []),
+    'deleteDistributor' : IDL.Func([IDL.Nat], [IDL.Bool], []),
+    'getDistributors' : IDL.Func([], [IDL.Vec(Distributor)], ['query']),
+    'updateDistributor' : IDL.Func([IDL.Nat, IDL.Text, IDL.Text, IDL.Text], [IDL.Bool], []),
+    'verifySuperAdmin' : IDL.Func([IDL.Text], [IDL.Bool], ['query']),
     'verifyPassword' : IDL.Func([IDL.Text, IDL.Text], [IDL.Bool], ['query']),
   });
 };
