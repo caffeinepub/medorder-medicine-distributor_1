@@ -2,14 +2,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>MedOrder</title>
+    <title>MedFlow</title>
     <link rel="manifest" href="/manifest.json" />
-    <meta name="theme-color" content="#3b5bff" />
+    <meta name="theme-color" content="#1e40af" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="MedOrder" />
-    <link rel="apple-touch-icon" href="/icon.svg" />
-    <meta name="description" content="Mian Medicine Distributors - Order Management App" />
+    <meta name="apple-mobile-web-app-title" content="MedFlow" />
+    <link rel="apple-touch-icon" href="/assets/generated/medflow-icon.dim_512x512.png" />
+    <meta name="description" content="Medicine Distributors - Order Management App" />
   </head>
   <body>
     <div id="root"></div>
@@ -19,7 +19,6 @@
         window.addEventListener('load', function () {
           navigator.serviceWorker.register('/sw.js', { scope: '/' })
             .then(function(reg) {
-              // Force update if new SW waiting
               reg.addEventListener('updatefound', function() {
                 var newWorker = reg.installing;
                 if (newWorker) {

@@ -1,0 +1,289 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Outfit – clean modern sans for body */
+@font-face {
+  font-family: "Outfit";
+  src: url("/assets/fonts/Outfit-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+/* Plus Jakarta Sans – polished UI headings */
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("/assets/fonts/PlusJakartaSans-Variable.woff2") format("woff2");
+  font-weight: 200 800;
+  font-display: swap;
+}
+
+@layer base {
+  :root {
+    --radius: 0.75rem;
+
+    /* Medical Blue Palette */
+    --background: 0.98 0.005 220;
+    --foreground: 0.18 0.04 250;
+
+    --card: 1 0 0;
+    --card-foreground: 0.18 0.04 250;
+
+    --popover: 1 0 0;
+    --popover-foreground: 0.18 0.04 250;
+
+    /* Primary: Rich medical blue */
+    --primary: 0.42 0.18 255;
+    --primary-foreground: 0.99 0 0;
+
+    /* Secondary: Light blue tint */
+    --secondary: 0.93 0.04 230;
+    --secondary-foreground: 0.32 0.12 255;
+
+    --muted: 0.94 0.02 230;
+    --muted-foreground: 0.52 0.04 250;
+
+    /* Accent: Teal-blue accent */
+    --accent: 0.91 0.06 220;
+    --accent-foreground: 0.28 0.14 255;
+
+    --destructive: 0.577 0.245 27.325;
+    --destructive-foreground: 0.985 0 0;
+
+    --border: 0.88 0.03 230;
+    --input: 0.88 0.03 230;
+    --ring: 0.42 0.18 255;
+
+    /* Status colors */
+    --status-pending: 0.72 0.15 60;
+    --status-pending-bg: 0.97 0.05 70;
+    --status-confirmed: 0.48 0.16 255;
+    --status-confirmed-bg: 0.93 0.06 240;
+    --status-delivered: 0.52 0.18 142;
+    --status-delivered-bg: 0.93 0.06 145;
+
+    /* Blue gradient header */
+    --header-from: 0.38 0.19 255;
+    --header-to: 0.32 0.22 270;
+
+    --chart-1: 0.646 0.222 41.116;
+    --chart-2: 0.6 0.118 184.704;
+    --chart-3: 0.398 0.07 227.392;
+    --chart-4: 0.828 0.189 84.429;
+    --chart-5: 0.769 0.188 70.08;
+
+    --sidebar: 0.985 0 0;
+    --sidebar-foreground: 0.145 0 0;
+    --sidebar-primary: 0.205 0 0;
+    --sidebar-primary-foreground: 0.985 0 0;
+    --sidebar-accent: 0.97 0 0;
+    --sidebar-accent-foreground: 0.205 0 0;
+    --sidebar-border: 0.922 0 0;
+    --sidebar-ring: 0.708 0 0;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Outfit", sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: "Plus Jakarta Sans", sans-serif;
+  }
+}
+
+/* App container - mobile first, centered on desktop */
+.app-container {
+  max-width: 430px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  position: relative;
+  background: oklch(var(--background));
+  box-shadow: 0 0 80px oklch(0.42 0.18 255 / 0.08);
+}
+
+/* Screen transitions */
+.screen-enter {
+  animation: slideIn 0.2s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Header gradient */
+.header-gradient {
+  background: linear-gradient(
+    135deg,
+    oklch(var(--header-from)),
+    oklch(var(--header-to))
+  );
+}
+
+/* Bottom nav active state */
+.nav-active {
+  color: oklch(var(--primary));
+}
+
+/* Status badge variants */
+.badge-pending {
+  background: oklch(var(--status-pending-bg));
+  color: oklch(0.45 0.15 55);
+  border: 1px solid oklch(0.82 0.1 60);
+}
+
+.badge-confirmed {
+  background: oklch(var(--status-confirmed-bg));
+  color: oklch(0.3 0.16 255);
+  border: 1px solid oklch(0.78 0.1 240);
+}
+
+.badge-delivered {
+  background: oklch(var(--status-delivered-bg));
+  color: oklch(0.32 0.16 145);
+  border: 1px solid oklch(0.78 0.1 145);
+}
+
+/* Cart fab */
+.cart-fab {
+  background: linear-gradient(
+    135deg,
+    oklch(var(--header-from)),
+    oklch(var(--header-to))
+  );
+  box-shadow: 0 4px 20px oklch(0.42 0.18 255 / 0.4);
+}
+
+/* Medicine card qty controls */
+.qty-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.qty-btn-minus {
+  background: oklch(0.93 0.04 230);
+  color: oklch(0.32 0.12 255);
+}
+
+.qty-btn-plus {
+  background: linear-gradient(
+    135deg,
+    oklch(var(--header-from)),
+    oklch(var(--header-to))
+  );
+  color: white;
+}
+
+.qty-btn:active {
+  transform: scale(0.92);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(0.82 0.06 230);
+  border-radius: 2px;
+}
+
+/* Category tab pill */
+.cat-tab {
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: 1.5px solid transparent;
+}
+
+.cat-tab-active {
+  background: linear-gradient(
+    135deg,
+    oklch(var(--header-from)),
+    oklch(var(--header-to))
+  );
+  color: white;
+  border-color: transparent;
+}
+
+.cat-tab-inactive {
+  background: oklch(1 0 0);
+  color: oklch(0.45 0.06 250);
+  border-color: oklch(0.88 0.03 230);
+}
+
+.cat-tab-inactive:hover {
+  border-color: oklch(0.72 0.12 255);
+  color: oklch(0.32 0.14 255);
+}
+
+/* Stat cards */
+.stat-card {
+  background: white;
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: 0 2px 12px oklch(0.42 0.18 255 / 0.08);
+  border: 1px solid oklch(0.92 0.03 230);
+}
+
+/* Bottom sheet overlay */
+.sheet-overlay {
+  position: fixed;
+  inset: 0;
+  background: oklch(0.1 0.04 255 / 0.4);
+  z-index: 40;
+  backdrop-filter: blur(2px);
+}
+
+.sheet-content {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 430px;
+  background: white;
+  border-radius: 20px 20px 0 0;
+  z-index: 50;
+  max-height: 85dvh;
+  overflow-y: auto;
+  animation: sheetUp 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes sheetUp {
+  from {
+    transform: translateX(-50%) translateY(100%);
+  }
+  to {
+    transform: translateX(-50%) translateY(0);
+  }
+}

@@ -8,10 +8,12 @@ import {
   BarChart2,
   Beaker,
   Building2,
+  Calculator,
   Calendar,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   ChevronUp,
   Clock,
   CreditCard,
@@ -31,6 +33,7 @@ import {
   PillIcon,
   Plus,
   Printer,
+  Receipt,
   RefreshCw,
   Search,
   SendHorizonal,
@@ -50,6 +53,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { toast } from "sonner";
+import EstimatedBillingScreen from "./EstimatedBillingScreen";
 import SuperAdminDashboard from "./SuperAdminDashboard";
 import type {
   OrderStatus as BackendOrderStatus,
@@ -83,60 +87,11 @@ const USER_DB: AppUser[] = [
     role: "admin",
     displayName: "Office Admin",
   },
-  // Staff/Bookers
-  {
-    username: "booker1",
-    password: "Staff@123",
-    role: "staff",
-    displayName: "Booker One",
-  },
-  {
-    username: "booker2",
-    password: "Staff@123",
-    role: "staff",
-    displayName: "Booker Two",
-  },
-  {
-    username: "booker3",
-    password: "Staff@123",
-    role: "staff",
-    displayName: "Booker Three",
-  },
-  {
-    username: "booker4",
-    password: "Staff@123",
-    role: "staff",
-    displayName: "Booker Four",
-  },
-  {
-    username: "booker5",
-    password: "Staff@123",
-    role: "staff",
-    displayName: "Booker Five",
-  },
-  // Delivery boys
-  {
-    username: "delivery1",
-    password: "Del@123",
-    role: "delivery",
-    displayName: "Delivery One",
-  },
-  {
-    username: "delivery2",
-    password: "Del@123",
-    role: "delivery",
-    displayName: "Delivery Two",
-  },
-  {
-    username: "delivery3",
-    password: "Del@123",
-    role: "delivery",
-    displayName: "Delivery Three",
-  },
 ];
 
 const SESSION_KEY = "medorder_session";
 const CUSTOM_USERS_KEY = "medorder_custom_users";
+const HIDDEN_BUILTIN_USERS_KEY = "medorder_hidden_builtin_users";
 
 function getCustomUsers(): AppUser[] {
   try {
@@ -162,7 +117,13 @@ function lookupUser(username: string, password: string): AppUser | null {
   );
 }
 
-type SessionData = { username: string; role: UserRole; displayName: string };
+type SessionData = {
+  username: string;
+  role: UserRole;
+  displayName: string;
+  distributorId?: number;
+  staffId?: number;
+};
 
 function getSession(): SessionData | null {
   try {
@@ -942,7 +903,7 @@ function SideDrawer({
         >
           <div className="flex items-center gap-2.5">
             <Package size={22} />
-            <span className="font-bold text-lg font-heading">MedOrder</span>
+            <span className="font-bold text-lg font-heading">MedFlow</span>
           </div>
           <button
             type="button"
@@ -1010,7 +971,12 @@ function LoginScreen({
   onRoleLogin,
 }: {
   dispatch: React.Dispatch<Action>;
-  onRoleLogin?: (role: UserRole, username: string, displayName: string) => void;
+  onRoleLogin?: (
+    role: UserRole,
+    username: string,
+    displayName: string,
+    distributorId?: number,
+  ) => void;
 }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -1071,30 +1037,117 @@ function LoginScreen({
     }
     setIsLoggingIn(true);
     try {
+      // First: try local user lookup (hardcoded + custom users)
       const user = lookupUser(username.trim(), password.trim());
-      if (!user) {
-        setError("Invalid username or password | غلط یوزر نیم یا پاس ورڈ");
+      if (user) {
+        const sessionData: SessionData = {
+          username: user.username,
+          role: user.role,
+          displayName: user.displayName,
+        };
+        setSession(sessionData);
+
+        if (onRoleLogin) {
+          onRoleLogin(user.role, user.username, user.displayName);
+          return;
+        }
+
+        dispatch({
+          type: "LOGIN",
+          staff: { id: user.username, name: user.displayName, area: "" },
+          role: user.role,
+        });
         return;
       }
-      // Save session for persistence
-      const sessionData: SessionData = {
-        username: user.username,
-        role: user.role,
-        displayName: user.displayName,
-      };
-      setSession(sessionData);
 
-      if (onRoleLogin) {
-        onRoleLogin(user.role, user.username, user.displayName);
-        return;
+      // Second: try backend distributor login
+      if (loginActor) {
+        try {
+          const distributorId = await loginActor.verifyDistributorLogin(
+            username.trim(),
+            password.trim(),
+          );
+          if (distributorId !== null) {
+            const distId = Number(distributorId);
+            // Fetch distributor name for displayName
+            let displayName = username.trim();
+            try {
+              const dist = await loginActor.getDistributorById(BigInt(distId));
+              if (dist) displayName = dist.name;
+            } catch {
+              // fallback to username if name fetch fails
+            }
+            const sessionData: SessionData = {
+              username: username.trim(),
+              role: "admin",
+              displayName,
+              distributorId: distId,
+            };
+            setSession(sessionData);
+
+            if (onRoleLogin) {
+              onRoleLogin("admin", username.trim(), displayName, distId);
+              return;
+            }
+
+            dispatch({
+              type: "LOGIN",
+              staff: { id: username.trim(), name: displayName, area: "" },
+              role: "admin",
+            });
+            return;
+          }
+        } catch {
+          // Backend unavailable — fall through to error
+        }
+
+        // Third: try new staff/delivery login
+        try {
+          const staffResult = await (
+            loginActor as any
+          ).verifyStaffLoginForDistributor(username.trim(), password.trim());
+          if (staffResult && staffResult.length > 0) {
+            const sr = staffResult[0];
+            const distId = Number(sr.distributorId);
+            const staffId = Number(sr.staffId);
+            const userRole = sr.role === "delivery" ? "delivery" : "staff";
+            const sessionData: SessionData = {
+              username: username.trim(),
+              role: userRole as UserRole,
+              displayName: sr.displayName || username.trim(),
+              distributorId: distId,
+              staffId,
+            };
+            setSession(sessionData);
+
+            if (onRoleLogin) {
+              onRoleLogin(
+                userRole as UserRole,
+                username.trim(),
+                sr.displayName || username.trim(),
+                distId,
+              );
+              return;
+            }
+
+            dispatch({
+              type: "LOGIN",
+              staff: {
+                id: username.trim(),
+                name: sr.displayName || username.trim(),
+                area: "",
+              },
+              role: userRole as UserRole,
+            });
+            return;
+          }
+        } catch {
+          // Staff login backend unavailable
+        }
       }
 
-      // For staff role: dispatch LOGIN to reducer
-      dispatch({
-        type: "LOGIN",
-        staff: { id: user.username, name: user.displayName, area: "" },
-        role: user.role,
-      });
+      // No match found
+      setError("Invalid username or password | غلط یوزر نیم یا پاس ورڈ");
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Login failed";
       toast.error(`Login error: ${msg}`);
@@ -1146,10 +1199,10 @@ function LoginScreen({
             <Package size={40} className="text-white" />
           </div>
           <h1 className="text-3xl font-bold text-white font-heading tracking-tight">
-            MedOrder
+            MedFlow
           </h1>
           <p className="text-white/60 text-sm mt-1 text-center">
-            Mian Medicine Distributors
+            Medicine Distributors
             <br />
             <span className="text-xs">میڈیسن ڈسٹریبیوٹر — مندی بہاؤالدین</span>
           </p>
@@ -1431,7 +1484,8 @@ function DashboardScreen({
   const pendingCount = state.orders.filter(
     (o) => o.status === "pending",
   ).length;
-  const recentOrders = state.orders.slice(0, 3);
+  const recentOrders = state.orders.filter((o) => o.date === todayStr);
+  const offlineOrders = state.orders.filter((o) => o.id.startsWith("OFFLINE-"));
   const [isConfirmingAllToday, setIsConfirmingAllToday] = useState(false);
 
   const todayPendingOrders = todayOrders.filter((o) => o.status === "pending");
@@ -1674,12 +1728,19 @@ function DashboardScreen({
           </button>
         )}
 
-        {/* Recent Orders */}
+        {/* Today's Orders + Offline Orders Tabs */}
         <div>
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-bold text-foreground font-heading">
-              Recent Orders | حالیہ آرڈر
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2 className="font-bold text-foreground font-heading">
+                Today's Orders | آج کے آرڈر
+              </h2>
+              {offlineOrders.length > 0 && (
+                <span className="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                  {offlineOrders.length} offline
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -1699,18 +1760,62 @@ function DashboardScreen({
                 }
                 className="text-primary text-sm font-medium"
               >
-                View All
+                History
               </button>
             </div>
           </div>
+          {/* Offline Orders warning */}
+          {offlineOrders.length > 0 && (
+            <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+              <p className="text-xs font-semibold text-amber-700">
+                {offlineOrders.length} offline order(s) pending sync | آف لائن
+                آرڈر
+              </p>
+              <p className="text-[10px] text-amber-600 mt-0.5">
+                Internet aane par automatically sync ho jayenge
+              </p>
+              <div className="mt-2 space-y-2">
+                {offlineOrders.map((order) => (
+                  <button
+                    type="button"
+                    key={order.id}
+                    onClick={() =>
+                      dispatch({
+                        type: "NAVIGATE",
+                        screen: { name: "order-detail", orderId: order.id },
+                      })
+                    }
+                    className="w-full bg-white rounded-lg p-2.5 border border-amber-200 text-left"
+                    data-ocid="dashboard.offline_order.item"
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="font-semibold text-xs text-foreground">
+                        {order.pharmacyName}
+                      </p>
+                      <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-semibold">
+                        Offline
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {order.items.length} items ·{" "}
+                      {formatCurrency(order.totalAmount)}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="space-y-3">
             {isLoadingData ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="animate-spin text-primary" size={24} />
               </div>
             ) : recentOrders.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground text-sm">
-                No orders yet
+              <div
+                className="text-center py-8 text-muted-foreground text-sm"
+                data-ocid="dashboard.orders.empty_state"
+              >
+                Aaj ka koi order nahi | No orders today
               </div>
             ) : (
               recentOrders.map((order) => (
@@ -2173,13 +2278,26 @@ function OrderTakingScreen({
       });
 
       // Create order in backend
-      const returnedId = await actor.createOrder(
-        pharmacy.backendId,
-        orderLines,
-        state.currentStaff?.name ?? "",
-        state.currentStaff?.id ?? "",
-        notes,
-      );
+      const staffCreateSess = getSession();
+      const staffDistId = staffCreateSess?.distributorId
+        ? BigInt(staffCreateSess.distributorId)
+        : null;
+      const returnedId = staffDistId
+        ? await (actor as any).createOrderForDistributor(
+            staffDistId,
+            pharmacy.backendId,
+            orderLines,
+            state.currentStaff?.name ?? "",
+            state.currentStaff?.id ?? "",
+            notes,
+          )
+        : await actor.createOrder(
+            pharmacy.backendId,
+            orderLines,
+            state.currentStaff?.name ?? "",
+            state.currentStaff?.id ?? "",
+            notes,
+          );
 
       const orderId = `ORD-${returnedId}`;
 
@@ -2217,13 +2335,69 @@ function OrderTakingScreen({
         ),
       );
       dispatch({ type: "SUBMIT_ORDER", order });
+
+      // Save Co% items to estimated pool automatically
+      const coItems = items.filter((it) => (it.companyDiscount ?? 0) > 0);
+      if (coItems.length > 0) {
+        try {
+          const pool = JSON.parse(
+            localStorage.getItem("estimatedOrders_pool") || "[]",
+          );
+          pool.push({
+            id: String(Date.now()),
+            orderId: orderId,
+            staffName: state.currentStaff?.name ?? "",
+            pharmacyId: pharmacy.id,
+            pharmacyName: pharmacy.name,
+            timestamp: Date.now(),
+            items: coItems.map((it) => ({
+              medicineId: it.medicineId,
+              medicineName: it.medicineName,
+              qty: it.qty,
+              companyDiscount: it.companyDiscount ?? 0,
+              distributionDiscount: it.distributionDiscount ?? 0,
+              netRate: it.manualNetRate,
+              unitPrice: it.unitPrice,
+              total: it.total,
+              bonusQty: it.bonusQty,
+            })),
+          });
+          localStorage.setItem("estimatedOrders_pool", JSON.stringify(pool));
+        } catch {
+          /* ignore */
+        }
+      }
+
       setShowCart(false);
       toast.success(`Order submitted for ${pharmacy.name}!`);
       onOrderSubmitted();
       dispatch({ type: "NAVIGATE", screen: { name: "order-history" } });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Unknown error";
-      toast.error(`Backend error: ${msg}`);
+    } catch {
+      if (!navigator.onLine) {
+        // Actually offline - save locally
+        const offlineOrder: Order = {
+          id: `OFFLINE-${Date.now()}`,
+          backendId: null,
+          pharmacyId: pharmacy.id,
+          pharmacyName: pharmacy.name,
+          pharmacyArea: pharmacy.area,
+          staffId: state.currentStaff?.id ?? "",
+          staffName: state.currentStaff?.name ?? "",
+          date: new Date().toISOString().split("T")[0],
+          items,
+          notes,
+          status: "pending",
+          totalAmount: cartTotal,
+        };
+        dispatch({ type: "SUBMIT_ORDER", order: offlineOrder });
+        onSaveOfflineOrder?.(offlineOrder);
+        setShowCart(false);
+        toast.success("Order saved offline! Will sync when online.");
+        dispatch({ type: "NAVIGATE", screen: { name: "order-history" } });
+      } else {
+        // Online but backend failed
+        toast.error("Failed to save order. Backend error — please try again.");
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -2824,6 +2998,7 @@ function OrderTakingScreen({
                 onClick={handleSubmitOrder}
                 className="w-full h-12 text-base font-bold mb-4"
                 disabled={isSubmitting}
+                data-ocid="order.submit_button"
                 style={{
                   background:
                     "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
@@ -2859,20 +3034,36 @@ function OrderHistoryScreen({
   isLoadingOrders: boolean;
   onRefresh: () => void;
 }) {
-  const [statusFilter, setStatusFilter] = useState<OrderStatus | "all">("all");
+  const todayStr = new Date().toISOString().split("T")[0];
+  const pastOrders = state.orders.filter((o) => o.date !== todayStr);
 
-  const filtered = useMemo(() => {
-    if (statusFilter === "all") return state.orders;
-    return state.orders.filter((o) => o.status === statusFilter);
-  }, [state.orders, statusFilter]);
+  // Group by month then by date
+  const grouped = useMemo(() => {
+    const monthMap: Record<string, Record<string, Order[]>> = {};
+    for (const order of pastOrders) {
+      const dateObj = new Date(`${order.date}T00:00:00`);
+      const monthKey = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, "0")}`;
+      if (!monthMap[monthKey]) monthMap[monthKey] = {};
+      if (!monthMap[monthKey][order.date]) monthMap[monthKey][order.date] = [];
+      monthMap[monthKey][order.date].push(order);
+    }
+    // Sort months descending
+    return Object.entries(monthMap).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [pastOrders]);
 
-  const tabs: Array<{ key: OrderStatus | "all"; label: string; urdu: string }> =
-    [
-      { key: "all", label: "All", urdu: "سب" },
-      { key: "pending", label: "Pending", urdu: "زیر التواء" },
-      { key: "confirmed", label: "Confirmed", urdu: "تصدیق شدہ" },
-      { key: "delivered", label: "Delivered", urdu: "تحویل شدہ" },
-    ];
+  const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
+  const [expandedDate, setExpandedDate] = useState<string | null>(null);
+
+  function formatMonthLabel(monthKey: string) {
+    const [year, month] = monthKey.split("-");
+    const d = new Date(Number(year), Number(month) - 1, 1);
+    return d.toLocaleString("default", { month: "long", year: "numeric" });
+  }
+
+  function formatDateLabel(dateStr: string) {
+    const d = new Date(`${dateStr}T00:00:00`);
+    return d.toLocaleDateString("default", { day: "numeric", month: "long" });
+  }
 
   return (
     <div className="pb-6">
@@ -2894,7 +3085,7 @@ function OrderHistoryScreen({
               Order History | آرڈر تاریخ
             </h1>
             <p className="text-white/70 text-sm mt-0.5">
-              {state.orders.length} total orders
+              {pastOrders.length} past orders
             </p>
           </div>
           <button
@@ -2909,78 +3100,154 @@ function OrderHistoryScreen({
         </div>
       </div>
 
-      {/* Status filter */}
-      <div className="flex gap-2 overflow-x-auto px-4 py-3 bg-white border-b border-border">
-        {tabs.map((tab) => (
-          <button
-            type="button"
-            key={tab.key}
-            onClick={() => setStatusFilter(tab.key)}
-            className={`cat-tab shrink-0 ${
-              statusFilter === tab.key ? "cat-tab-active" : "cat-tab-inactive"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="px-4 pt-4 space-y-3">
+      <div className="px-4 pt-4 space-y-2">
         {isLoadingOrders ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="animate-spin text-primary" size={28} />
           </div>
-        ) : filtered.length === 0 ? (
-          <div className="text-center py-12 text-muted-foreground text-sm">
-            No orders found
+        ) : grouped.length === 0 ? (
+          <div
+            className="text-center py-12 text-muted-foreground text-sm"
+            data-ocid="order_history.empty_state"
+          >
+            Koi purane order nahi | No past orders
           </div>
         ) : (
-          filtered.map((order) => (
-            <button
-              type="button"
-              key={order.id}
-              onClick={() =>
-                dispatch({
-                  type: "NAVIGATE",
-                  screen: { name: "order-detail", orderId: order.id },
-                })
-              }
-              className="w-full bg-white rounded-xl p-4 shadow-xs border border-border text-left hover:shadow-card transition-shadow"
-            >
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="font-semibold text-sm text-foreground font-heading">
-                    {order.pharmacyName}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {order.id}
-                  </p>
-                </div>
-                <StatusBadge status={order.status} />
-              </div>
-              <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-                <User size={11} />
-                <span>{order.staffName || order.staffId}</span>
-                {order.staffId && order.staffId !== order.staffName && (
-                  <span className="font-mono text-[10px]">
-                    ({order.staffId})
-                  </span>
+          grouped.map(([monthKey, dateMap]) => {
+            const monthOrderCount = Object.values(dateMap).reduce(
+              (acc, orders) => acc + orders.length,
+              0,
+            );
+            const isMonthOpen = expandedMonth === monthKey;
+            const sortedDates = Object.entries(dateMap).sort((a, b) =>
+              b[0].localeCompare(a[0]),
+            );
+            return (
+              <div
+                key={monthKey}
+                className="bg-white rounded-xl border border-border shadow-xs overflow-hidden"
+              >
+                {/* Level 1: Month row */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExpandedMonth(isMonthOpen ? null : monthKey);
+                    setExpandedDate(null);
+                  }}
+                  className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-muted/50 transition-colors"
+                  data-ocid="order_history.month.button"
+                >
+                  <div className="flex items-center gap-2">
+                    <Calendar size={16} className="text-primary" />
+                    <span className="font-bold text-foreground font-heading">
+                      {formatMonthLabel(monthKey)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-semibold">
+                      {monthOrderCount} orders
+                    </span>
+                    {isMonthOpen ? (
+                      <ChevronUp size={16} className="text-muted-foreground" />
+                    ) : (
+                      <ChevronDown
+                        size={16}
+                        className="text-muted-foreground"
+                      />
+                    )}
+                  </div>
+                </button>
+
+                {/* Level 2: Dates within month */}
+                {isMonthOpen && (
+                  <div className="border-t border-border">
+                    {sortedDates.map(([dateStr, orders]) => {
+                      const isDateOpen = expandedDate === dateStr;
+                      return (
+                        <div
+                          key={dateStr}
+                          className="border-b border-border last:border-0"
+                        >
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedDate(isDateOpen ? null : dateStr)
+                            }
+                            className="w-full flex items-center justify-between px-4 py-3 bg-muted/30 hover:bg-muted/60 transition-colors"
+                            data-ocid="order_history.date.button"
+                          >
+                            <div className="flex items-center gap-2 pl-2">
+                              <div className="w-1.5 h-1.5 rounded-full bg-primary/50" />
+                              <span className="font-semibold text-sm text-foreground">
+                                {formatDateLabel(dateStr)}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-muted-foreground">
+                                {orders.length} orders
+                              </span>
+                              {isDateOpen ? (
+                                <ChevronUp
+                                  size={14}
+                                  className="text-muted-foreground"
+                                />
+                              ) : (
+                                <ChevronDown
+                                  size={14}
+                                  className="text-muted-foreground"
+                                />
+                              )}
+                            </div>
+                          </button>
+
+                          {/* Level 3: Orders for this date */}
+                          {isDateOpen && (
+                            <div className="px-3 py-2 space-y-2 bg-white">
+                              {orders.map((order) => (
+                                <button
+                                  type="button"
+                                  key={order.id}
+                                  onClick={() =>
+                                    dispatch({
+                                      type: "NAVIGATE",
+                                      screen: {
+                                        name: "order-detail",
+                                        orderId: order.id,
+                                      },
+                                    })
+                                  }
+                                  className="w-full bg-secondary/50 rounded-xl p-3 border border-border text-left hover:bg-muted transition-colors"
+                                  data-ocid="order_history.order.item"
+                                >
+                                  <div className="flex items-start justify-between">
+                                    <div>
+                                      <p className="font-semibold text-sm text-foreground">
+                                        {order.pharmacyName}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground mt-0.5">
+                                        {order.id}
+                                      </p>
+                                    </div>
+                                    <StatusBadge status={order.status} />
+                                  </div>
+                                  <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground">
+                                    <span>{order.items.length} items</span>
+                                    <span className="font-bold text-foreground">
+                                      {formatCurrency(order.totalAmount)}
+                                    </span>
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
-              <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground">
-                <div className="flex items-center gap-1">
-                  <Calendar size={11} />
-                  <span>{formatDate(order.date)}</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span>{order.items.length} items</span>
-                  <span className="font-bold text-foreground text-sm">
-                    {formatCurrency(order.totalAmount)}
-                  </span>
-                </div>
-              </div>
-            </button>
-          ))
+            );
+          })
         )}
       </div>
     </div>
@@ -3726,6 +3993,7 @@ function ManageScreen({
   onDataReloaded,
   dispatch,
   showPharmacies = false,
+  readOnly = false,
 }: {
   pharmacies: Pharmacy[];
   medicines: Medicine[];
@@ -3733,6 +4001,7 @@ function ManageScreen({
   onDataReloaded: (newPharmacies: Pharmacy[], newMedicines: Medicine[]) => void;
   dispatch: React.Dispatch<Action>;
   showPharmacies?: boolean;
+  readOnly?: boolean;
 }) {
   const [activeTab, setActiveTab] = useState<"pharmacies" | "medicines">(
     showPharmacies ? "pharmacies" : "medicines",
@@ -3828,14 +4097,28 @@ function ManageScreen({
     setIsAddingPharm(true);
     try {
       const location = `${pharmAddress.trim()} | ${pharmArea.trim()}`;
-      const newId = await actor.addPharmacy(
-        pharmName.trim(),
-        pharmContact.trim(),
-        location,
-        pharmCode.trim(),
-        pharmNTN.trim(),
-        pharmCNIC.trim(),
-      );
+      const offSess = getSession();
+      const pharmDistId = offSess?.distributorId
+        ? BigInt(offSess.distributorId)
+        : null;
+      const newId = pharmDistId
+        ? await (actor as any).addPharmacyForDistributor(
+            pharmDistId,
+            pharmName.trim(),
+            pharmContact.trim(),
+            location,
+            pharmCode.trim(),
+            pharmNTN.trim(),
+            pharmCNIC.trim(),
+          )
+        : await actor.addPharmacy(
+            pharmName.trim(),
+            pharmContact.trim(),
+            location,
+            pharmCode.trim(),
+            pharmNTN.trim(),
+            pharmCNIC.trim(),
+          );
       // Store NTN/CNIC for invoice lookup
       if (pharmNTN.trim()) {
         try {
@@ -3919,17 +4202,36 @@ function ManageScreen({
     }
     setIsAddingMed(true);
     try {
-      await actor.addMedicine(
-        medName.trim(),
-        BigInt(Math.round(priceNum)),
-        "",
-        medCompany.trim(),
-        medStrength.trim(),
-        medPackSize.trim(),
-        medGenericName.trim(),
-        medBatchNo.trim(),
-        medMedicineType,
-      );
+      const medSess = getSession();
+      const medDistId = medSess?.distributorId
+        ? BigInt(medSess.distributorId)
+        : null;
+      if (medDistId) {
+        await (actor as any).addMedicineForDistributor(
+          medDistId,
+          medName.trim(),
+          BigInt(Math.round(priceNum)),
+          "",
+          medCompany.trim(),
+          medStrength.trim(),
+          medPackSize.trim(),
+          medGenericName.trim(),
+          medBatchNo.trim(),
+          medMedicineType,
+        );
+      } else {
+        await actor.addMedicine(
+          medName.trim(),
+          BigInt(Math.round(priceNum)),
+          "",
+          medCompany.trim(),
+          medStrength.trim(),
+          medPackSize.trim(),
+          medGenericName.trim(),
+          medBatchNo.trim(),
+          medMedicineType,
+        );
+      }
       const newMedicines = await reloadMedicines();
       onDataReloaded(pharmacies, newMedicines);
       setMedName("");
@@ -4324,22 +4626,28 @@ function ManageScreen({
       {/* ── Medicines Tab ── */}
       {activeTab === "medicines" && (
         <div className="px-4 pt-4 space-y-3">
-          {/* Add Medicine toggle button */}
-          <button
-            type="button"
-            onClick={() => setShowMedForm((v) => !v)}
-            className="w-full flex items-center justify-between rounded-xl px-4 py-3 font-semibold text-sm shadow-sm text-white"
-            style={{
-              background:
-                "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
-            }}
-          >
-            <div className="flex items-center gap-2">
-              <Plus size={16} />
-              <span>Add Medicine | دوائی شامل کریں</span>
-            </div>
-            {showMedForm ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          </button>
+          {/* Add Medicine toggle button - only for office/admin */}
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={() => setShowMedForm((v) => !v)}
+              className="w-full flex items-center justify-between rounded-xl px-4 py-3 font-semibold text-sm shadow-sm text-white"
+              style={{
+                background:
+                  "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+              }}
+            >
+              <div className="flex items-center gap-2">
+                <Plus size={16} />
+                <span>Add Medicine | دوائی شامل کریں</span>
+              </div>
+              {showMedForm ? (
+                <ChevronUp size={16} />
+              ) : (
+                <ChevronDown size={16} />
+              )}
+            </button>
+          )}
 
           {/* Add Medicine Form */}
           {showMedForm && (
@@ -4630,7 +4938,7 @@ function ManageScreen({
                       )}
                     </div>
                     <div className="flex flex-col items-end gap-1 shrink-0">
-                      {confirmDeleteMedId === medicine.id ? (
+                      {!readOnly && confirmDeleteMedId === medicine.id ? (
                         <>
                           <span className="text-[10px] text-red-500 font-medium">
                             Confirm delete?
@@ -4657,7 +4965,7 @@ function ManageScreen({
                             </button>
                           </div>
                         </>
-                      ) : (
+                      ) : !readOnly ? (
                         <button
                           type="button"
                           onClick={() => setConfirmDeleteMedId(medicine.id)}
@@ -4668,7 +4976,7 @@ function ManageScreen({
                           <Trash2 size={12} />
                           Delete
                         </button>
-                      )}
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -4730,6 +5038,7 @@ function buildPrintHtml(orders: OfficeOrderDetail[]): string {
           ${hasDistDisc ? `<td style="padding:7px 10px;text-align:right;font-size:12px;font-weight:600;color:#dc2626;">${distDiscAmt > 0 ? `-Rs ${distDiscAmt.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</td>` : ""}
           ${hasCompDisc ? `<td style="padding:7px 10px;text-align:center;font-size:12px;font-weight:600;color:#2563eb;">${compDiscPct > 0 ? `${compDiscPct}%` : "—"}</td>` : ""}
           ${hasCompDisc ? `<td style="padding:7px 10px;text-align:right;font-size:12px;font-weight:600;color:#1d4ed8;">${compDiscAmt > 0 ? `-Rs ${compDiscAmt.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</td>` : ""}
+          <td style="padding:7px 10px;text-align:right;font-size:12px;font-weight:600;color:#7c3aed;">Rs ${effectiveNetRate.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
           <td style="padding:7px 10px;text-align:right;font-size:12px;color:#374151;">Rs ${item.unitPrice.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
           <td style="padding:7px 10px;text-align:right;font-size:12px;font-weight:bold;color:#1e40af;">Rs ${discountedTotal.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
         </tr>
@@ -4740,7 +5049,7 @@ function buildPrintHtml(orders: OfficeOrderDetail[]): string {
       // base cols: Medicine Name, Strength, Type, Pack Size, Batch#, Qty, Unit Price, Total = 8
       const extraColCount =
         (hasBonus ? 1 : 0) + (hasDistDisc ? 2 : 0) + (hasCompDisc ? 2 : 0);
-      const totalCols = 8 + extraColCount;
+      const totalCols = 9 + extraColCount; // +1 for Net Rate column
       const subtotal = order.items.reduce((s, i) => {
         const distPct = i.distributionDiscount / 10;
         const compPct = i.companyDiscount / 10;
@@ -4832,6 +5141,7 @@ function buildPrintHtml(orders: OfficeOrderDetail[]): string {
              ${hasDistDisc ? '<th style="padding:9px 10px;text-align:right;font-size:11px;font-weight:600;text-transform:uppercase;background:#7f1d1d;">Dist Amt</th>' : ""}
              ${hasCompDisc ? '<th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;background:#1e40af;">Co Disc%</th>' : ""}
              ${hasCompDisc ? '<th style="padding:9px 10px;text-align:right;font-size:11px;font-weight:600;text-transform:uppercase;background:#1d4ed8;">Co Amt</th>' : ""}
+            <th style="padding:9px 10px;text-align:right;font-size:11px;font-weight:600;text-transform:uppercase;background:#4c1d95;color:white;">Net Rate</th>
             <th style="padding:9px 10px;text-align:right;font-size:11px;font-weight:600;text-transform:uppercase;">Unit Price</th>
             <th style="padding:9px 10px;text-align:right;font-size:11px;font-weight:600;text-transform:uppercase;">Total</th>
           </tr>
@@ -5707,6 +6017,235 @@ function OrderDetailModal({
         </div>
       )}
     </dialog>
+  );
+}
+
+// ─── Office Order History Hierarchy Component ─────────────────────────────────
+
+function OfficeOrderHistoryHierarchy({
+  isLoading,
+  filteredHistory,
+  setSelectedOrder,
+}: {
+  isLoading: boolean;
+  filteredHistory: OfficeOrderDetail[];
+  setSelectedOrder: (o: OfficeOrderDetail) => void;
+}) {
+  const [expandedMonths, setExpandedMonths] = useState<Record<string, boolean>>(
+    {},
+  );
+  const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>(
+    {},
+  );
+
+  const todayStr = new Date().toISOString().split("T")[0];
+  const pastOrders = filteredHistory.filter((o) => o.date !== todayStr);
+
+  // Group by month (YYYY-MM) then by date (YYYY-MM-DD)
+  const monthMap = pastOrders.reduce<
+    Record<string, Record<string, OfficeOrderDetail[]>>
+  >((acc, order) => {
+    const monthKey = order.date ? order.date.substring(0, 7) : "unknown";
+    const dateKey = order.date ?? "unknown";
+    if (!acc[monthKey]) acc[monthKey] = {};
+    if (!acc[monthKey][dateKey]) acc[monthKey][dateKey] = [];
+    acc[monthKey][dateKey].push(order);
+    return acc;
+  }, {});
+  const sortedMonths = Object.keys(monthMap).sort((a, b) => b.localeCompare(a));
+
+  const toggleMonth = (m: string) =>
+    setExpandedMonths((p) => ({ ...p, [m]: !p[m] }));
+  const toggleDate = (d: string) =>
+    setExpandedDates((p) => ({ ...p, [d]: !p[d] }));
+
+  const formatMonthLabel = (ym: string) => {
+    const [year, month] = ym.split("-");
+    const d = new Date(Number(year), Number(month) - 1, 1);
+    return d.toLocaleString("en-US", { month: "long", year: "numeric" });
+  };
+  const formatDateLabel = (ymd: string) => {
+    const d = new Date(`${ymd}T00:00:00`);
+    return d.toLocaleDateString("en-US", {
+      weekday: "short",
+      day: "numeric",
+      month: "long",
+    });
+  };
+
+  if (isLoading) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex items-center justify-center py-20">
+        <Loader2 className="animate-spin text-blue-500" size={32} />
+      </div>
+    );
+  }
+
+  if (pastOrders.length === 0) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden text-center py-20 text-gray-400">
+        <History size={40} className="mx-auto mb-3 opacity-50" />
+        <p className="font-medium">No history orders | کوئی تاریخ نہیں</p>
+        <p className="text-xs mt-1">
+          Delivered orders from previous dates will appear here
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {sortedMonths.map((monthKey) => {
+        const isMonthOpen = !!expandedMonths[monthKey];
+        const datesInMonth = monthMap[monthKey];
+        const sortedDates = Object.keys(datesInMonth).sort((a, b) =>
+          b.localeCompare(a),
+        );
+        const totalInMonth = sortedDates.reduce(
+          (s, d) => s + datesInMonth[d].length,
+          0,
+        );
+
+        return (
+          <div
+            key={monthKey}
+            className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden"
+          >
+            {/* Month row */}
+            <button
+              type="button"
+              className="w-full flex items-center justify-between px-5 py-4 hover:bg-blue-50 transition-colors text-left"
+              onClick={() => toggleMonth(monthKey)}
+            >
+              <div className="flex items-center gap-3">
+                <ChevronRight
+                  size={18}
+                  className={`text-blue-500 transition-transform ${isMonthOpen ? "rotate-90" : ""}`}
+                />
+                <span className="font-bold text-gray-900 text-base">
+                  {formatMonthLabel(monthKey)}
+                </span>
+              </div>
+              <span className="text-xs bg-blue-100 text-blue-700 px-2.5 py-1 rounded-full font-semibold">
+                {totalInMonth} orders
+              </span>
+            </button>
+
+            {isMonthOpen && (
+              <div className="border-t border-gray-100 divide-y divide-gray-100">
+                {sortedDates.map((dateKey) => {
+                  const isDateOpen = !!expandedDates[dateKey];
+                  const ordersOnDate = datesInMonth[dateKey];
+
+                  return (
+                    <div key={dateKey}>
+                      {/* Date row */}
+                      <button
+                        type="button"
+                        className="w-full flex items-center justify-between px-8 py-3 hover:bg-gray-50 transition-colors text-left"
+                        onClick={() => toggleDate(dateKey)}
+                      >
+                        <div className="flex items-center gap-2">
+                          <ChevronRight
+                            size={15}
+                            className={`text-gray-400 transition-transform ${isDateOpen ? "rotate-90" : ""}`}
+                          />
+                          <span className="text-sm font-semibold text-gray-700">
+                            {formatDateLabel(dateKey)}
+                          </span>
+                        </div>
+                        <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">
+                          {ordersOnDate.length}
+                        </span>
+                      </button>
+
+                      {isDateOpen && (
+                        <div className="overflow-x-auto">
+                          <table className="w-full">
+                            <thead>
+                              <tr className="bg-gray-50 border-b border-gray-200">
+                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Invoice #
+                                </th>
+                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Pharmacy
+                                </th>
+                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Staff
+                                </th>
+                                <th className="text-center px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Items
+                                </th>
+                                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Amount
+                                </th>
+                                <th className="text-center px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
+                                  Status
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {ordersOnDate.map((order) => (
+                                <tr
+                                  key={String(order.backendId)}
+                                  className="cursor-pointer hover:bg-blue-50/60 transition-colors"
+                                  onClick={() => setSelectedOrder(order)}
+                                  tabIndex={0}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter")
+                                      setSelectedOrder(order);
+                                  }}
+                                >
+                                  <td className="px-4 py-3">
+                                    <span className="text-sm font-mono font-bold text-blue-700">
+                                      {order.orderId}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="text-sm font-semibold text-gray-900">
+                                      {order.pharmacyName}
+                                    </div>
+                                    {order.pharmacyArea && (
+                                      <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
+                                        <MapPin size={10} />{" "}
+                                        {order.pharmacyArea}
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="text-sm font-semibold text-gray-900">
+                                      {order.staffName || "—"}
+                                    </div>
+                                    {order.staffCode && (
+                                      <div className="text-xs text-gray-400 font-mono">
+                                        {order.staffCode}
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3 text-sm text-center text-gray-700 font-medium">
+                                    {order.itemCount}
+                                  </td>
+                                  <td className="px-4 py-3 text-sm text-right font-bold text-gray-900">
+                                    {formatCurrency(order.totalAmount)}
+                                  </td>
+                                  <td className="px-4 py-3 text-center">
+                                    <StatusBadge status={order.status} />
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -7296,7 +7835,17 @@ function UserManagementPanel() {
   const [newPwd, setNewPwd] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
+  const [hiddenBuiltins, setHiddenBuiltins] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(HIDDEN_BUILTIN_USERS_KEY) || "[]");
+    } catch {
+      return [];
+    }
+  });
   const allUsers = [...USER_DB, ...customUsers];
+  const visibleUsers = allUsers.filter(
+    (u) => !hiddenBuiltins.includes(u.username),
+  );
 
   function saveCustomUsers(users: AppUser[]) {
     setCustomUsers(users);
@@ -7368,8 +7917,20 @@ function UserManagementPanel() {
   }
 
   function handleDeleteUser(username: string) {
-    const updated = customUsers.filter((u) => u.username !== username);
-    saveCustomUsers(updated);
+    const builtIn = USER_DB.find((u) => u.username === username);
+    if (builtIn) {
+      // Hide built-in user (only staff/delivery, not admin)
+      const updated = [...hiddenBuiltins, username];
+      setHiddenBuiltins(updated);
+      try {
+        localStorage.setItem(HIDDEN_BUILTIN_USERS_KEY, JSON.stringify(updated));
+      } catch {
+        /* ignore */
+      }
+    } else {
+      const updated = customUsers.filter((u) => u.username !== username);
+      saveCustomUsers(updated);
+    }
     setDeleteConfirm(null);
     toast.success("User delete ho gaya");
   }
@@ -7557,7 +8118,7 @@ function UserManagementPanel() {
             </tr>
           </thead>
           <tbody>
-            {allUsers.map((user, idx) => (
+            {visibleUsers.map((user, idx) => (
               <tr
                 key={user.username}
                 className="border-b border-gray-100 last:border-0 hover:bg-gray-50/50"
@@ -7627,7 +8188,8 @@ function UserManagementPanel() {
                         Change Pwd
                       </button>
                     )}
-                    {!isBuiltIn(user.username) &&
+                    {(!isBuiltIn(user.username) ||
+                      (user.role !== "admin" && user.role !== "superadmin")) &&
                       (deleteConfirm === user.username ? (
                         <div className="flex items-center gap-1">
                           <button
@@ -7937,6 +8499,7 @@ function OfficeDashboard() {
     | "manage"
     | "user-management"
     | "staff-locations"
+    | "estimated-billing"
   >("orders");
   const [allCustomers, setAllCustomers] = useState<Customer[]>([]);
   // Customer form state
@@ -8078,37 +8641,57 @@ function OfficeDashboard() {
   const loadAllData = useCallback(async () => {
     if (!actor || isActorFetching) return;
     setIsLoading(true);
+    const officeSession = getSession();
+    const distId = officeSession?.distributorId
+      ? BigInt(officeSession.distributorId)
+      : null;
     try {
       const [rawActiveOrders, rawHistoryOrders, rawPharmacies, rawMedicines] =
         await Promise.all([
-          actor.getActiveOrders().catch(async () => {
-            const all = await actor
-              .getAllStaffOrders()
-              .catch(() => [] as any[]);
-            const now = Date.now();
-            const hrs48 = 48 * 60 * 60 * 1000;
-            return all.filter((o: any) => {
-              if (o.status !== "delivered") return true;
-              const ts = Number(o.timestamp / BigInt(1_000_000));
-              return now - ts < hrs48;
-            });
-          }),
-          actor.getHistoryOrders().catch(async () => {
-            const all = await actor
-              .getAllStaffOrders()
-              .catch(() => [] as any[]);
-            const now = Date.now();
-            const hrs48 = 48 * 60 * 60 * 1000;
-            const yr1 = 365 * 24 * 60 * 60 * 1000;
-            return all.filter((o: any) => {
-              if (o.status !== "delivered") return false;
-              const ts = Number(o.timestamp / BigInt(1_000_000));
-              const age = now - ts;
-              return age >= hrs48 && age < yr1;
-            });
-          }),
-          actor.getPharmacies().catch(() => [] as any[]),
-          actor.getMedicines().catch(() => [] as any[]),
+          distId
+            ? (actor as any)
+                .getActiveOrdersByDistributor(distId)
+                .catch(() => actor.getActiveOrders().catch(() => [] as any[]))
+            : actor.getActiveOrders().catch(async () => {
+                const all = await actor
+                  .getAllStaffOrders()
+                  .catch(() => [] as any[]);
+                const now = Date.now();
+                const hrs48 = 48 * 60 * 60 * 1000;
+                return all.filter((o: any) => {
+                  if (o.status !== "delivered") return true;
+                  const ts = Number(o.timestamp / BigInt(1_000_000));
+                  return now - ts < hrs48;
+                });
+              }),
+          distId
+            ? (actor as any)
+                .getHistoryOrdersByDistributor(distId)
+                .catch(() => actor.getHistoryOrders().catch(() => [] as any[]))
+            : actor.getHistoryOrders().catch(async () => {
+                const all = await actor
+                  .getAllStaffOrders()
+                  .catch(() => [] as any[]);
+                const now = Date.now();
+                const hrs48 = 48 * 60 * 60 * 1000;
+                const yr1 = 365 * 24 * 60 * 60 * 1000;
+                return all.filter((o: any) => {
+                  if (o.status !== "delivered") return false;
+                  const ts = Number(o.timestamp / BigInt(1_000_000));
+                  const age = now - ts;
+                  return age >= hrs48 && age < yr1;
+                });
+              }),
+          distId
+            ? (actor as any)
+                .getPharmaciesByDistributor(distId)
+                .catch(() => actor.getPharmacies().catch(() => [] as any[]))
+            : actor.getPharmacies().catch(() => [] as any[]),
+          distId
+            ? (actor as any)
+                .getMedicinesByDistributor(distId)
+                .catch(() => actor.getMedicines().catch(() => [] as any[]))
+            : actor.getMedicines().catch(() => [] as any[]),
         ]);
 
       const pharmacyMap = new Map(
@@ -8260,6 +8843,18 @@ function OfficeDashboard() {
     return () => clearInterval(interval);
   }, [loadAllData]);
 
+  // Ctrl+N global shortcut: open Add Order
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === "n") {
+        e.preventDefault();
+        setActiveView("add-order");
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
   async function handleUpdateStatus(
     order: OfficeOrder,
     newStatus: OrderStatus,
@@ -8340,7 +8935,15 @@ function OfficeDashboard() {
   const loadCustomers = useCallback(async () => {
     if (!actor) return;
     try {
-      const raw = await actor.getCustomers();
+      const custSess = getSession();
+      const custDistId = custSess?.distributorId
+        ? BigInt(custSess.distributorId)
+        : null;
+      const raw = custDistId
+        ? await (actor as any)
+            .getCustomersByDistributor(custDistId)
+            .catch(() => actor.getCustomers())
+        : await actor.getCustomers();
       const mapped: Customer[] = raw.map((c) => ({
         id: String(c.id),
         backendId: c.id,
@@ -8376,17 +8979,34 @@ function OfficeDashboard() {
     }
     setIsAddingCustomer(true);
     try {
-      const newBackendId = await actor.addCustomer(
-        custName.trim(),
-        toBackendCustomerType(custType),
-        custAddress.trim(),
-        custArea.trim(),
-        custContact.trim(),
-        custGroup.trim(),
-        custCode.trim(),
-        custNTN.trim(),
-        custCNIC.trim(),
-      );
+      const addCustSess = getSession();
+      const addCustDistId = addCustSess?.distributorId
+        ? BigInt(addCustSess.distributorId)
+        : null;
+      const newBackendId = addCustDistId
+        ? await (actor as any).addCustomerForDistributor(
+            addCustDistId,
+            custName.trim(),
+            toBackendCustomerType(custType),
+            custAddress.trim(),
+            custArea.trim(),
+            custContact.trim(),
+            custGroup.trim(),
+            custCode.trim(),
+            custNTN.trim(),
+            custCNIC.trim(),
+          )
+        : await actor.addCustomer(
+            custName.trim(),
+            toBackendCustomerType(custType),
+            custAddress.trim(),
+            custArea.trim(),
+            custContact.trim(),
+            custGroup.trim(),
+            custCode.trim(),
+            custNTN.trim(),
+            custCNIC.trim(),
+          );
       // Store NTN/CNIC/name in localStorage for invoice lookup
       try {
         localStorage.setItem(
@@ -8581,13 +9201,28 @@ function OfficeDashboard() {
           ),
         };
       });
-      await actor.createOrder(
-        newOrderPharmacyId,
-        orderLines,
-        newOrderStaffName.trim() || "Office Admin",
-        newOrderStaffCode.trim() || "admin",
-        newOrderNotes.trim(),
-      );
+      const createOrderSess = getSession();
+      const createOrderDistId = createOrderSess?.distributorId
+        ? BigInt(createOrderSess.distributorId)
+        : null;
+      if (createOrderDistId) {
+        await (actor as any).createOrderForDistributor(
+          createOrderDistId,
+          newOrderPharmacyId,
+          orderLines,
+          newOrderStaffName.trim() || "Office Admin",
+          newOrderStaffCode.trim() || "admin",
+          newOrderNotes.trim(),
+        );
+      } else {
+        await actor.createOrder(
+          newOrderPharmacyId,
+          orderLines,
+          newOrderStaffName.trim() || "Office Admin",
+          newOrderStaffCode.trim() || "admin",
+          newOrderNotes.trim(),
+        );
+      }
       // Deduct stock for ordered items (localStorage)
       deductStock(
         newOrderLines.map((line) => ({
@@ -8624,6 +9259,8 @@ function OfficeDashboard() {
     }
   }
 
+  const officeTodayStr = new Date().toISOString().split("T")[0];
+
   const filtered = useMemo((): OfficeOrderDetail[] => {
     let result =
       statusFilter === "all"
@@ -8631,8 +9268,10 @@ function OfficeDashboard() {
         : orders.filter((o) => o.status === statusFilter);
     if (bookerFilter)
       result = result.filter((o) => o.staffName === bookerFilter);
+    // Show only today's orders by default
+    result = result.filter((o) => o.date === officeTodayStr);
     return result;
-  }, [orders, statusFilter, bookerFilter]);
+  }, [orders, statusFilter, bookerFilter, officeTodayStr]);
 
   const filteredWithLines = useMemo((): OfficeOrderDetail[] => {
     let result =
@@ -8641,8 +9280,10 @@ function OfficeDashboard() {
         : ordersWithLines.filter((o) => o.status === statusFilter);
     if (bookerFilter)
       result = result.filter((o) => o.staffName === bookerFilter);
+    // Show only today's orders by default
+    result = result.filter((o) => o.date === officeTodayStr);
     return result;
-  }, [ordersWithLines, statusFilter, bookerFilter]);
+  }, [ordersWithLines, statusFilter, bookerFilter, officeTodayStr]);
 
   // Unique booker names derived from orders
   const uniqueBookers = useMemo(() => {
@@ -8657,14 +9298,19 @@ function OfficeDashboard() {
     return historyOrders;
   }, [historyOrders]);
 
+  const todayOrders = useMemo(
+    () => orders.filter((o) => o.date === officeTodayStr),
+    [orders, officeTodayStr],
+  );
+
   const stats = useMemo(
     () => ({
-      total: orders.length,
-      pending: orders.filter((o) => o.status === "pending").length,
-      confirmed: orders.filter((o) => o.status === "confirmed").length,
-      delivered: orders.filter((o) => o.status === "delivered").length,
+      total: todayOrders.length,
+      pending: todayOrders.filter((o) => o.status === "pending").length,
+      confirmed: todayOrders.filter((o) => o.status === "confirmed").length,
+      delivered: todayOrders.filter((o) => o.status === "delivered").length,
     }),
-    [orders],
+    [todayOrders],
   );
 
   // Inventory: group medicines by company
@@ -8745,9 +9391,7 @@ function OfficeDashboard() {
               <Package size={22} />
             </div>
             <div>
-              <h1 className="text-xl font-bold font-heading">
-                MedOrder Office
-              </h1>
+              <h1 className="text-xl font-bold font-heading">MedFlow Office</h1>
               <p className="text-white/70 text-xs flex items-center gap-1.5">
                 Office Dashboard | آفس ڈیش بورڈ
                 <span className="bg-purple-400/40 text-purple-100 text-[10px] font-bold px-1.5 py-0.5 rounded">
@@ -8800,7 +9444,7 @@ function OfficeDashboard() {
                 setSidebarOpen(false);
               }}
               title="Active Orders"
-              className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "orders" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
+              className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${activeView === "orders" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
             >
               <Package size={16} className="shrink-0" />
               {sidebarOpen && <span>Active Orders</span>}
@@ -8923,6 +9567,21 @@ function OfficeDashboard() {
                   {sidebarOpen && <span>Add Customer | کسٹمر شامل کریں</span>}
                 </button>
               </div>
+              {/* Estimated Billing */}
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveView("estimated-billing");
+                  setSidebarOpen(false);
+                }}
+                title="Estimated Billing"
+                data-ocid="office.estimated_billing_tab"
+                className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "estimated-billing" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
+              >
+                <Calculator size={16} className="shrink-0" />
+                {sidebarOpen && <span>Estimated Billing | اندازہ بلنگ</span>}
+              </button>
+
               {/* Manage Section */}
               <div className="pt-3 border-t border-gray-100 mt-3">
                 {sidebarOpen && (
@@ -9333,11 +9992,25 @@ function OfficeDashboard() {
                           return (
                             <tr
                               key={String(order.backendId)}
-                              className={`cursor-pointer hover:bg-blue-50/60 transition-colors ${idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"} ${isPrinted ? "opacity-80" : ""} ${orderColorClass}`}
+                              className={`cursor-pointer hover:bg-blue-50/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400 ${idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"} ${isPrinted ? "opacity-80" : ""} ${orderColorClass}`}
                               onClick={() => setSelectedOrder(order)}
-                              onKeyDown={(e) =>
-                                e.key === "Enter" && setSelectedOrder(order)
-                              }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") setSelectedOrder(order);
+                                if (e.key === "ArrowDown") {
+                                  e.preventDefault();
+                                  (
+                                    e.currentTarget
+                                      .nextElementSibling as HTMLElement
+                                  )?.focus();
+                                }
+                                if (e.key === "ArrowUp") {
+                                  e.preventDefault();
+                                  (
+                                    e.currentTarget
+                                      .previousElementSibling as HTMLElement
+                                  )?.focus();
+                                }
+                              }}
                               tabIndex={0}
                             >
                               <td
@@ -9515,106 +10188,11 @@ function OfficeDashboard() {
                   </div>
                 </div>
 
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                  {isLoading ? (
-                    <div className="flex items-center justify-center py-20">
-                      <Loader2
-                        className="animate-spin text-blue-500"
-                        size={32}
-                      />
-                    </div>
-                  ) : filteredHistory.length === 0 ? (
-                    <div className="text-center py-20 text-gray-400">
-                      <History size={40} className="mx-auto mb-3 opacity-50" />
-                      <p className="font-medium">
-                        No history orders | کوئی تاریخ نہیں
-                      </p>
-                      <p className="text-xs mt-1">
-                        Delivered orders older than 48 hours will appear here
-                      </p>
-                    </div>
-                  ) : (
-                    <table className="w-full">
-                      <thead>
-                        <tr className="bg-gray-50 border-b border-gray-200">
-                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                            Invoice # | انوائس
-                          </th>
-                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                            Pharmacy | فارمیسی
-                          </th>
-                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                            Staff Name | نام
-                          </th>
-                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                            Date | تاریخ
-                          </th>
-                          <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                            Items
-                          </th>
-                          <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                            Amount | رقم
-                          </th>
-                          <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                            Status | حیثیت
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {filteredHistory.map((order, idx) => (
-                          <tr
-                            key={String(order.backendId)}
-                            className={`cursor-pointer hover:bg-blue-50/60 transition-colors ${idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"}`}
-                            onClick={() => setSelectedOrder(order)}
-                            onKeyDown={(e) =>
-                              e.key === "Enter" && setSelectedOrder(order)
-                            }
-                            tabIndex={0}
-                          >
-                            <td className="px-4 py-3">
-                              <span className="text-sm font-mono font-bold text-blue-700">
-                                {order.orderId}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="text-sm font-semibold text-gray-900">
-                                {order.pharmacyName}
-                              </div>
-                              {order.pharmacyArea && (
-                                <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
-                                  <MapPin size={10} />
-                                  {order.pharmacyArea}
-                                </div>
-                              )}
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="text-sm font-semibold text-gray-900">
-                                {order.staffName || "—"}
-                              </div>
-                              {order.staffCode && (
-                                <div className="text-xs text-gray-400 font-mono">
-                                  {order.staffCode}
-                                </div>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-gray-600">
-                              {formatDate(order.date)}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-center text-gray-700 font-medium">
-                              {order.itemCount}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-right font-bold text-gray-900">
-                              {formatCurrency(order.totalAmount)}
-                            </td>
-                            <td className="px-4 py-3 text-center">
-                              <StatusBadge status={order.status} />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
+                <OfficeOrderHistoryHierarchy
+                  isLoading={isLoading}
+                  filteredHistory={filteredHistory}
+                  setSelectedOrder={setSelectedOrder}
+                />
               </>
             )}
 
@@ -10382,9 +10960,10 @@ function OfficeDashboard() {
                       return (
                         <div
                           key={String(m.backendId)}
-                          className={`bg-white rounded-xl border p-3 flex flex-col gap-1.5 ${qty > 0 ? "border-blue-300 ring-1 ring-blue-200" : "border-gray-200"}`}
+                          className={`bg-white rounded-xl border p-3 flex items-start gap-2 ${qty > 0 ? "border-blue-300 ring-1 ring-blue-200" : "border-gray-200"}`}
                         >
-                          <div className="flex-1">
+                          {/* Left: info */}
+                          <div className="flex-1 min-w-0">
                             <p className="text-sm font-semibold text-gray-900 leading-tight">
                               {m.name}
                             </p>
@@ -10394,87 +10973,220 @@ function OfficeDashboard() {
                               </p>
                             )}
                             <p className="text-xs text-gray-500">{m.company}</p>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm font-bold text-blue-700">
-                              Rs {m.price.toFixed(2)}
-                            </span>
-                            {stockBadge && (
-                              <span
-                                className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${stockBadge.cls}`}
-                              >
-                                {stockBadge.text}
+                            <div className="flex items-center gap-1 mt-1 flex-wrap">
+                              <span className="text-sm font-bold text-blue-700">
+                                Rs {m.price.toFixed(2)}
                               </span>
-                            )}
+                              {stockBadge && (
+                                <span
+                                  className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${stockBadge.cls}`}
+                                >
+                                  {stockBadge.text}
+                                </span>
+                              )}
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2 mt-1">
-                            {qty === 0 ? (
-                              <button
-                                type="button"
-                                onClick={() =>
+                          {/* Right: controls */}
+                          <div className="shrink-0 flex flex-col items-end gap-1">
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              value={
+                                qty === 0 ? "" : String(existingLine?.qty ?? "")
+                              }
+                              placeholder="0"
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                const numVal = Number.parseFloat(val) || 0;
+                                if (!val || numVal === 0) {
+                                  setNewOrderLines((prev) =>
+                                    prev.filter(
+                                      (l) => l.medicineId !== m.backendId,
+                                    ),
+                                  );
+                                } else if (qty === 0) {
                                   setNewOrderLines((prev) => [
                                     ...prev,
                                     {
                                       _key: `line-${Date.now()}-${Math.random()}`,
                                       medicineId: m.backendId,
                                       medicineName: m.name,
-                                      qty: "1",
+                                      qty: val,
                                       bonus: "0",
                                       discount: "0",
                                       distDisc: "0",
                                       compDisc: "0",
                                       netRate: "0",
                                     },
-                                  ])
+                                  ]);
+                                } else {
+                                  setNewOrderLines((prev) =>
+                                    prev.map((l) =>
+                                      l.medicineId === m.backendId
+                                        ? { ...l, qty: val }
+                                        : l,
+                                    ),
+                                  );
                                 }
-                                data-ocid="add_order.add_item_button"
-                                className="w-full py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors"
-                              >
-                                + Add
-                              </button>
-                            ) : (
-                              <div className="flex items-center gap-2 w-full justify-between">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (qty <= 1)
-                                      setNewOrderLines((prev) =>
-                                        prev.filter(
-                                          (l) => l.medicineId !== m.backendId,
-                                        ),
-                                      );
-                                    else
+                              }}
+                              className="w-14 text-center text-sm font-bold text-foreground border border-input rounded-md px-1 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              aria-label="Quantity"
+                              data-ocid="add_order.qty_input"
+                            />
+                            {qty > 0 && (
+                              <>
+                                <label className="flex items-center gap-1">
+                                  <span className="text-[9px] text-emerald-600 font-medium">
+                                    Bonus
+                                  </span>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    value={
+                                      existingLine?.bonus === "0" ||
+                                      !existingLine?.bonus
+                                        ? ""
+                                        : existingLine.bonus
+                                    }
+                                    placeholder="0"
+                                    onChange={(e) =>
                                       setNewOrderLines((prev) =>
                                         prev.map((l) =>
                                           l.medicineId === m.backendId
-                                            ? { ...l, qty: String(qty - 1) }
+                                            ? {
+                                                ...l,
+                                                bonus: e.target.value || "0",
+                                              }
                                             : l,
                                         ),
-                                      );
-                                  }}
-                                  className="w-8 h-8 rounded-full bg-gray-100 hover:bg-red-50 text-gray-700 font-bold text-base flex items-center justify-center"
-                                >
-                                  −
-                                </button>
-                                <span className="text-sm font-bold text-blue-700">
-                                  {qty}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setNewOrderLines((prev) =>
-                                      prev.map((l) =>
-                                        l.medicineId === m.backendId
-                                          ? { ...l, qty: String(qty + 1) }
-                                          : l,
-                                      ),
-                                    )
-                                  }
-                                  className="w-8 h-8 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-base flex items-center justify-center"
-                                >
-                                  +
-                                </button>
-                              </div>
+                                      )
+                                    }
+                                    className="w-12 text-center text-xs font-bold text-emerald-700 border border-emerald-300 bg-emerald-50 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-emerald-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                    aria-label="Bonus"
+                                  />
+                                </label>
+                                <label className="flex items-center gap-1">
+                                  <span className="text-[9px] text-amber-600 font-medium">
+                                    Dist%
+                                  </span>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    step="any"
+                                    value={
+                                      existingLine?.distDisc === "0" ||
+                                      !existingLine?.distDisc
+                                        ? ""
+                                        : existingLine.distDisc
+                                    }
+                                    placeholder="0"
+                                    onChange={(e) =>
+                                      setNewOrderLines((prev) =>
+                                        prev.map((l) =>
+                                          l.medicineId === m.backendId
+                                            ? {
+                                                ...l,
+                                                distDisc: e.target.value || "0",
+                                              }
+                                            : l,
+                                        ),
+                                      )
+                                    }
+                                    className="w-12 text-center text-xs font-bold text-amber-700 border border-amber-300 bg-amber-50 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-amber-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                    aria-label="Dist%"
+                                  />
+                                </label>
+                                <label className="flex items-center gap-1">
+                                  <span className="text-[9px] text-blue-600 font-medium">
+                                    Co%
+                                  </span>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    step="any"
+                                    value={
+                                      existingLine?.compDisc === "0" ||
+                                      !existingLine?.compDisc
+                                        ? ""
+                                        : existingLine.compDisc
+                                    }
+                                    placeholder="0"
+                                    onChange={(e) =>
+                                      setNewOrderLines((prev) =>
+                                        prev.map((l) =>
+                                          l.medicineId === m.backendId
+                                            ? {
+                                                ...l,
+                                                compDisc: e.target.value || "0",
+                                              }
+                                            : l,
+                                        ),
+                                      )
+                                    }
+                                    className="w-12 text-center text-xs font-bold text-blue-700 border border-blue-300 bg-blue-50 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                    aria-label="Co%"
+                                  />
+                                </label>
+                                <div className="flex items-center gap-0.5">
+                                  <span className="text-[9px] text-gray-500 font-medium">
+                                    Net
+                                  </span>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    value={
+                                      existingLine?.netRate === "0" ||
+                                      !existingLine?.netRate
+                                        ? ""
+                                        : existingLine.netRate
+                                    }
+                                    placeholder="0"
+                                    onChange={(e) =>
+                                      setNewOrderLines((prev) =>
+                                        prev.map((l) =>
+                                          l.medicineId === m.backendId
+                                            ? {
+                                                ...l,
+                                                netRate: e.target.value || "0",
+                                              }
+                                            : l,
+                                        ),
+                                      )
+                                    }
+                                    className={`w-14 text-center text-xs font-bold rounded px-1 py-0.5 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                                      existingLine?.netRate &&
+                                      existingLine.netRate !== "0"
+                                        ? "text-purple-700 border border-purple-400 bg-purple-50"
+                                        : "text-gray-700 border border-gray-200 bg-gray-100"
+                                    }`}
+                                    aria-label="Net rate"
+                                  />
+                                  {existingLine?.netRate &&
+                                    existingLine.netRate !== "0" && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setNewOrderLines((prev) =>
+                                            prev.map((l) =>
+                                              l.medicineId === m.backendId
+                                                ? { ...l, netRate: "0" }
+                                                : l,
+                                            ),
+                                          )
+                                        }
+                                        className="text-[9px] text-gray-400 hover:text-gray-600 leading-none"
+                                        title="Reset to auto"
+                                      >
+                                        ×
+                                      </button>
+                                    )}
+                                </div>
+                              </>
                             )}
                           </div>
                         </div>
@@ -12066,6 +12778,14 @@ function OfficeDashboard() {
             {/* Staff Locations */}
             {activeView === "staff-locations" && <StaffLocationsView />}
 
+            {/* Estimated Billing */}
+            {activeView === "estimated-billing" && (
+              <EstimatedBillingScreen
+                allMedicines={allMedicines}
+                allPharmacies={allPharmacies}
+              />
+            )}
+
             {/* Footer */}
             <div className="text-center py-3 text-xs text-gray-400">
               © {new Date().getFullYear()}. Built with ♥ using{" "}
@@ -12151,9 +12871,10 @@ function DeliveryDashboard() {
   const [backendError, setBackendError] = useState<string | null>(null);
   const [returnModalOrder, setReturnModalOrder] =
     useState<DeliveryOrder | null>(null);
-  const [returnToggles, setReturnToggles] = useState<Record<string, boolean>>(
+  const [_returnToggles, setReturnToggles] = useState<Record<string, boolean>>(
     {},
   );
+  const [returnQtys, setReturnQtys] = useState<Record<string, number>>({});
   const [returnReason, setReturnReason] = useState("");
   const [paymentAmount, setPaymentAmount] = useState<Record<string, string>>(
     {},
@@ -12247,20 +12968,38 @@ function DeliveryDashboard() {
   const loadData = useCallback(async () => {
     if (!actor || isActorFetching) return;
     setIsLoading(true);
+    const delivSess = getSession();
+    const delivDistId = delivSess?.distributorId
+      ? BigInt(delivSess.distributorId)
+      : null;
     try {
       const [rawOrders, rawPharmacies, rawMedicines] = await Promise.all([
-        actor.getActiveOrders().catch(async () => {
-          const all = await actor.getAllStaffOrders().catch(() => [] as any[]);
-          const now = Date.now();
-          const hrs48 = 48 * 60 * 60 * 1000;
-          return all.filter((o: any) => {
-            if (o.status !== "delivered") return true;
-            const ts = Number(o.timestamp / BigInt(1_000_000));
-            return now - ts < hrs48;
-          });
-        }),
-        actor.getPharmacies().catch(() => [] as any[]),
-        actor.getMedicines().catch(() => [] as any[]),
+        delivDistId
+          ? (actor as any)
+              .getActiveOrdersByDistributor(delivDistId)
+              .catch(() => actor.getActiveOrders().catch(() => [] as any[]))
+          : actor.getActiveOrders().catch(async () => {
+              const all = await actor
+                .getAllStaffOrders()
+                .catch(() => [] as any[]);
+              const now = Date.now();
+              const hrs48 = 48 * 60 * 60 * 1000;
+              return all.filter((o: any) => {
+                if (o.status !== "delivered") return true;
+                const ts = Number(o.timestamp / BigInt(1_000_000));
+                return now - ts < hrs48;
+              });
+            }),
+        delivDistId
+          ? (actor as any)
+              .getPharmaciesByDistributor(delivDistId)
+              .catch(() => actor.getPharmacies().catch(() => [] as any[]))
+          : actor.getPharmacies().catch(() => [] as any[]),
+        delivDistId
+          ? (actor as any)
+              .getMedicinesByDistributor(delivDistId)
+              .catch(() => actor.getMedicines().catch(() => [] as any[]))
+          : actor.getMedicines().catch(() => [] as any[]),
       ]);
 
       const pharmacyMap = new Map(
@@ -12466,14 +13205,21 @@ function DeliveryDashboard() {
 
   async function handleSaveReturn() {
     if (!actor || !returnModalOrder) return;
+    const hasReturn = returnModalOrder.items.some(
+      (item) => (returnQtys[item.medicineId] ?? 0) > 0,
+    );
+    if (!hasReturn) {
+      toast.error("Kam az kam ek item return karein");
+      return;
+    }
     setIsSavingReturn(true);
     try {
       const returnedItems = returnModalOrder.items.filter(
-        (item) => returnToggles[item.medicineId],
+        (item) => (returnQtys[item.medicineId] ?? 0) > 0,
       );
       const returnItems = returnedItems.map((item) => ({
         medicineId: BigInt(item.medicineId),
-        returnedQty: BigInt(item.qty),
+        returnedQty: BigInt(Math.round(returnQtys[item.medicineId] ?? 0)),
       }));
       const payment = Number(paymentAmount[returnModalOrder.orderId] ?? 0);
       await (actor as any).updateOrderPaymentAndReturn(
@@ -12487,20 +13233,24 @@ function DeliveryDashboard() {
       restoreStock(
         returnedItems.map((item) => ({
           backendId: BigInt(item.medicineId),
-          qty: item.qty,
+          qty: returnQtys[item.medicineId] ?? 0,
         })),
       );
       // Sync inventory restoration to backend (fire-and-forget)
       Promise.all(
         returnedItems.map((item) =>
           actor
-            .adjustInventoryStock(BigInt(item.medicineId), BigInt(item.qty))
+            .adjustInventoryStock(
+              BigInt(item.medicineId),
+              BigInt(Math.round(returnQtys[item.medicineId] ?? 0)),
+            )
             .catch(() => {}),
         ),
       );
       toast.success("Return aur payment save ho gaya!");
       setReturnModalOrder(null);
       setReturnToggles({});
+      setReturnQtys({});
       setReturnReason("");
       await loadData();
     } catch (e: unknown) {
@@ -12673,11 +13423,46 @@ function DeliveryDashboard() {
                 );
                 return sum + received;
               }, 0);
+              const totalReturnsValue = ordersForSummary.reduce(
+                (sum, order) => {
+                  if (!order.returnItems || order.returnItems.length === 0)
+                    return sum;
+                  const returnedValue = order.items
+                    .filter((item: { medicineId: string; total: number }) =>
+                      order.returnItems.some(
+                        (r: { medicineId: string }) =>
+                          r.medicineId === item.medicineId,
+                      ),
+                    )
+                    .reduce(
+                      (s: number, item: { total: number }) => s + item.total,
+                      0,
+                    );
+                  return sum + returnedValue;
+                },
+                0,
+              );
               const totalCredit = ordersForSummary.reduce((sum, order) => {
                 const received = Number(
                   paymentAmount[order.orderId] ?? order.paymentReceived ?? 0,
                 );
-                const balance = order.totalAmount - received;
+                const returnedValue =
+                  order.returnItems && order.returnItems.length > 0
+                    ? order.items
+                        .filter((item: { medicineId: string; total: number }) =>
+                          order.returnItems.some(
+                            (r: { medicineId: string }) =>
+                              r.medicineId === item.medicineId,
+                          ),
+                        )
+                        .reduce(
+                          (s: number, item: { total: number }) =>
+                            s + item.total,
+                          0,
+                        )
+                    : 0;
+                const netPayable = order.totalAmount - returnedValue;
+                const balance = netPayable - received;
                 return sum + (balance > 0 ? balance : 0);
               }, 0);
               return (
@@ -12698,6 +13483,16 @@ function DeliveryDashboard() {
                       {formatCurrency(totalCredit)}
                     </p>
                   </div>
+                  {totalReturnsValue > 0 && (
+                    <div className="bg-orange-50 border border-orange-200 rounded-xl p-3.5">
+                      <p className="text-xs text-orange-600 font-semibold uppercase tracking-wide mb-1">
+                        Total Returns | کل واپسی
+                      </p>
+                      <p className="text-lg font-bold text-orange-700 font-heading">
+                        {formatCurrency(totalReturnsValue)}
+                      </p>
+                    </div>
+                  )}
                 </>
               );
             })()}
@@ -12948,6 +13743,23 @@ function DeliveryDashboard() {
                         Return Items | واپسی
                       </button>
 
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReturnModalOrder(order);
+                          const qtys: Record<string, number> = {};
+                          for (const item of order.items) {
+                            qtys[item.medicineId] = item.qty;
+                          }
+                          setReturnQtys(qtys);
+                          setReturnReason("");
+                        }}
+                        className="mt-1 w-full flex items-center justify-center gap-2 border-2 border-red-400 text-red-600 hover:bg-red-50 font-semibold py-2.5 rounded-xl transition-colors text-sm"
+                      >
+                        <X size={15} />
+                        Return All Items | سب واپس کریں
+                      </button>
+
                       {(() => {
                         const paymentEntered =
                           Number(
@@ -13078,60 +13890,83 @@ function DeliveryDashboard() {
             </div>
             <div className="px-4 py-4 space-y-3">
               <p className="text-xs text-gray-500">
-                Jo medicine wapis ho rahi hai us ka toggle on karein | Toggle ON
-                for returned items:
+                Har item ke liye return quantity likhein | Enter return qty for
+                each item:
               </p>
-              {/* Return All / Keep All quick buttons */}
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const t: Record<string, boolean> = {};
-                    for (const item of returnModalOrder.items)
-                      t[item.medicineId] = true;
-                    setReturnToggles(t);
-                  }}
-                  className="flex-1 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-semibold transition-colors"
-                >
-                  Return All | سب واپس
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setReturnToggles({})}
-                  className="flex-1 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-semibold transition-colors"
-                >
-                  Keep All | سب رکھیں
-                </button>
-              </div>
               {returnModalOrder.items.map((item) => {
-                const isReturn = returnToggles[item.medicineId] ?? false;
+                const returnQty = returnQtys[item.medicineId] ?? 0;
+                const keptQty = item.qty - returnQty;
+                const hasReturn = returnQty > 0;
                 return (
                   <div
                     key={item.medicineId}
-                    className={`flex items-center justify-between p-3 rounded-xl border-2 transition-colors ${isReturn ? "border-red-300 bg-red-50" : "border-emerald-300 bg-emerald-50"}`}
+                    className={`p-3 rounded-xl border-2 transition-colors ${hasReturn ? "border-red-300 bg-red-50" : "border-gray-200 bg-gray-50"}`}
                   >
-                    <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-2">
                       <p
-                        className={`font-semibold text-sm ${isReturn ? "text-red-700" : "text-emerald-700"}`}
+                        className={`font-semibold text-sm ${hasReturn ? "text-red-700" : "text-gray-700"}`}
                       >
                         {item.medicineName}
                       </p>
-                      <p className="text-xs text-gray-500">
-                        {item.strength} · Qty: {item.qty}
-                      </p>
+                      <span className="text-xs text-gray-500 bg-white px-2 py-0.5 rounded-full border">
+                        Order Qty: {item.qty}
+                      </span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setReturnToggles((prev) => ({
-                          ...prev,
-                          [item.medicineId]: !isReturn,
-                        }))
-                      }
-                      className={`ml-3 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${isReturn ? "bg-red-500 text-white" : "bg-emerald-500 text-white"}`}
-                    >
-                      {isReturn ? "Return ↩" : "Kept ✓"}
-                    </button>
+                    {item.strength && (
+                      <p className="text-xs text-gray-400 mb-2">
+                        {item.strength}
+                      </p>
+                    )}
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1">
+                        <label
+                          htmlFor={`return-qty-${item.medicineId}`}
+                          className="text-xs text-gray-500 mb-1 block"
+                        >
+                          Return Qty | واپسی
+                        </label>
+                        <input
+                          id={`return-qty-${item.medicineId}`}
+                          type="number"
+                          min={0}
+                          max={item.qty}
+                          value={returnQty}
+                          onChange={(e) => {
+                            const val = Math.min(
+                              Math.max(0, Number(e.target.value) || 0),
+                              item.qty,
+                            );
+                            setReturnQtys((prev) => ({
+                              ...prev,
+                              [item.medicineId]: val,
+                            }));
+                          }}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setReturnQtys((prev) => ({
+                              ...prev,
+                              [item.medicineId]: item.qty,
+                            }))
+                          }
+                          className="mt-1 w-full text-xs font-semibold text-white bg-red-500 hover:bg-red-600 rounded-lg px-2 py-1.5 transition-colors"
+                        >
+                          Return All | سب واپس
+                        </button>
+                      </div>
+                      <div className="flex-1">
+                        <span className="text-xs text-gray-500 mb-1 block">
+                          Kept Qty | رکھی گئی
+                        </span>
+                        <div
+                          className={`w-full rounded-lg px-3 py-2 text-sm font-semibold ${keptQty > 0 ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}
+                        >
+                          {keptQty}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 );
               })}
@@ -13182,8 +14017,18 @@ function MobileApp() {
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
   const [sideMenuOpen, setSideMenuOpen] = useState(false);
   const [backendError, setBackendError] = useState<string | null>(null);
-  // Offline mode (always false - banner removed)
-  const isOfflineMode = false;
+  // Offline mode - reactive to network status
+  const [isOfflineMode, setIsOfflineMode] = useState(!navigator.onLine);
+  useEffect(() => {
+    const handleOnline = () => setIsOfflineMode(false);
+    const handleOffline = () => setIsOfflineMode(true);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
   const [pendingOfflineOrders, setPendingOfflineOrders] = useState<Order[]>(
     () => {
       try {
@@ -13213,6 +14058,62 @@ function MobileApp() {
 
   const { actor, isFetching: isActorFetching } = useActor();
 
+  // Sync offline orders when coming back online
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional - only re-run on online/actor change
+  useEffect(() => {
+    if (isOfflineMode || pendingOfflineOrders.length === 0 || !actor) return;
+    const pending = [...pendingOfflineOrders];
+    const syncOrders = async () => {
+      const remaining: Order[] = [];
+      for (const order of pending) {
+        try {
+          const sess = getSession();
+          const distributorId = sess?.distributorId
+            ? BigInt(sess.distributorId)
+            : BigInt(0);
+          const backendItems = order.items.map((it) => ({
+            medicineId: it.medicineId,
+            medicineName: it.medicineName,
+            quantity: it.qty,
+            bonusQty: it.bonusQty ?? 0,
+            distDiscount: it.distributionDiscount ?? 0,
+            coDiscount: it.companyDiscount ?? 0,
+            netRate: it.manualNetRate ?? 0,
+            amount: it.total,
+          }));
+          await (actor as any).createOrder(
+            distributorId,
+            order.pharmacyId,
+            order.pharmacyName,
+            order.pharmacyArea ?? "",
+            order.staffId,
+            order.staffName,
+            backendItems,
+            order.notes ?? "",
+            order.totalAmount,
+          );
+          // success — don't add to remaining
+        } catch {
+          remaining.push(order); // keep for next retry
+        }
+      }
+      setPendingOfflineOrders(remaining);
+      try {
+        localStorage.setItem(
+          "medorder_offline_orders",
+          JSON.stringify(remaining),
+        );
+      } catch {
+        /* ignore */
+      }
+      if (remaining.length < pending.length) {
+        const synced = pending.length - remaining.length;
+        toast.success(`${synced} offline order(s) synced successfully!`);
+      }
+    };
+    syncOrders();
+  }, [isOfflineMode, actor]);
+
   // ── Session persistence: restore login on page load ───────────────────
   useEffect(() => {
     const session = getSession();
@@ -13240,33 +14141,49 @@ function MobileApp() {
       setIsLoadingOrders(true);
       try {
         // Load both active (48hr) and history (1yr) orders in parallel
+        const staffSess = getSession();
+        const staffLoadDistId = staffSess?.distributorId
+          ? BigInt(staffSess.distributorId)
+          : null;
         const [activeRecords, historyRecords] = await Promise.all([
-          actorInstance.getActiveOrders().catch(async () => {
-            const all = await actorInstance
-              .getAllStaffOrders()
-              .catch(() => [] as any[]);
-            const now = Date.now();
-            const hrs48 = 48 * 60 * 60 * 1000;
-            return all.filter((o: any) => {
-              if (o.status !== "delivered") return true;
-              const ts = Number(o.timestamp / BigInt(1_000_000));
-              return now - ts < hrs48;
-            });
-          }),
-          actorInstance.getHistoryOrders().catch(async () => {
-            const all = await actorInstance
-              .getAllStaffOrders()
-              .catch(() => [] as any[]);
-            const now = Date.now();
-            const hrs48 = 48 * 60 * 60 * 1000;
-            const yr1 = 365 * 24 * 60 * 60 * 1000;
-            return all.filter((o: any) => {
-              if (o.status !== "delivered") return false;
-              const ts = Number(o.timestamp / BigInt(1_000_000));
-              const age = now - ts;
-              return age >= hrs48 && age < yr1;
-            });
-          }),
+          staffLoadDistId
+            ? (actorInstance as any)
+                .getActiveOrdersByDistributor(staffLoadDistId)
+                .catch(() =>
+                  actorInstance.getActiveOrders().catch(() => [] as any[]),
+                )
+            : actorInstance.getActiveOrders().catch(async () => {
+                const all = await actorInstance
+                  .getAllStaffOrders()
+                  .catch(() => [] as any[]);
+                const now = Date.now();
+                const hrs48 = 48 * 60 * 60 * 1000;
+                return all.filter((o: any) => {
+                  if (o.status !== "delivered") return true;
+                  const ts = Number(o.timestamp / BigInt(1_000_000));
+                  return now - ts < hrs48;
+                });
+              }),
+          staffLoadDistId
+            ? (actorInstance as any)
+                .getHistoryOrdersByDistributor(staffLoadDistId)
+                .catch(() =>
+                  actorInstance.getHistoryOrders().catch(() => [] as any[]),
+                )
+            : actorInstance.getHistoryOrders().catch(async () => {
+                const all = await actorInstance
+                  .getAllStaffOrders()
+                  .catch(() => [] as any[]);
+                const now = Date.now();
+                const hrs48 = 48 * 60 * 60 * 1000;
+                const yr1 = 365 * 24 * 60 * 60 * 1000;
+                return all.filter((o: any) => {
+                  if (o.status !== "delivered") return false;
+                  const ts = Number(o.timestamp / BigInt(1_000_000));
+                  const age = now - ts;
+                  return age >= hrs48 && age < yr1;
+                });
+              }),
         ]);
         const allRecords = [...activeRecords, ...historyRecords];
 
@@ -13401,9 +14318,21 @@ function MobileApp() {
 
       try {
         // Load pharmacies and medicines in parallel
+        const staffInitSess = getSession();
+        const staffInitDistId = staffInitSess?.distributorId
+          ? BigInt(staffInitSess.distributorId)
+          : null;
         const [backendPharmacies, backendMedicines] = await Promise.all([
-          actor.getPharmacies().catch(() => [] as any[]),
-          actor.getMedicines().catch(() => [] as any[]),
+          staffInitDistId
+            ? (actor as any)
+                .getPharmaciesByDistributor(staffInitDistId)
+                .catch(() => actor.getPharmacies().catch(() => [] as any[]))
+            : actor.getPharmacies().catch(() => [] as any[]),
+          staffInitDistId
+            ? (actor as any)
+                .getMedicinesByDistributor(staffInitDistId)
+                .catch(() => actor.getMedicines().catch(() => [] as any[]))
+            : actor.getMedicines().catch(() => [] as any[]),
         ]);
 
         let pharmacyList: Pharmacy[];
@@ -13614,8 +14543,16 @@ function MobileApp() {
             "medorder_cached_pharmacies",
           );
           const cachedMeds = localStorage.getItem("medorder_cached_medicines");
+          const cachedOrders = localStorage.getItem(
+            "medorder_cached_orders_active",
+          );
           if (cachedPharma) setPharmacies(JSON.parse(cachedPharma));
           if (cachedMeds) setMedicines(JSON.parse(cachedMeds));
+          if (cachedOrders)
+            dispatch({
+              type: "SET_ORDERS",
+              orders: JSON.parse(cachedOrders),
+            });
         } catch {
           /* ignore */
         }
@@ -13669,9 +14606,9 @@ function MobileApp() {
         return (
           <LoginScreen
             dispatch={dispatch}
-            onRoleLogin={(role, username, displayName) => {
+            onRoleLogin={(role, username, displayName, distributorId) => {
               if (role === "admin") {
-                setSession({ username, role, displayName });
+                setSession({ username, role, displayName, distributorId });
                 window.location.href = "/office";
                 return;
               }
@@ -13760,6 +14697,7 @@ function MobileApp() {
             medicines={medicines}
             actor={actor}
             showPharmacies={false}
+            readOnly={true}
             onDataReloaded={handleManageDataReloaded}
             dispatch={dispatch}
           />
@@ -13880,7 +14818,7 @@ function TestView() {
             </div>
             <div>
               <h1 className="text-xl font-bold font-heading">
-                MedOrder — Test View
+                MedFlow — Test View
               </h1>
               <p className="text-white/70 text-xs">
                 Three dashboards side by side | تینوں ڈیش بورڈ ایک ساتھ
