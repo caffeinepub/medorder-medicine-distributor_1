@@ -77,6 +77,7 @@ type AppUser = {
   password: string;
   role: UserRole;
   displayName: string;
+  backendStaffId?: number;
 };
 
 const USER_DB: AppUser[] = [
@@ -7822,6 +7823,8 @@ function PaymentsView({
 // ─── User Management Panel ────────────────────────────────────────────────────
 
 function UserManagementPanel() {
+  const { actor } = useActor();
+  const sess = getSession();
   const [customUsers, setCustomUsers] = useState<AppUser[]>(() =>
     getCustomUsers(),
   );
@@ -7842,6 +7845,53 @@ function UserManagementPanel() {
       return [];
     }
   });
+  // Load staff from backend on mount and merge into customUsers
+  useEffect(() => {
+    if (!actor || !sess?.distributorId) return;
+    (actor as any)
+      .getStaffByDistributor(BigInt(sess.distributorId))
+      .then((staffList: any[]) => {
+        if (!staffList || staffList.length === 0) return;
+        const current = getCustomUsers();
+        const currentUsernames = new Set(
+          current.map((u) => u.username.toLowerCase()),
+        );
+        const toAdd: AppUser[] = [];
+        for (const s of staffList) {
+          const uname = String(s.username ?? "");
+          if (!uname) continue;
+          if (!currentUsernames.has(uname.toLowerCase())) {
+            toAdd.push({
+              username: uname,
+              password: String(s.password ?? ""),
+              role: String(s.role ?? "staff") as UserRole,
+              displayName: String(s.displayName ?? uname),
+              backendStaffId: Number(s.id),
+            });
+          } else {
+            // Update backendStaffId for existing user
+            const idx = current.findIndex(
+              (u) => u.username.toLowerCase() === uname.toLowerCase(),
+            );
+            if (idx >= 0 && !current[idx].backendStaffId) {
+              current[idx] = { ...current[idx], backendStaffId: Number(s.id) };
+            }
+          }
+        }
+        if (toAdd.length > 0 || current.some((u) => !u.backendStaffId)) {
+          const merged = [...current, ...toAdd];
+          setCustomUsers(merged);
+          try {
+            localStorage.setItem(CUSTOM_USERS_KEY, JSON.stringify(merged));
+          } catch {
+            /* ignore */
+          }
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actor, sess?.distributorId]);
+
   const allUsers = [...USER_DB, ...customUsers];
   const visibleUsers = allUsers.filter(
     (u) => !hiddenBuiltins.includes(u.username),
@@ -7856,7 +7906,7 @@ function UserManagementPanel() {
     }
   }
 
-  function handleAddUser() {
+  async function handleAddUser() {
     if (!newUsername.trim() || !newDisplayName.trim() || !newPassword.trim()) {
       setAddError("Sab fields zaruri hain | All fields required");
       return;
@@ -7870,16 +7920,34 @@ function UserManagementPanel() {
       setAddError("Username already exists | یوزر نیم پہلے سے موجود ہے");
       return;
     }
-    const updated = [
-      ...customUsers,
-      {
-        username: newUsername.trim(),
-        password: newPassword.trim(),
-        role: newRole,
-        displayName: newDisplayName.trim(),
-      },
-    ];
+    const newUser: AppUser = {
+      username: newUsername.trim(),
+      password: newPassword.trim(),
+      role: newRole,
+      displayName: newDisplayName.trim(),
+    };
+    const updated = [...customUsers, newUser];
     saveCustomUsers(updated);
+    // Save to backend so any device can login
+    if (actor && sess?.distributorId) {
+      try {
+        const staffId = await (actor as any).addStaffForDistributor(
+          BigInt(sess.distributorId),
+          newUsername.trim(),
+          newPassword.trim(),
+          newRole,
+          newDisplayName.trim(),
+        );
+        const withId = updated.map((u) =>
+          u.username === newUsername.trim()
+            ? { ...u, backendStaffId: Number(staffId) }
+            : u,
+        );
+        saveCustomUsers(withId);
+      } catch {
+        /* ignore if backend unavailable */
+      }
+    }
     setNewUsername("");
     setNewDisplayName("");
     setNewPassword("");
@@ -7889,26 +7957,37 @@ function UserManagementPanel() {
     toast.success(`User "${newDisplayName.trim()}" add ho gaya`);
   }
 
-  function handleChangePassword(username: string) {
+  async function handleChangePassword(username: string) {
     if (!newPwd.trim()) {
       toast.error("New password enter karein");
       return;
     }
+    let updatedUser: AppUser | undefined;
     const idx = customUsers.findIndex((u) => u.username === username);
     if (idx >= 0) {
       const updated = customUsers.map((u) =>
         u.username === username ? { ...u, password: newPwd.trim() } : u,
       );
       saveCustomUsers(updated);
+      updatedUser = updated[idx];
     } else {
       // It's a built-in user — store override in customUsers
       const builtIn = USER_DB.find((u) => u.username === username);
       if (builtIn) {
-        const updated = [
-          ...customUsers,
-          { ...builtIn, password: newPwd.trim() },
-        ];
+        const newEntry = { ...builtIn, password: newPwd.trim() };
+        const updated = [...customUsers, newEntry];
         saveCustomUsers(updated);
+        updatedUser = newEntry;
+      }
+    }
+    if (actor && updatedUser?.backendStaffId) {
+      try {
+        await (actor as any).updateStaffRecordPassword(
+          BigInt(updatedUser.backendStaffId),
+          newPwd.trim(),
+        );
+      } catch {
+        /* ignore */
       }
     }
     setChangePwdFor(null);
@@ -7916,7 +7995,7 @@ function UserManagementPanel() {
     toast.success("Password update ho gaya");
   }
 
-  function handleDeleteUser(username: string) {
+  async function handleDeleteUser(username: string) {
     const builtIn = USER_DB.find((u) => u.username === username);
     if (builtIn) {
       // Hide built-in user (only staff/delivery, not admin)
@@ -7928,8 +8007,18 @@ function UserManagementPanel() {
         /* ignore */
       }
     } else {
+      const userToDelete = customUsers.find((u) => u.username === username);
       const updated = customUsers.filter((u) => u.username !== username);
       saveCustomUsers(updated);
+      if (actor && userToDelete?.backendStaffId) {
+        try {
+          await (actor as any).deleteStaffRecord(
+            BigInt(userToDelete.backendStaffId),
+          );
+        } catch {
+          /* ignore */
+        }
+      }
     }
     setDeleteConfirm(null);
     toast.success("User delete ho gaya");
@@ -8486,6 +8575,8 @@ function OfficeDashboard() {
   const [statusFilter, setStatusFilter] = useState<OrderStatus | "all">("all");
   const [updatingId, setUpdatingId] = useState<bigint | null>(null);
   const [isConfirmingAll, setIsConfirmingAll] = useState(false);
+  const [confirmClearOrders, setConfirmClearOrders] = useState(false);
+  const [isClearingOrders, setIsClearingOrders] = useState(false);
   const [activeView, setActiveView] = useState<
     | "orders"
     | "history"
@@ -9741,6 +9832,78 @@ function OfficeDashboard() {
                     ))}
                   </div>
                   <div className="ml-auto flex items-center gap-2">
+                    {/* Clear All Orders */}
+                    <button
+                      type="button"
+                      data-ocid="office.orders.delete_button"
+                      onClick={() => setConfirmClearOrders(true)}
+                      className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                    >
+                      <Trash2 size={14} />
+                      Clear All | صاف کریں
+                    </button>
+                    {/* Clear Orders Confirm Dialog */}
+                    {confirmClearOrders && (
+                      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+                        <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full mx-4">
+                          <h3 className="text-lg font-bold text-gray-900 mb-2">
+                            Sab Orders Clear Karein?
+                          </h3>
+                          <p className="text-sm text-gray-500 mb-4">
+                            Yeh action undo nahi ho sakti. Saray orders
+                            permanently delete ho jayenge.
+                          </p>
+                          <div className="flex gap-3 justify-end">
+                            <button
+                              type="button"
+                              onClick={() => setConfirmClearOrders(false)}
+                              className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              data-ocid="office.orders.confirm_button"
+                              disabled={isClearingOrders}
+                              onClick={async () => {
+                                if (!actor) return;
+                                const clearSess = getSession();
+                                if (!clearSess?.distributorId) return;
+                                setIsClearingOrders(true);
+                                try {
+                                  await (
+                                    actor as any
+                                  ).clearOrdersForDistributor(
+                                    BigInt(clearSess.distributorId),
+                                  );
+                                  setConfirmClearOrders(false);
+                                  toast.success(
+                                    "Sab orders clear ho gaye | All orders cleared",
+                                  );
+                                  await loadAllData();
+                                } catch (e: unknown) {
+                                  const msg =
+                                    e instanceof Error
+                                      ? e.message
+                                      : "Unknown error";
+                                  toast.error(`Error: ${msg}`);
+                                } finally {
+                                  setIsClearingOrders(false);
+                                }
+                              }}
+                              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-semibold disabled:opacity-50"
+                            >
+                              {isClearingOrders ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : (
+                                <Trash2 size={14} />
+                              )}
+                              Confirm Delete
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     {/* Confirm All */}
                     <button
                       type="button"
@@ -12783,6 +12946,7 @@ function OfficeDashboard() {
               <EstimatedBillingScreen
                 allMedicines={allMedicines}
                 allPharmacies={allPharmacies}
+                allOrders={orders}
               />
             )}
 
@@ -13104,12 +13268,16 @@ function DeliveryDashboard() {
       }
       setBackendError(null);
 
-      // Sync inventory stock to localStorage
+      // Sync inventory stock to localStorage (protect against canister reset)
       actor
         .getInventoryStock()
         .then((stockArr) => {
           for (const [medId, qty] of stockArr) {
-            setStock(medId, Number(qty));
+            const numQty = Number(qty);
+            if (numQty > 0) {
+              setStock(medId, numQty);
+            }
+            // If backend says 0 but localStorage has value, keep localStorage
           }
         })
         .catch(() => {});

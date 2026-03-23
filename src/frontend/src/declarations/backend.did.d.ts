@@ -235,6 +235,7 @@ export interface _SERVICE {
   'getOrdersByStaffName' : ActorMethod<[bigint, string], Array<OrderRecord>>,
   'getDistributorStats' : ActorMethod<[bigint], DistributorStats>,
   'getAllOrdersForSuperAdmin' : ActorMethod<[], Array<OrderRecord>>,
+  'clearOrdersForDistributor' : ActorMethod<[bigint], bigint>,
 }
 export declare const idlService: IDL.ServiceClass;
 export declare const idlInitArgs: IDL.Type[];

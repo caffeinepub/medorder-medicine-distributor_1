@@ -1,4 +1,5 @@
 {
+  "id": "/",
   "name": "MedFlow",
   "short_name": "MedFlow",
   "description": "Medicine Distributors - Order Management",
@@ -7,12 +8,77 @@
   "background_color": "#0f172a",
   "theme_color": "#1e40af",
   "orientation": "portrait-primary",
+  "lang": "ur",
+  "categories": ["medical", "business", "productivity"],
   "icons": [
+    {
+      "src": "/assets/generated/medflow-icon-192.dim_192x192.png",
+      "sizes": "72x72",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/generated/medflow-icon-192.dim_192x192.png",
+      "sizes": "96x96",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/generated/medflow-icon-192.dim_192x192.png",
+      "sizes": "128x128",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/generated/medflow-icon-192.dim_192x192.png",
+      "sizes": "144x144",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/generated/medflow-icon-192.dim_192x192.png",
+      "sizes": "152x152",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/generated/medflow-icon-192.dim_192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/generated/medflow-icon.dim_512x512.png",
+      "sizes": "384x384",
+      "type": "image/png",
+      "purpose": "any"
+    },
     {
       "src": "/assets/generated/medflow-icon.dim_512x512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/generated/medflow-icon-192.dim_192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/assets/generated/medflow-icon.dim_512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/assets/generated/medflow-icon.dim_512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "MedFlow Order Management"
     }
   ]
 }

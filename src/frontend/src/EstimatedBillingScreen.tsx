@@ -56,6 +56,7 @@ interface PharmacyInfo {
 interface EstimatedBillingScreenProps {
   allMedicines: MedicineInfo[];
   allPharmacies: PharmacyInfo[];
+  allOrders?: any[];
 }
 
 function getStock(backendId: bigint): number {
@@ -78,21 +79,54 @@ function formatDate(ts: number) {
 export default function EstimatedBillingScreen({
   allMedicines,
   allPharmacies,
+  allOrders,
 }: EstimatedBillingScreenProps) {
   const [selectedProduct, setSelectedProduct] = useState<string | null>(null);
   const [billCustomer, setBillCustomer] = useState<string | null>(null);
   const [customerSearch, setCustomerSearch] = useState("");
 
-  // Fix: use useState + useEffect so pool refreshes every time screen mounts
+  // Fix: derive pool from backend orders (cross-device), fallback to localStorage
   const [pool, setPool] = useState<PoolEntry[]>([]);
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("estimatedOrders_pool");
-      setPool(raw ? JSON.parse(raw) : []);
-    } catch {
-      setPool([]);
+    if (allOrders && allOrders.length > 0) {
+      const derivedPool: PoolEntry[] = allOrders
+        .filter((o: any) =>
+          o.items?.some((i: any) => (i.companyDiscount ?? 0) > 0),
+        )
+        .map((o: any) => ({
+          id: String(o.id),
+          orderId: String(o.id),
+          staffName: o.staffName ?? "",
+          pharmacyId: String(o.pharmacyId ?? ""),
+          pharmacyName: o.pharmacyName ?? "",
+          timestamp:
+            typeof o.timestamp === "bigint"
+              ? Number(o.timestamp) / 1_000_000
+              : (o.timestamp ?? Date.now()),
+          items: (o.items ?? [])
+            .filter((i: any) => (i.companyDiscount ?? 0) > 0)
+            .map((i: any) => ({
+              medicineId: String(i.medicineId ?? i.medicine?.id ?? ""),
+              medicineName: i.medicineName ?? i.medicine?.name ?? "",
+              qty: Number(i.qty ?? 0),
+              companyDiscount: Number(i.companyDiscount ?? 0),
+              distributionDiscount: Number(i.distributionDiscount ?? 0),
+              netRate: i.manualNetRate ?? i.netRate,
+              unitPrice: Number(i.unitPrice ?? i.medicine?.price ?? 0),
+              total: Number(i.total ?? 0),
+              bonusQty: Number(i.bonusQty ?? 0),
+            })),
+        }));
+      setPool(derivedPool);
+    } else {
+      try {
+        const raw = localStorage.getItem("estimatedOrders_pool");
+        setPool(raw ? JSON.parse(raw) : []);
+      } catch {
+        setPool([]);
+      }
     }
-  }, []);
+  }, [allOrders]);
 
   // Filter items where companyDiscount > 0
   const coDiscountEntries = useMemo(

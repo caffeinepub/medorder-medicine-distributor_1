@@ -204,4 +204,10 @@ export interface backendInterface {
     verifyDistributorLogin(username: string, password: string): Promise<bigint | null>;
     verifyPassword(name: string, password: string): Promise<boolean>;
     verifySuperAdmin(password: string): Promise<boolean>;
+    clearOrdersForDistributor(distId: bigint): Promise<bigint>;
+    addStaffForDistributor(distId: bigint, username: string, password: string, role: string, displayName: string): Promise<bigint>;
+    getStaffByDistributor(distId: bigint): Promise<Array<StaffRecord>>;
+    deleteStaffRecord(staffId: bigint): Promise<boolean>;
+    updateStaffRecordPassword(staffId: bigint, newPassword: string): Promise<boolean>;
+    verifyStaffLoginForDistributor(username: string, password: string): Promise<StaffLoginResult | null>;
 }

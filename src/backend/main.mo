@@ -789,6 +789,26 @@ actor {
     pakkaBills.values().toArray();
   };
 
+  // ==================== CLEAR ORDERS ====================
+
+  public shared func clearOrdersForDistributor(distId : Nat) : async Nat {
+    let arr = orders.values().toArray();
+    var count = 0;
+    for (order in arr.vals()) {
+      switch (orderDist.get(order.id)) {
+        case (?d) {
+          if (d == distId) {
+            orders.remove(order.id);
+            orderDist.remove(order.id);
+            count += 1;
+          }
+        };
+        case (null) {};
+      }
+    };
+    count;
+  };
+
   public shared func deletePakkaBill(id : Nat) : async Bool {
     let exists = pakkaBills.containsKey(id);
     pakkaBills.remove(id);
