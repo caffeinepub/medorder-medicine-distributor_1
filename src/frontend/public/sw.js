@@ -1,19 +1,10 @@
-const CACHE_NAME = 'medorder-v3';
-const SHELL = [
-  '/',
-  '/index.html',
-];
+const CACHE_NAME = 'medflow-v5';
+const SHELL = ['/', '/index.html'];
 
-// Install: cache the app shell immediately
 self.addEventListener('install', (e) => {
-  e.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(SHELL);
-    }).then(() => self.skipWaiting())
-  );
+  e.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });
 
-// Activate: clean old caches and take control
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys().then((keys) =>
@@ -22,31 +13,27 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+self.addEventListener('message', (e) => {
+  if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
+});
+
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
-
   const url = new URL(e.request.url);
-
-  // Skip cross-origin requests (ICP canister calls etc)
   if (url.origin !== self.location.origin) return;
 
-  // Navigation requests: cache-first for offline, update cache in background
   if (e.request.mode === 'navigate') {
     e.respondWith(
       caches.open(CACHE_NAME).then(async (cache) => {
-        // Try network first
         try {
-          const networkResp = await fetch(e.request);
-          // Cache the fresh response
-          cache.put(e.request, networkResp.clone());
-          return networkResp;
+          const resp = await fetch(e.request);
+          cache.put(e.request, resp.clone());
+          return resp;
         } catch (_) {
-          // Network failed - serve from cache (offline)
           const cached = await cache.match('/index.html') || await cache.match('/');
           if (cached) return cached;
-          // Last resort fallback
           return new Response(
-            '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MedOrder</title></head><body><script>window.location.reload();<\/script></body></html>',
+            '<!DOCTYPE html><html lang="ur-PK"><head><meta charset="utf-8"><title>MedFlow</title></head><body><script>window.location.reload();<\/script></body></html>',
             { headers: { 'Content-Type': 'text/html' } }
           );
         }
@@ -55,17 +42,11 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Static assets (JS, CSS, images): cache-first, network fallback, cache update
-  if (
-    url.pathname.match(/\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|webp)$/)
-  ) {
+  if (url.pathname.match(/\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|webp)$/)) {
     e.respondWith(
       caches.match(e.request).then((cached) => {
         const networkFetch = fetch(e.request).then((resp) => {
-          if (resp.ok) {
-            const clone = resp.clone();
-            caches.open(CACHE_NAME).then((c) => c.put(e.request, clone));
-          }
+          if (resp.ok) caches.open(CACHE_NAME).then((c) => c.put(e.request, resp.clone()));
           return resp;
         });
         return cached || networkFetch;
@@ -74,14 +55,78 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Everything else: network first, cache fallback
   e.respondWith(
     fetch(e.request).then((resp) => {
-      if (resp.ok) {
-        const clone = resp.clone();
-        caches.open(CACHE_NAME).then((c) => c.put(e.request, clone));
-      }
+      if (resp.ok) caches.open(CACHE_NAME).then((c) => c.put(e.request, resp.clone()));
       return resp;
     }).catch(() => caches.match(e.request))
   );
+});
+
+// Push Notifications
+self.addEventListener('push', (e) => {
+  const data = e.data ? e.data.json() : {};
+  e.waitUntil(self.registration.showNotification(data.title || 'MedFlow', {
+    body: data.body || 'New notification from MedFlow',
+    icon: '/assets/generated/medflow-icon-192.dim_192x192.png',
+    badge: '/assets/generated/medflow-icon-192.dim_192x192.png',
+    data: data.url || '/'
+  }));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  e.waitUntil(clients.openWindow(e.notification.data || '/'));
+});
+
+// Background Sync -- sync offline orders when internet returns
+self.addEventListener('sync', (e) => {
+  if (e.tag === 'sync-orders') {
+    e.waitUntil(
+      clients.matchAll({ includeUncontrolled: true, type: 'window' }).then((all) => {
+        all.forEach((client) => client.postMessage({ type: 'SYNC_OFFLINE_ORDERS' }));
+      }).catch((err) => console.warn('[SW] sync failed:', err))
+    );
+  }
+});
+
+// Periodic Background Sync -- refresh data periodically
+self.addEventListener('periodicsync', (e) => {
+  if (e.tag === 'periodic-sync') {
+    e.waitUntil(
+      clients.matchAll({ includeUncontrolled: true, type: 'window' }).then((all) => {
+        all.forEach((client) => client.postMessage({ type: 'PERIODIC_SYNC_REFRESH' }));
+        return caches.open(CACHE_NAME).then((c) => c.addAll(SHELL));
+      }).catch((err) => console.warn('[SW] periodicsync failed:', err))
+    );
+  }
+});
+
+// Background Fetch -- handle large background data transfers
+self.addEventListener('backgroundfetchsuccess', (e) => {
+  e.waitUntil(
+    (async () => {
+      try {
+        const cache = await caches.open(CACHE_NAME);
+        const records = await e.registration.matchAll();
+        await Promise.all(records.map(async (record) => {
+          const response = await record.responseReady;
+          await cache.put(record.request, response);
+        }));
+        await e.updateUI({ title: 'MedFlow -- Download complete' });
+      } catch (err) { console.warn('[SW] bgfetch success error:', err); }
+    })()
+  );
+});
+
+self.addEventListener('backgroundfetchfail', (e) => {
+  e.waitUntil(e.updateUI({ title: 'MedFlow -- Download failed' }).catch(() => {}));
+});
+
+self.addEventListener('backgroundfetchclick', (e) => {
+  e.waitUntil(clients.openWindow('/').catch(() => {}));
+});
+
+self.addEventListener('backgroundfetchabort', (e) => {
+  console.warn('[SW] Background fetch aborted:', e.registration.id);
 });

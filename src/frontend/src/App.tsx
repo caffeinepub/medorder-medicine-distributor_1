@@ -51,7 +51,13 @@ import {
   WifiOff,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import EstimatedBillingScreen from "./EstimatedBillingScreen";
 import SuperAdminDashboard from "./SuperAdminDashboard";
@@ -188,6 +194,8 @@ type Medicine = {
   genericName?: string;
   batchNo?: string;
   medicineType?: string;
+  productCode?: string;
+  groupId?: bigint;
 };
 
 type Customer = {
@@ -200,6 +208,10 @@ type Customer = {
   contactNo: string;
   groupName: string;
   code: string;
+  ntn?: string;
+  cnic?: string;
+  dealerCode?: string;
+  pmdc?: string;
 };
 
 type CartItem = { medicine: Medicine; qty: number };
@@ -3985,7 +3997,717 @@ function OrderDetailScreen({
   );
 }
 
+// ─── Group Management Panel ───────────────────────────────────────────────────
+
+function GroupManagementPanel({
+  allMedicineGroups,
+  actor,
+  distributorId,
+  onGroupsChanged,
+}: {
+  allMedicineGroups: Array<{ id: bigint; name: string; distributorId: bigint }>;
+  actor: backendInterface | null;
+  distributorId: bigint;
+  onGroupsChanged: (
+    groups: Array<{ id: bigint; name: string; distributorId: bigint }>,
+  ) => void;
+}) {
+  const [newGroupName, setNewGroupName] = useState("");
+  const [isAddingGroup, setIsAddingGroup] = useState(false);
+  const [deletingGroupId, setDeletingGroupId] = useState<bigint | null>(null);
+
+  async function handleAddGroup() {
+    if (!actor || !newGroupName.trim()) return;
+    setIsAddingGroup(true);
+    try {
+      await actor.addMedicineGroup(newGroupName.trim(), distributorId);
+      const updated = await actor.getMedicineGroups(distributorId);
+      onGroupsChanged(
+        updated.map((g) => ({
+          id: g.id,
+          name: g.name,
+          distributorId: g.distributorId,
+        })),
+      );
+      setNewGroupName("");
+      toast.success(`Group "${newGroupName.trim()}" add ho gaya!`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error: ${msg}`);
+    } finally {
+      setIsAddingGroup(false);
+    }
+  }
+
+  async function handleDeleteGroup(groupId: bigint, groupName: string) {
+    if (!actor) return;
+    setDeletingGroupId(groupId);
+    try {
+      await actor.deleteMedicineGroup(groupId, distributorId);
+      const updated = await actor.getMedicineGroups(distributorId);
+      onGroupsChanged(
+        updated.map((g) => ({
+          id: g.id,
+          name: g.name,
+          distributorId: g.distributorId,
+        })),
+      );
+      toast.success(`Group "${groupName}" delete ho gaya!`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Error: ${msg}`);
+    } finally {
+      setDeletingGroupId(null);
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2">
+        <input
+          type="text"
+          data-ocid="group_mgmt.name_input"
+          value={newGroupName}
+          onChange={(e) => setNewGroupName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleAddGroup();
+          }}
+          placeholder="Group name e.g. Blue, Indigo, Series-A"
+          disabled={isAddingGroup}
+          className="flex-1 h-10 text-sm border border-gray-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
+        />
+        <button
+          type="button"
+          data-ocid="group_mgmt.add_button"
+          onClick={handleAddGroup}
+          disabled={isAddingGroup || !newGroupName.trim()}
+          className="h-10 flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold text-sm px-4 rounded-lg transition-colors"
+        >
+          {isAddingGroup ? (
+            <svg
+              aria-hidden="true"
+              xmlns="http://www.w3.org/2000/svg"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className="animate-spin"
+            >
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            </svg>
+          ) : (
+            <svg
+              aria-hidden="true"
+              xmlns="http://www.w3.org/2000/svg"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          )}
+          Add Group
+        </button>
+      </div>
+
+      {allMedicineGroups.length === 0 ? (
+        <div
+          className="text-center py-8 text-gray-400"
+          data-ocid="group_mgmt.empty_state"
+        >
+          <p className="text-sm">No groups created yet. Add a group above.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+          {allMedicineGroups.map((grp, idx) => (
+            <div
+              key={String(grp.id)}
+              data-ocid={`group_mgmt.item.${idx + 1}`}
+              className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5"
+            >
+              <span className="text-sm font-medium text-gray-900">
+                {grp.name}
+              </span>
+              <button
+                type="button"
+                data-ocid={`group_mgmt.delete_button.${idx + 1}`}
+                onClick={() => handleDeleteGroup(grp.id, grp.name)}
+                disabled={deletingGroupId === grp.id}
+                className="ml-2 text-red-400 hover:text-red-600 disabled:opacity-50 transition-colors"
+              >
+                {deletingGroupId === grp.id ? (
+                  <svg
+                    aria-hidden="true"
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    className="animate-spin"
+                  >
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                  </svg>
+                ) : (
+                  <svg
+                    aria-hidden="true"
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                  </svg>
+                )}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Manage Screen ────────────────────────────────────────────────────────────
+
+// ─── Manage Customers Tab ─────────────────────────────────────────────────────
+
+function ManageCustomersTab({
+  actor,
+  pharmacies: _pharmacies,
+  onDataReloaded,
+  medicines,
+}: {
+  actor: backendInterface | null;
+  pharmacies: Pharmacy[];
+  onDataReloaded: (newPharmacies: Pharmacy[], newMedicines: Medicine[]) => void;
+  medicines: Medicine[];
+}) {
+  const [showForm, setShowForm] = useState(false);
+  const [custName, setCustName] = useState("");
+  const [custType, setCustType] = useState<ExtendedCustomerType>(
+    CustomerType.pharmacy,
+  );
+  const [custContact, setCustContact] = useState("");
+  const [custAddress, setCustAddress] = useState("");
+  const [custArea, setCustArea] = useState("");
+  const [custGroup, setCustGroup] = useState("");
+  const [custCode, setCustCode] = useState("");
+  const [custNTN, setCustNTN] = useState("");
+  const [custCNIC, setCustCNIC] = useState("");
+  const [custDealerCode, setCustDealerCode] = useState("");
+  const [custPmdc, setCustPmdc] = useState("");
+  const [isAdding, setIsAdding] = useState(false);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [deletingId, setDeletingId] = useState<bigint | null>(null);
+
+  useEffect(() => {
+    if (!actor) return;
+    const sess = getSession();
+    const distId = sess?.distributorId ? BigInt(sess.distributorId) : null;
+    const fetchFn = distId
+      ? (actor as any).getCustomersByDistributor(distId)
+      : actor.getCustomers();
+    fetchFn
+      .then((raw: any[]) => {
+        setCustomers(
+          raw.map((c) => ({
+            id: String(c.id),
+            backendId: c.id,
+            name: c.name,
+            customerType: c.customerType as CustomerType,
+            contactNo: c.contact || "",
+            address: c.address || "",
+            area: c.area || "",
+            groupName: c.group || "",
+            code: c.code || "",
+            ntn: c.ntn || "",
+            cnic: c.cnic || "",
+            dealerCode: (c as any).dealerCode || "",
+            pmdc: (c as any).pmdc || "",
+          })),
+        );
+      })
+      .catch(() => {});
+  }, [actor]);
+
+  async function handleAdd() {
+    if (!actor || !custName.trim()) {
+      toast.error("Name is required");
+      return;
+    }
+    setIsAdding(true);
+    try {
+      const sess = getSession();
+      const distId = sess?.distributorId ? BigInt(sess.distributorId) : null;
+      const newId = distId
+        ? await (actor as any).addCustomerForDistributor(
+            distId,
+            custName.trim(),
+            toBackendCustomerType(custType),
+            custAddress.trim(),
+            custArea.trim(),
+            custContact.trim(),
+            custGroup.trim(),
+            custCode.trim(),
+            custNTN.trim(),
+            custCNIC.trim(),
+            custDealerCode.trim(),
+          )
+        : await (actor as any).addCustomer(
+            custName.trim(),
+            toBackendCustomerType(custType),
+            custAddress.trim(),
+            custArea.trim(),
+            custContact.trim(),
+            custGroup.trim(),
+            custCode.trim(),
+            custNTN.trim(),
+            custCNIC.trim(),
+            custDealerCode.trim(),
+          );
+      try {
+        localStorage.setItem(
+          `medorder_customer_name_${newId}`,
+          custName.trim(),
+        );
+      } catch {}
+      if (custPmdc?.trim()) {
+        try {
+          localStorage.setItem(
+            `medorder_customer_pmdc_${newId}`,
+            custPmdc.trim(),
+          );
+        } catch {}
+      }
+      if (
+        custType === CustomerType.pharmacy ||
+        custType === CustomerType.medicalStore
+      ) {
+        try {
+          await actor.addPharmacy(
+            custName.trim(),
+            custContact.trim(),
+            `${custAddress.trim()} | ${custArea.trim()}`,
+            custCode.trim(),
+            custNTN.trim(),
+            custCNIC.trim(),
+          );
+        } catch {}
+      }
+      // reload pharmacies for sidebar sync
+      const raw = await actor.getPharmacies();
+      const newPharmacies = raw.map((p) => {
+        const { address, area } = parseLocation(p.location);
+        return {
+          id: String(p.id),
+          backendId: p.id,
+          name: p.name,
+          address,
+          area,
+          contactNo: p.contact,
+          lastOrderDate: null,
+          isVisited: false,
+          code: p.code || "",
+        };
+      });
+      onDataReloaded(newPharmacies, medicines);
+      // reload customer list
+      const sess2 = getSession();
+      const distId2 = sess2?.distributorId ? BigInt(sess2.distributorId) : null;
+      const fetchFn2 = distId2
+        ? (actor as any).getCustomersByDistributor(distId2)
+        : actor.getCustomers();
+      const rawCust = await fetchFn2;
+      setCustomers(
+        rawCust.map((c: any) => ({
+          id: String(c.id),
+          backendId: c.id,
+          name: c.name,
+          customerType: c.customerType as CustomerType,
+          contactNo: c.contact || "",
+          address: c.address || "",
+          area: c.area || "",
+          group: c.group || "",
+          code: c.code || "",
+          ntn: c.ntn || "",
+          cnic: c.cnic || "",
+          dealerCode: (c as any).dealerCode || "",
+          pmdc: (c as any).pmdc || "",
+        })),
+      );
+      // reset form
+      setCustName("");
+      setCustType(CustomerType.pharmacy);
+      setCustContact("");
+      setCustAddress("");
+      setCustArea("");
+      setCustGroup("");
+      setCustCode("");
+      setCustNTN("");
+      setCustCNIC("");
+      setCustDealerCode("");
+      setCustPmdc("");
+      setShowForm(false);
+      toast.success(`Customer "${custName.trim()}" add ho gaya!`);
+    } catch (e: unknown) {
+      toast.error(`Error: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      setIsAdding(false);
+    }
+  }
+
+  async function handleDelete(c: Customer) {
+    if (!actor) return;
+    setDeletingId(c.backendId);
+    try {
+      await actor.deleteCustomer(c.backendId);
+      setCustomers((prev) => prev.filter((x) => x.backendId !== c.backendId));
+      toast.success(`"${c.name}" delete ho gaya!`);
+    } catch (e: unknown) {
+      toast.error(`Error: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  const typeLabel = (t: CustomerType) => {
+    if (t === CustomerType.doctor) return "Doctor";
+    if (t === CustomerType.hospital) return "Hospital";
+    if (t === CustomerType.medicalStore) return "Medical Store";
+    return "Pharmacy";
+  };
+
+  return (
+    <div className="px-4 pt-4 space-y-3">
+      {/* Add Customer toggle button */}
+      <button
+        type="button"
+        onClick={() => setShowForm((v) => !v)}
+        className="w-full flex items-center justify-between rounded-xl px-4 py-3 font-semibold text-sm shadow-sm text-white"
+        style={{
+          background:
+            "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+        }}
+        data-ocid="manage.customers.open_modal_button"
+      >
+        <div className="flex items-center gap-2">
+          <Plus size={16} />
+          <span>Add Customer | کسٹمر شامل کریں</span>
+        </div>
+        {showForm ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+      </button>
+
+      {/* Add Customer Form */}
+      {showForm && (
+        <div className="bg-white rounded-xl border border-border shadow-xs p-4 space-y-3">
+          <h3 className="font-bold text-foreground font-heading text-sm">
+            New Customer | نیا کسٹمر
+          </h3>
+          <div className="space-y-2.5">
+            <div>
+              <label
+                htmlFor="mc-name"
+                className="text-xs font-medium text-muted-foreground mb-1 block"
+              >
+                Name | نام *
+              </label>
+              <Input
+                id="mc-name"
+                value={custName}
+                onChange={(e) => setCustName(e.target.value)}
+                placeholder="Customer name"
+                className="h-10 text-sm"
+                disabled={isAdding}
+                data-ocid="manage.customers.input"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="mc-type"
+                className="text-xs font-medium text-muted-foreground mb-1 block"
+              >
+                Type | قسم *
+              </label>
+              <select
+                id="mc-type"
+                value={custType}
+                onChange={(e) =>
+                  setCustType(e.target.value as ExtendedCustomerType)
+                }
+                className="w-full h-10 text-sm border border-input rounded-md px-3 focus:outline-none focus:ring-2 focus:ring-ring"
+                disabled={isAdding}
+                data-ocid="manage.customers.select"
+              >
+                <option value={CustomerType.pharmacy}>
+                  Pharmacy | فارمیسی
+                </option>
+                <option value={CustomerType.medicalStore}>
+                  Medical Store | میڈیکل اسٹور
+                </option>
+                <option value={CustomerType.doctor}>Doctor | ڈاکٹر</option>
+                <option value={CustomerType.hospital}>Hospital | ہسپتال</option>
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label
+                  htmlFor="mc-contact"
+                  className="text-xs font-medium text-muted-foreground mb-1 block"
+                >
+                  Contact | رابطہ
+                </label>
+                <Input
+                  id="mc-contact"
+                  value={custContact}
+                  onChange={(e) => setCustContact(e.target.value)}
+                  placeholder="0300-1234567"
+                  className="h-10 text-sm"
+                  disabled={isAdding}
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="mc-area"
+                  className="text-xs font-medium text-muted-foreground mb-1 block"
+                >
+                  Area | علاقہ
+                </label>
+                <Input
+                  id="mc-area"
+                  value={custArea}
+                  onChange={(e) => setCustArea(e.target.value)}
+                  placeholder="e.g. DHA"
+                  className="h-10 text-sm"
+                  disabled={isAdding}
+                />
+              </div>
+            </div>
+            <div>
+              <label
+                htmlFor="mc-address"
+                className="text-xs font-medium text-muted-foreground mb-1 block"
+              >
+                Address | پتہ
+              </label>
+              <Input
+                id="mc-address"
+                value={custAddress}
+                onChange={(e) => setCustAddress(e.target.value)}
+                placeholder="Full address"
+                className="h-10 text-sm"
+                disabled={isAdding}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label
+                  htmlFor="mc-group"
+                  className="text-xs font-medium text-muted-foreground mb-1 block"
+                >
+                  Group | گروپ
+                </label>
+                <Input
+                  id="mc-group"
+                  value={custGroup}
+                  onChange={(e) => setCustGroup(e.target.value)}
+                  placeholder="Group name"
+                  className="h-10 text-sm"
+                  disabled={isAdding}
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="mc-code"
+                  className="text-xs font-medium text-muted-foreground mb-1 block"
+                >
+                  Code | کوڈ
+                </label>
+                <Input
+                  id="mc-code"
+                  value={custCode}
+                  onChange={(e) => setCustCode(e.target.value)}
+                  placeholder="e.g. C-001"
+                  className="h-10 text-sm"
+                  disabled={isAdding}
+                />
+              </div>
+            </div>
+            <div>
+              <label
+                htmlFor="mc-dealer"
+                className="text-xs font-medium text-muted-foreground mb-1 block"
+              >
+                Dealer Code | ڈیلر کوڈ
+              </label>
+              <Input
+                id="mc-dealer"
+                value={custDealerCode}
+                onChange={(e) => setCustDealerCode(e.target.value)}
+                placeholder="e.g. 002-0043"
+                className="h-10 text-sm"
+                disabled={isAdding}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label
+                  htmlFor="mc-ntn"
+                  className="text-xs font-medium text-muted-foreground mb-1 block"
+                >
+                  NTN#
+                </label>
+                <Input
+                  id="mc-ntn"
+                  value={custNTN}
+                  onChange={(e) => setCustNTN(e.target.value)}
+                  placeholder="1234567-8"
+                  className="h-10 text-sm"
+                  disabled={isAdding}
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="mc-cnic"
+                  className="text-xs font-medium text-muted-foreground mb-1 block"
+                >
+                  CNIC#
+                </label>
+                <Input
+                  id="mc-cnic"
+                  value={custCNIC}
+                  onChange={(e) => setCustCNIC(e.target.value)}
+                  placeholder="35202-1234567-1"
+                  className="h-10 text-sm"
+                  disabled={isAdding}
+                />
+              </div>
+            </div>
+            <div>
+              <label
+                htmlFor="mc-pmdc"
+                className="text-xs font-medium text-muted-foreground mb-1 block"
+              >
+                PMDC# (Doctors only)
+              </label>
+              <Input
+                id="mc-pmdc"
+                value={custPmdc}
+                onChange={(e) => setCustPmdc(e.target.value)}
+                placeholder="PMDC registration number"
+                className="h-10 text-sm"
+                disabled={isAdding}
+              />
+            </div>
+          </div>
+          <div className="flex gap-2 pt-1">
+            <Button
+              onClick={handleAdd}
+              className="flex-1 h-10 text-sm font-semibold"
+              disabled={isAdding}
+              style={{
+                background:
+                  "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+              }}
+              data-ocid="manage.customers.submit_button"
+            >
+              {isAdding ? (
+                <>
+                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                  Adding...
+                </>
+              ) : (
+                <>
+                  <Plus size={14} className="mr-1.5" />
+                  Add Customer | شامل کریں
+                </>
+              )}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => setShowForm(false)}
+              className="h-10 px-3 text-sm"
+              disabled={isAdding}
+              data-ocid="manage.customers.cancel_button"
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Customer List */}
+      <p className="text-xs text-muted-foreground">
+        {customers.length} customers registered
+      </p>
+      <div className="space-y-2.5" data-ocid="manage.customers.list">
+        {customers.length === 0 ? (
+          <div
+            className="text-center py-10 text-muted-foreground text-sm"
+            data-ocid="manage.customers.empty_state"
+          >
+            No customers added yet
+          </div>
+        ) : (
+          customers.map((c, idx) => (
+            <div
+              key={c.id}
+              className="bg-white rounded-xl border border-border shadow-xs p-4"
+              data-ocid={`manage.customers.item.${idx + 1}`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-sm text-foreground truncate">
+                    {c.name}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {typeLabel(c.customerType)}
+                    {c.area ? ` · ${c.area}` : ""}
+                    {c.dealerCode ? ` · ${c.dealerCode}` : ""}
+                  </p>
+                  {c.contactNo && (
+                    <p className="text-xs text-muted-foreground">
+                      {c.contactNo}
+                    </p>
+                  )}
+                </div>
+                <div className="shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(c)}
+                    disabled={deletingId === c.backendId}
+                    className="flex items-center gap-1 text-red-500 hover:text-red-700 hover:bg-red-50 text-xs px-2 py-1 rounded-lg transition-colors"
+                    data-ocid={`manage.customers.delete_button.${idx + 1}`}
+                  >
+                    {deletingId === c.backendId ? (
+                      <Loader2 size={10} className="animate-spin" />
+                    ) : (
+                      <Trash2 size={12} />
+                    )}
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Manage Screen ─────────────────────────────────────────────────────────────
 
 function ManageScreen({
   pharmacies,
@@ -3995,6 +4717,7 @@ function ManageScreen({
   dispatch,
   showPharmacies = false,
   readOnly = false,
+  allMedicineGroups: propsAllMedicineGroups = [],
 }: {
   pharmacies: Pharmacy[];
   medicines: Medicine[];
@@ -4003,13 +4726,17 @@ function ManageScreen({
   dispatch: React.Dispatch<Action>;
   showPharmacies?: boolean;
   readOnly?: boolean;
+  allMedicineGroups?: Array<{
+    id: bigint;
+    name: string;
+    distributorId: bigint;
+  }>;
 }) {
   const [activeTab, setActiveTab] = useState<"pharmacies" | "medicines">(
     showPharmacies ? "pharmacies" : "medicines",
   );
-
   // ── Pharmacy form state ──
-  const [showPharmacyForm, setShowPharmacyForm] = useState(false);
+  const [_showPharmacyForm, setShowPharmacyForm] = useState(false);
   const [pharmName, setPharmName] = useState("");
   const [pharmContact, setPharmContact] = useState("");
   const [pharmAddress, setPharmAddress] = useState("");
@@ -4017,11 +4744,17 @@ function ManageScreen({
   const [pharmCode, setPharmCode] = useState("");
   const [pharmNTN, setPharmNTN] = useState("");
   const [pharmCNIC, setPharmCNIC] = useState("");
-  const [isAddingPharm, setIsAddingPharm] = useState(false);
-  const [deletingPharmId, setDeletingPharmId] = useState<string | null>(null);
-  const [confirmDeletePharmId, setConfirmDeletePharmId] = useState<
+  const [_isAddingPharm, setIsAddingPharm] = useState(false);
+  const [_deletingPharmId, setDeletingPharmId] = useState<string | null>(null);
+  const [_confirmDeletePharmId, setConfirmDeletePharmId] = useState<
     string | null
   >(null);
+  const [deletePasswordDialog, setDeletePasswordDialog] = useState<{
+    type: "pharmacy" | "medicine";
+    id: string;
+  } | null>(null);
+  const [deletePasswordInput, setDeletePasswordInput] = useState("");
+  const [isDeletingWithPassword, setIsDeletingWithPassword] = useState(false);
 
   // ── Medicine form state ──
   const [showMedForm, setShowMedForm] = useState(false);
@@ -4034,6 +4767,8 @@ function ManageScreen({
   const [medGenericName, setMedGenericName] = useState("");
   const [medBatchNo, setMedBatchNo] = useState("");
   const [medMedicineType, setMedMedicineType] = useState("Tablet");
+  const [medProductCode, setMedProductCode] = useState("");
+  const [medGroupId, setMedGroupId] = useState<bigint>(BigInt(0));
   const [isAddingMed, setIsAddingMed] = useState(false);
   const [deletingMedId, setDeletingMedId] = useState<string | null>(null);
   const [confirmDeleteMedId, setConfirmDeleteMedId] = useState<string | null>(
@@ -4079,11 +4814,14 @@ function ManageScreen({
         genericName: m.genericName || "",
         batchNo: m.batchNo || "",
         medicineType: m.medicineType || "",
+        productCode: (m as any).productCode || "",
+        groupId: (m as any).groupId ?? BigInt(0),
       };
     });
   }
 
   // ── Add Pharmacy ──
+  // biome-ignore lint/correctness/noUnusedVariables: kept for reference
   async function handleAddPharmacy() {
     if (!actor) return;
     if (
@@ -4172,6 +4910,7 @@ function ManageScreen({
   }
 
   // ── Delete Pharmacy ──
+  // biome-ignore lint/correctness/noUnusedVariables: kept for reference
   async function handleDeletePharmacy(pharmacy: Pharmacy) {
     if (!actor) return;
     setDeletingPharmId(pharmacy.id);
@@ -4219,6 +4958,8 @@ function ManageScreen({
           medGenericName.trim(),
           medBatchNo.trim(),
           medMedicineType,
+          medProductCode.trim(),
+          medGroupId,
         );
       } else {
         await actor.addMedicine(
@@ -4231,6 +4972,8 @@ function ManageScreen({
           medGenericName.trim(),
           medBatchNo.trim(),
           medMedicineType,
+          medProductCode.trim(),
+          medGroupId,
         );
       }
       const newMedicines = await reloadMedicines();
@@ -4244,6 +4987,8 @@ function ManageScreen({
       setMedGenericName("");
       setMedBatchNo("");
       setMedMedicineType("Tablet");
+      setMedProductCode("");
+      setMedGroupId(BigInt(0));
       setShowMedForm(false);
       toast.success(`Medicine "${medName.trim()}" add ho gayi!`);
     } catch (e: unknown) {
@@ -4323,7 +5068,7 @@ function ManageScreen({
           >
             <div className="flex items-center justify-center gap-1.5">
               <Store size={15} />
-              <span>Pharmacies | فارمیسیاں</span>
+              <span>Customers | کسٹمر</span>
             </div>
             <div className="text-xs font-normal opacity-70 mt-0.5">
               {pharmacies.length} total
@@ -4349,279 +5094,14 @@ function ManageScreen({
         </button>
       </div>
 
-      {/* ── Pharmacies Tab ── */}
+      {/* ── Customers Tab ── */}
       {showPharmacies && activeTab === "pharmacies" && (
-        <div className="px-4 pt-4 space-y-3">
-          {/* Add Pharmacy toggle button */}
-          <button
-            type="button"
-            onClick={() => setShowPharmacyForm((v) => !v)}
-            className="w-full flex items-center justify-between bg-primary text-primary-foreground rounded-xl px-4 py-3 font-semibold text-sm shadow-sm"
-            style={{
-              background:
-                "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
-            }}
-          >
-            <div className="flex items-center gap-2">
-              <Plus size={16} />
-              <span>Add Pharmacy | فارمیسی شامل کریں</span>
-            </div>
-            {showPharmacyForm ? (
-              <ChevronUp size={16} />
-            ) : (
-              <ChevronDown size={16} />
-            )}
-          </button>
-
-          {/* Add Pharmacy Form */}
-          {showPharmacyForm && (
-            <div className="bg-white rounded-xl border border-border shadow-xs p-4 space-y-3">
-              <h3 className="font-bold text-foreground font-heading text-sm">
-                New Pharmacy | نئی فارمیسی
-              </h3>
-              <div className="space-y-2.5">
-                <div>
-                  <label
-                    htmlFor="pharm-name"
-                    className="text-xs font-medium text-muted-foreground mb-1 block"
-                  >
-                    Pharmacy Name | نام *
-                  </label>
-                  <Input
-                    id="pharm-name"
-                    value={pharmName}
-                    onChange={(e) => setPharmName(e.target.value)}
-                    placeholder="e.g. Al-Shifa Pharmacy"
-                    className="h-10 text-sm"
-                    disabled={isAddingPharm}
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="pharm-contact"
-                    className="text-xs font-medium text-muted-foreground mb-1 block"
-                  >
-                    Contact Number | رابطہ *
-                  </label>
-                  <Input
-                    id="pharm-contact"
-                    value={pharmContact}
-                    onChange={(e) => setPharmContact(e.target.value)}
-                    placeholder="e.g. 0300-1234567"
-                    className="h-10 text-sm"
-                    disabled={isAddingPharm}
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="pharm-address"
-                    className="text-xs font-medium text-muted-foreground mb-1 block"
-                  >
-                    Address | پتہ *
-                  </label>
-                  <Input
-                    id="pharm-address"
-                    value={pharmAddress}
-                    onChange={(e) => setPharmAddress(e.target.value)}
-                    placeholder="e.g. Main Boulevard, Block 5"
-                    className="h-10 text-sm"
-                    disabled={isAddingPharm}
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="pharm-area"
-                    className="text-xs font-medium text-muted-foreground mb-1 block"
-                  >
-                    Area | علاقہ *
-                  </label>
-                  <Input
-                    id="pharm-area"
-                    value={pharmArea}
-                    onChange={(e) => setPharmArea(e.target.value)}
-                    placeholder="e.g. Gulberg, DHA, Johar Town"
-                    className="h-10 text-sm"
-                    disabled={isAddingPharm}
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="pharm-code"
-                    className="text-xs font-medium text-muted-foreground mb-1 block"
-                  >
-                    Pharmacy Code | کوڈ
-                  </label>
-                  <Input
-                    id="pharm-code"
-                    value={pharmCode}
-                    onChange={(e) => setPharmCode(e.target.value)}
-                    placeholder="e.g. PH-001"
-                    className="h-10 text-sm"
-                    disabled={isAddingPharm}
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="pharm-ntn"
-                    className="text-xs font-medium text-muted-foreground mb-1 block"
-                  >
-                    NTN# | این ٹی این
-                  </label>
-                  <Input
-                    id="pharm-ntn"
-                    value={pharmNTN}
-                    onChange={(e) => setPharmNTN(e.target.value)}
-                    placeholder="e.g. 1234567-8"
-                    className="h-10 text-sm"
-                    disabled={isAddingPharm}
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="pharm-cnic"
-                    className="text-xs font-medium text-muted-foreground mb-1 block"
-                  >
-                    CNIC# | شناختی کارڈ
-                  </label>
-                  <Input
-                    id="pharm-cnic"
-                    value={pharmCNIC}
-                    onChange={(e) => setPharmCNIC(e.target.value)}
-                    placeholder="e.g. 35202-1234567-1"
-                    className="h-10 text-sm"
-                    disabled={isAddingPharm}
-                  />
-                </div>
-              </div>
-              <div className="flex gap-2 pt-1">
-                <Button
-                  onClick={handleAddPharmacy}
-                  className="flex-1 h-10 text-sm font-semibold"
-                  disabled={isAddingPharm}
-                  style={{
-                    background:
-                      "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
-                  }}
-                >
-                  {isAddingPharm ? (
-                    <>
-                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                      Adding...
-                    </>
-                  ) : (
-                    <>
-                      <Plus size={14} className="mr-1.5" />
-                      Add Pharmacy | شامل کریں
-                    </>
-                  )}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setShowPharmacyForm(false);
-                    setPharmName("");
-                    setPharmContact("");
-                    setPharmAddress("");
-                    setPharmArea("");
-                    setPharmCode("");
-                    setPharmNTN("");
-                    setPharmCNIC("");
-                  }}
-                  className="h-10 px-3 text-sm"
-                  disabled={isAddingPharm}
-                >
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* Pharmacy List */}
-          <p className="text-xs text-muted-foreground">
-            {pharmacies.length} pharmacies registered
-          </p>
-          <div className="space-y-2.5">
-            {pharmacies.length === 0 ? (
-              <div className="text-center py-10 text-muted-foreground text-sm">
-                No pharmacies added yet
-              </div>
-            ) : (
-              pharmacies.map((pharmacy) => (
-                <div
-                  key={pharmacy.id}
-                  className="bg-white rounded-xl border border-border shadow-xs p-4"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-sm text-foreground font-heading truncate">
-                        {pharmacy.name}
-                      </p>
-                      <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
-                        <MapPin size={10} />
-                        <span className="truncate">{pharmacy.address}</span>
-                      </div>
-                      <div className="flex items-center gap-1 mt-0.5 text-xs text-muted-foreground">
-                        <Phone size={10} />
-                        <span>{pharmacy.contactNo}</span>
-                      </div>
-                      {pharmacy.code && (
-                        <div className="mt-1">
-                          <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-mono font-semibold">
-                            Code: {pharmacy.code}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex flex-col items-end gap-1 shrink-0">
-                      <span className="text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full">
-                        {pharmacy.area}
-                      </span>
-                      {confirmDeletePharmId === pharmacy.id ? (
-                        <div className="flex items-center gap-1 mt-1">
-                          <button
-                            type="button"
-                            onClick={() => handleDeletePharmacy(pharmacy)}
-                            disabled={deletingPharmId === pharmacy.id}
-                            className="flex items-center gap-1 bg-red-500 hover:bg-red-600 text-white text-xs px-2 py-1 rounded-lg font-semibold transition-colors disabled:opacity-50"
-                          >
-                            {deletingPharmId === pharmacy.id ? (
-                              <Loader2 size={10} className="animate-spin" />
-                            ) : null}
-                            Yes
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeletePharmId(null)}
-                            className="text-xs px-2 py-1 rounded-lg border border-border font-semibold hover:bg-muted transition-colors"
-                            disabled={deletingPharmId === pharmacy.id}
-                          >
-                            No
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setConfirmDeletePharmId(pharmacy.id)}
-                          className="flex items-center gap-1 text-red-500 hover:text-red-700 hover:bg-red-50 text-xs px-2 py-1 rounded-lg transition-colors mt-1"
-                          disabled={deletingPharmId === pharmacy.id}
-                          aria-label={`Delete ${pharmacy.name}`}
-                        >
-                          <Trash2 size={12} />
-                          Delete
-                        </button>
-                      )}
-                      {confirmDeletePharmId === pharmacy.id && (
-                        <span className="text-[10px] text-red-500 font-medium">
-                          Confirm delete?
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+        <ManageCustomersTab
+          actor={actor}
+          pharmacies={pharmacies}
+          onDataReloaded={onDataReloaded}
+          medicines={medicines}
+        />
       )}
 
       {/* ── Medicines Tab ── */}
@@ -4820,6 +5300,54 @@ function ManageScreen({
                     </select>
                   </div>
                 </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label
+                      htmlFor="med-product-code"
+                      className="text-xs font-medium text-muted-foreground mb-1 block"
+                    >
+                      Product Code | کوڈ
+                    </label>
+                    <Input
+                      id="med-product-code"
+                      value={medProductCode}
+                      onChange={(e) => setMedProductCode(e.target.value)}
+                      placeholder="e.g. 012-367"
+                      className="h-10 text-sm"
+                      disabled={isAddingMed}
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="med-group"
+                      className="text-xs font-medium text-muted-foreground mb-1 block"
+                    >
+                      Group | گروپ
+                    </label>
+                    <select
+                      id="med-group"
+                      value={String(medGroupId)}
+                      onChange={(e) =>
+                        setMedGroupId(BigInt(e.target.value || "0"))
+                      }
+                      className="w-full h-10 text-sm border border-input rounded-md px-3 bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                      disabled={isAddingMed}
+                    >
+                      <option value="0">-- No Group --</option>
+                      {propsAllMedicineGroups.map(
+                        (g: {
+                          id: bigint;
+                          name: string;
+                          distributorId: bigint;
+                        }) => (
+                          <option key={String(g.id)} value={String(g.id)}>
+                            {g.name}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </div>
+                </div>
               </div>
               <div className="flex gap-2 pt-1">
                 <Button
@@ -4856,6 +5384,8 @@ function ManageScreen({
                     setMedGenericName("");
                     setMedBatchNo("");
                     setMedMedicineType("Tablet");
+                    setMedProductCode("");
+                    setMedGroupId(BigInt(0));
                   }}
                   className="h-10 px-3 text-sm"
                   disabled={isAddingMed}
@@ -4969,7 +5499,13 @@ function ManageScreen({
                       ) : !readOnly ? (
                         <button
                           type="button"
-                          onClick={() => setConfirmDeleteMedId(medicine.id)}
+                          onClick={() => {
+                            setDeletePasswordDialog({
+                              type: "medicine",
+                              id: medicine.id,
+                            });
+                            setDeletePasswordInput("");
+                          }}
                           className="flex items-center gap-1 text-red-500 hover:text-red-700 hover:bg-red-50 text-xs px-2 py-1 rounded-lg transition-colors"
                           disabled={deletingMedId === medicine.id}
                           aria-label={`Delete ${medicine.name}`}
@@ -4983,6 +5519,98 @@ function ManageScreen({
                 </div>
               ))
             )}
+          </div>
+        </div>
+      )}
+
+      {deletePasswordDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full mx-4">
+            <h3 className="text-lg font-bold text-gray-900 mb-2">
+              Delete Confirmation | حذف کی تصدیق
+            </h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Apna password enter karein delete karne ke liye.
+            </p>
+            <input
+              type="password"
+              value={deletePasswordInput}
+              onChange={(e) => setDeletePasswordInput(e.target.value)}
+              placeholder="Password dalein | Enter password"
+              className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 mb-4 focus:outline-none focus:ring-2 focus:ring-red-500"
+              data-ocid="manage.delete.password.input"
+            />
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeletePasswordDialog(null);
+                  setDeletePasswordInput("");
+                }}
+                className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50"
+                data-ocid="manage.delete.cancel_button"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                data-ocid="manage.delete.confirm_button"
+                disabled={isDeletingWithPassword || !deletePasswordInput.trim()}
+                onClick={async () => {
+                  const delSess = getSession();
+                  if (!delSess) return;
+                  const userRecord = lookupUser(
+                    delSess.username,
+                    deletePasswordInput,
+                  );
+                  if (!userRecord) {
+                    toast.error("Wrong password | غلط پاس ورڈ");
+                    return;
+                  }
+                  setIsDeletingWithPassword(true);
+                  const target = deletePasswordDialog;
+                  try {
+                    if (target.type === "pharmacy") {
+                      const pharm = pharmacies.find((p) => p.id === target.id);
+                      if (pharm) {
+                        setDeletingPharmId(pharm.id);
+                        await actor!.deletePharmacy(pharm.backendId);
+                        const newPharmacies = await reloadPharmacies();
+                        onDataReloaded(newPharmacies, medicines);
+                        toast.success(`"${pharm.name}" delete ho gaya!`);
+                      }
+                    } else {
+                      const med = medicines.find((m) => m.id === target.id);
+                      if (med) {
+                        setDeletingMedId(med.id);
+                        await actor!.deleteMedicine(med.backendId);
+                        const newMeds = await reloadMedicines();
+                        onDataReloaded(pharmacies, newMeds);
+                        toast.success(`"${med.name}" delete ho gaya!`);
+                      }
+                    }
+                    setDeletePasswordDialog(null);
+                    setDeletePasswordInput("");
+                  } catch (e: unknown) {
+                    const msg =
+                      e instanceof Error ? e.message : "Unknown error";
+                    toast.error(`Error: ${msg}`);
+                  } finally {
+                    setIsDeletingWithPassword(false);
+                    setDeletingPharmId(null);
+                    setDeletingMedId(null);
+                  }
+                }}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-semibold disabled:opacity-50"
+              >
+                {isDeletingWithPassword ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Trash2 size={14} />
+                )}
+                Confirm Delete
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -6023,6 +6651,38 @@ function OrderDetailModal({
 
 // ─── Office Order History Hierarchy Component ─────────────────────────────────
 
+// biome-ignore lint/correctness/noUnusedVariables: kept for reference
+function buildDatePrintHtml(
+  orders: OfficeOrderDetail[],
+  dateLabel: string,
+): string {
+  const rows = orders
+    .map(
+      (o) => `
+    <tr>
+      <td>${o.orderId}</td>
+      <td>${o.pharmacyName}</td>
+      <td>${o.staffName || "—"}</td>
+      <td style="text-align:center">${o.itemCount}</td>
+      <td style="text-align:right">Rs ${o.totalAmount.toFixed(2)}</td>
+      <td style="text-align:center">${o.status}</td>
+    </tr>`,
+    )
+    .join("");
+  return `<!DOCTYPE html><html><head><title>Order History - ${dateLabel}</title>
+  <style>body{font-family:Arial,sans-serif;font-size:11px;margin:20px}
+  h2{margin:0 0 4px}p{margin:0 0 12px;color:#555}
+  table{width:100%;border-collapse:collapse}
+  th,td{border:1px solid #ddd;padding:6px 8px;text-align:left}
+  th{background:#f3f4f6;font-weight:600}
+  .booker-group{margin-top:14px;font-weight:700;font-size:12px;background:#e0f2fe;padding:4px 8px;border-radius:4px}
+  </style></head><body>
+  <h2>MIAN MEDICINE DISTRIBUTOR</h2>
+  <p>Order History — ${dateLabel} &nbsp;|&nbsp; Printed: ${new Date().toLocaleDateString("en-PK")}</p>
+  <table><thead><tr><th>Invoice #</th><th>Pharmacy</th><th>Staff</th><th>Items</th><th>Amount</th><th>Status</th></tr></thead>
+  <tbody>${rows}</tbody></table></body></html>`;
+}
+
 function OfficeOrderHistoryHierarchy({
   isLoading,
   filteredHistory,
@@ -6074,6 +6734,14 @@ function OfficeOrderHistoryHierarchy({
     });
   };
 
+  const handleDatePrint = (orders: OfficeOrderDetail[], _dateLabel: string) => {
+    const printWin = window.open("", "_blank");
+    if (!printWin) return;
+    printWin.document.write(buildPrintHtml(orders));
+    printWin.document.close();
+    printWin.print();
+  };
+
   if (isLoading) {
     return (
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex items-center justify-center py-20">
@@ -6088,7 +6756,7 @@ function OfficeOrderHistoryHierarchy({
         <History size={40} className="mx-auto mb-3 opacity-50" />
         <p className="font-medium">No history orders | کوئی تاریخ نہیں</p>
         <p className="text-xs mt-1">
-          Delivered orders from previous dates will appear here
+          Orders from previous dates will appear here
         </p>
       </div>
     );
@@ -6137,105 +6805,133 @@ function OfficeOrderHistoryHierarchy({
                 {sortedDates.map((dateKey) => {
                   const isDateOpen = !!expandedDates[dateKey];
                   const ordersOnDate = datesInMonth[dateKey];
+                  const dateLabel = formatDateLabel(dateKey);
+
+                  // Group by booker (staffName)
+                  const bookerMap = ordersOnDate.reduce<
+                    Record<string, OfficeOrderDetail[]>
+                  >((acc, o) => {
+                    const booker = o.staffName || "Unknown";
+                    if (!acc[booker]) acc[booker] = [];
+                    acc[booker].push(o);
+                    return acc;
+                  }, {});
+                  const sortedBookers = Object.keys(bookerMap).sort();
 
                   return (
                     <div key={dateKey}>
                       {/* Date row */}
-                      <button
-                        type="button"
-                        className="w-full flex items-center justify-between px-8 py-3 hover:bg-gray-50 transition-colors text-left"
-                        onClick={() => toggleDate(dateKey)}
-                      >
-                        <div className="flex items-center gap-2">
+                      <div className="w-full flex items-center justify-between px-8 py-3 bg-white border-b border-gray-100">
+                        <button
+                          type="button"
+                          className="flex items-center gap-2 hover:text-blue-700 transition-colors text-left flex-1"
+                          onClick={() => toggleDate(dateKey)}
+                        >
                           <ChevronRight
                             size={15}
                             className={`text-gray-400 transition-transform ${isDateOpen ? "rotate-90" : ""}`}
                           />
                           <span className="text-sm font-semibold text-gray-700">
-                            {formatDateLabel(dateKey)}
+                            {dateLabel}
                           </span>
-                        </div>
-                        <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">
-                          {ordersOnDate.length}
-                        </span>
-                      </button>
+                          <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">
+                            {ordersOnDate.length}
+                          </span>
+                        </button>
+                        {isDateOpen && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDatePrint(ordersOnDate, dateLabel);
+                            }}
+                            className="flex items-center gap-1.5 text-xs bg-gray-600 hover:bg-gray-700 text-white px-3 py-1.5 rounded-lg font-medium transition-colors ml-3"
+                          >
+                            <Printer size={12} />
+                            Print
+                          </button>
+                        )}
+                      </div>
 
                       {isDateOpen && (
-                        <div className="overflow-x-auto">
-                          <table className="w-full">
-                            <thead>
-                              <tr className="bg-gray-50 border-b border-gray-200">
-                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Invoice #
-                                </th>
-                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Pharmacy
-                                </th>
-                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Staff
-                                </th>
-                                <th className="text-center px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Items
-                                </th>
-                                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Amount
-                                </th>
-                                <th className="text-center px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Status
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                              {ordersOnDate.map((order) => (
-                                <tr
-                                  key={String(order.backendId)}
-                                  className="cursor-pointer hover:bg-blue-50/60 transition-colors"
-                                  onClick={() => setSelectedOrder(order)}
-                                  tabIndex={0}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter")
-                                      setSelectedOrder(order);
-                                  }}
-                                >
-                                  <td className="px-4 py-3">
-                                    <span className="text-sm font-mono font-bold text-blue-700">
-                                      {order.orderId}
-                                    </span>
-                                  </td>
-                                  <td className="px-4 py-3">
-                                    <div className="text-sm font-semibold text-gray-900">
-                                      {order.pharmacyName}
-                                    </div>
-                                    {order.pharmacyArea && (
-                                      <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
-                                        <MapPin size={10} />{" "}
-                                        {order.pharmacyArea}
-                                      </div>
-                                    )}
-                                  </td>
-                                  <td className="px-4 py-3">
-                                    <div className="text-sm font-semibold text-gray-900">
-                                      {order.staffName || "—"}
-                                    </div>
-                                    {order.staffCode && (
-                                      <div className="text-xs text-gray-400 font-mono">
-                                        {order.staffCode}
-                                      </div>
-                                    )}
-                                  </td>
-                                  <td className="px-4 py-3 text-sm text-center text-gray-700 font-medium">
-                                    {order.itemCount}
-                                  </td>
-                                  <td className="px-4 py-3 text-sm text-right font-bold text-gray-900">
-                                    {formatCurrency(order.totalAmount)}
-                                  </td>
-                                  <td className="px-4 py-3 text-center">
-                                    <StatusBadge status={order.status} />
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                        <div className="bg-gray-50 pb-2">
+                          {sortedBookers.map((booker) => (
+                            <div key={booker} className="mb-3">
+                              {/* Booker group header */}
+                              <div className="flex items-center gap-2 px-8 py-2 bg-blue-50 border-y border-blue-100">
+                                <User size={13} className="text-blue-500" />
+                                <span className="text-xs font-bold text-blue-700 uppercase tracking-wide">
+                                  {booker}
+                                </span>
+                                <span className="text-xs bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full font-medium">
+                                  {bookerMap[booker].length} orders
+                                </span>
+                              </div>
+                              <div className="overflow-x-auto">
+                                <table className="w-full">
+                                  <thead>
+                                    <tr className="bg-gray-100 border-b border-gray-200">
+                                      <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500 uppercase">
+                                        Invoice #
+                                      </th>
+                                      <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500 uppercase">
+                                        Pharmacy
+                                      </th>
+                                      <th className="text-center px-4 py-2 text-xs font-semibold text-gray-500 uppercase">
+                                        Items
+                                      </th>
+                                      <th className="text-right px-4 py-2 text-xs font-semibold text-gray-500 uppercase">
+                                        Amount
+                                      </th>
+                                      <th className="text-center px-4 py-2 text-xs font-semibold text-gray-500 uppercase">
+                                        Status
+                                      </th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-gray-100">
+                                    {bookerMap[booker].map((order) => (
+                                      <tr
+                                        key={String(order.backendId)}
+                                        className="cursor-pointer hover:bg-blue-50/60 transition-colors bg-white"
+                                        onClick={() => setSelectedOrder(order)}
+                                        tabIndex={0}
+                                        onKeyDown={(e) => {
+                                          if (e.key === "Enter")
+                                            setSelectedOrder(order);
+                                        }}
+                                      >
+                                        <td className="px-4 py-3">
+                                          <span className="text-sm font-mono font-bold text-blue-700">
+                                            {order.orderId}
+                                          </span>
+                                        </td>
+                                        <td className="px-4 py-3">
+                                          <div className="text-sm font-semibold text-gray-900">
+                                            {order.pharmacyName}
+                                          </div>
+                                          {order.pharmacyArea && (
+                                            <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
+                                              <MapPin size={10} />{" "}
+                                              {order.pharmacyArea}
+                                            </div>
+                                          )}
+                                        </td>
+                                        <td className="px-4 py-3 text-sm text-center text-gray-700 font-medium">
+                                          {order.itemCount}
+                                        </td>
+                                        <td className="px-4 py-3 text-sm text-right font-bold text-gray-900">
+                                          {formatCurrency(order.totalAmount)}
+                                        </td>
+                                        <td className="px-4 py-3 text-center">
+                                          <StatusBadge status={order.status} />
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>
@@ -7591,6 +8287,9 @@ function PaymentsView({
   setPaymentsClearedAt: (v: string | null) => void;
 }) {
   const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
+  const [showClearPayDialog, setShowClearPayDialog] = useState(false);
+  const [clearPayPassword, setClearPayPassword] = useState("");
+  const [isClearingPayments, setIsClearingPayments] = useState(false);
 
   // Auto midnight reset on mount and every 60 seconds
   useEffect(() => {
@@ -7704,6 +8403,98 @@ function PaymentsView({
           </p>
         </div>
       </div>
+
+      {/* Clear All Payments button */}
+      <div className="flex justify-end">
+        <button
+          type="button"
+          data-ocid="payments.delete_button"
+          onClick={() => setShowClearPayDialog(true)}
+          className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+        >
+          <Trash2 size={14} />
+          Clear All Payments | سب ادائیگیاں صاف کریں
+        </button>
+      </div>
+
+      {/* Clear All Payments Password Dialog */}
+      {showClearPayDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full mx-4">
+            <h3 className="text-lg font-bold text-gray-900 mb-2">
+              Clear All Payments | تمام ادائیگیاں صاف کریں
+            </h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Apna password enter karein. Yeh action undo nahi ho sakti. Sab
+              payment history permanently delete ho jayegi.
+            </p>
+            <input
+              type="password"
+              value={clearPayPassword}
+              onChange={(e) => setClearPayPassword(e.target.value)}
+              placeholder="Password dalein | Enter password"
+              className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 mb-4 focus:outline-none focus:ring-2 focus:ring-red-500"
+              data-ocid="payments.password.input"
+            />
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowClearPayDialog(false);
+                  setClearPayPassword("");
+                }}
+                className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50"
+                data-ocid="payments.cancel_button"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                data-ocid="payments.confirm_button"
+                disabled={isClearingPayments || !clearPayPassword.trim()}
+                onClick={async () => {
+                  const paySess = getSession();
+                  if (!paySess) return;
+                  const userRecord = lookupUser(
+                    paySess.username,
+                    clearPayPassword,
+                  );
+                  if (!userRecord) {
+                    toast.error("Wrong password | غلط پاس ورڈ");
+                    return;
+                  }
+                  setIsClearingPayments(true);
+                  try {
+                    localStorage.removeItem("medorder_payment_history");
+                    localStorage.removeItem("medorder_payments_cleared_at");
+                    localStorage.removeItem("medorder_last_payment_day");
+                    setPaymentsClearedAt(null);
+                    setShowClearPayDialog(false);
+                    setClearPayPassword("");
+                    toast.success(
+                      "Payment history clear ho gayi | Payment history cleared",
+                    );
+                  } catch (e: unknown) {
+                    const msg =
+                      e instanceof Error ? e.message : "Unknown error";
+                    toast.error(`Error: ${msg}`);
+                  } finally {
+                    setIsClearingPayments(false);
+                  }
+                }}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-semibold disabled:opacity-50"
+              >
+                {isClearingPayments ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Trash2 size={14} />
+                )}
+                Confirm Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Grand totals */}
       <div className="grid grid-cols-2 gap-4">
@@ -7837,6 +8628,10 @@ function UserManagementPanel() {
   const [changePwdFor, setChangePwdFor] = useState<string | null>(null);
   const [newPwd, setNewPwd] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [editUserFor, setEditUserFor] = useState<string | null>(null);
+  const [editUsername, setEditUsername] = useState("");
+  const [editDisplayName, setEditDisplayName] = useState("");
+  const [editUserError, setEditUserError] = useState("");
 
   const [hiddenBuiltins, setHiddenBuiltins] = useState<string[]>(() => {
     try {
@@ -8277,6 +9072,107 @@ function UserManagementPanel() {
                         Change Pwd
                       </button>
                     )}
+                    {editUserFor === user.username ? (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <input
+                          type="text"
+                          placeholder="Username"
+                          value={editUsername}
+                          onChange={(e) => {
+                            setEditUsername(e.target.value);
+                            setEditUserError("");
+                          }}
+                          className="h-7 w-24 text-xs px-2 border border-gray-300 rounded-md"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Display Name"
+                          value={editDisplayName}
+                          onChange={(e) => {
+                            setEditDisplayName(e.target.value);
+                            setEditUserError("");
+                          }}
+                          className="h-7 w-28 text-xs px-2 border border-gray-300 rounded-md"
+                        />
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!editUsername.trim()) {
+                              setEditUserError("Username required");
+                              return;
+                            }
+                            try {
+                              if (actor && user.backendStaffId) {
+                                const ok = await (actor as any).updateUserInfo(
+                                  BigInt(user.backendStaffId),
+                                  editUsername.trim(),
+                                  editDisplayName.trim() || editUsername.trim(),
+                                );
+                                if (!ok) {
+                                  setEditUserError("Username already taken");
+                                  return;
+                                }
+                              }
+                              const updated = getCustomUsers().map((u) =>
+                                u.username === user.username
+                                  ? {
+                                      ...u,
+                                      username: editUsername.trim(),
+                                      displayName:
+                                        editDisplayName.trim() ||
+                                        editUsername.trim(),
+                                    }
+                                  : u,
+                              );
+                              localStorage.setItem(
+                                CUSTOM_USERS_KEY,
+                                JSON.stringify(updated),
+                              );
+                              setCustomUsers(updated);
+                              setEditUserFor(null);
+                              toast.success(
+                                "User updated | صارف اپ ڈیٹ ہو گیا",
+                              );
+                            } catch {
+                              setEditUserError("Update failed");
+                            }
+                          }}
+                          className="text-xs text-green-600 font-semibold hover:text-green-700 px-1.5 py-0.5 rounded bg-green-50 border border-green-200"
+                          data-ocid={`user_management.save_button.${idx + 1}`}
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditUserFor(null);
+                            setEditUserError("");
+                          }}
+                          className="text-xs text-gray-500 px-1 py-0.5 rounded bg-gray-100 border border-gray-200"
+                        >
+                          ✕
+                        </button>
+                        {editUserError && (
+                          <span className="text-xs text-red-500">
+                            {editUserError}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditUserFor(user.username);
+                          setEditUsername(user.username);
+                          setEditDisplayName(user.displayName);
+                          setEditUserError("");
+                        }}
+                        className="text-xs text-purple-600 font-medium hover:text-purple-700 px-2 py-1 rounded bg-purple-50 border border-purple-100 transition-colors"
+                        data-ocid={`user_management.edit_button.${idx + 1}`}
+                      >
+                        ✏️ Edit
+                      </button>
+                    )}
                     {(!isBuiltIn(user.username) ||
                       (user.role !== "admin" && user.role !== "superadmin")) &&
                       (deleteConfirm === user.username ? (
@@ -8567,7 +9463,7 @@ function OfficeDashboard() {
   const [ordersWithLines, setOrdersWithLines] = useState<OfficeOrderDetail[]>(
     [],
   );
-  const [_historyOrdersWithLines, setHistoryOrdersWithLines] = useState<
+  const [historyOrdersWithLines, setHistoryOrdersWithLines] = useState<
     OfficeOrderDetail[]
   >([]);
   const [allMedicines, setAllMedicines] = useState<Medicine[]>([]);
@@ -8575,8 +9471,13 @@ function OfficeDashboard() {
   const [statusFilter, setStatusFilter] = useState<OrderStatus | "all">("all");
   const [updatingId, setUpdatingId] = useState<bigint | null>(null);
   const [isConfirmingAll, setIsConfirmingAll] = useState(false);
-  const [confirmClearOrders, setConfirmClearOrders] = useState(false);
-  const [isClearingOrders, setIsClearingOrders] = useState(false);
+  const [showClearHistoryDialog, setShowClearHistoryDialog] = useState(false);
+  const [clearHistoryPassword, setClearHistoryPassword] = useState("");
+  const [isClearingHistory, setIsClearingHistory] = useState(false);
+  const [inventoryEditMode, setInventoryEditMode] = useState(false);
+  const [showInventoryPasswordDialog, setShowInventoryPasswordDialog] =
+    useState(false);
+  const [inventoryPasswordInput, setInventoryPasswordInput] = useState("");
   const [activeView, setActiveView] = useState<
     | "orders"
     | "history"
@@ -8593,6 +9494,12 @@ function OfficeDashboard() {
     | "estimated-billing"
   >("orders");
   const [allCustomers, setAllCustomers] = useState<Customer[]>([]);
+  const [allMedicineGroups, setAllMedicineGroups] = useState<
+    Array<{ id: bigint; name: string; distributorId: bigint }>
+  >([]);
+  const [cwsActiveReportTab, setCwsActiveReportTab] = useState<
+    "customer" | "company" | "product" | "month" | "group"
+  >("customer");
   // Customer form state
   const [custName, setCustName] = useState("");
   const [custType, setCustType] = useState<ExtendedCustomerType>(
@@ -8605,6 +9512,8 @@ function OfficeDashboard() {
   const [custCode, setCustCode] = useState("");
   const [custNTN, setCustNTN] = useState("");
   const [custCNIC, setCustCNIC] = useState("");
+  const [custDealerCode, setCustDealerCode] = useState("");
+  const [custPmdc, setCustPmdc] = useState("");
   const [isAddingCustomer, setIsAddingCustomer] = useState(false);
   const [deletingCustomerId, setDeletingCustomerId] = useState<bigint | null>(
     null,
@@ -8613,7 +9522,7 @@ function OfficeDashboard() {
     bigint | null
   >(null);
   // Customer wise sales filter state
-  const [cwsTab, setCwsTab] = useState<
+  const [_cwsTab, _setCwsTab] = useState<
     "allover" | "company" | "group" | "area" | "product"
   >("allover");
   const [cwsSelectedCustomer, setCwsSelectedCustomer] =
@@ -8705,6 +9614,7 @@ function OfficeDashboard() {
   const [purchaseCompanyName, setPurchaseCompanyName] = useState("");
   const [purchaseMedicineType, setPurchaseMedicineType] = useState("Tablet");
   const [purchaseStrength, setPurchaseStrength] = useState("");
+  const [purchaseInvoiceNumber, setPurchaseInvoiceNumber] = useState("");
   const [isAddingPurchase, setIsAddingPurchase] = useState(false);
   const [deletingPurchaseId, setDeletingPurchaseId] = useState<bigint | null>(
     null,
@@ -8737,53 +9647,61 @@ function OfficeDashboard() {
       ? BigInt(officeSession.distributorId)
       : null;
     try {
-      const [rawActiveOrders, rawHistoryOrders, rawPharmacies, rawMedicines] =
-        await Promise.all([
-          distId
-            ? (actor as any)
-                .getActiveOrdersByDistributor(distId)
-                .catch(() => actor.getActiveOrders().catch(() => [] as any[]))
-            : actor.getActiveOrders().catch(async () => {
-                const all = await actor
-                  .getAllStaffOrders()
-                  .catch(() => [] as any[]);
-                const now = Date.now();
-                const hrs48 = 48 * 60 * 60 * 1000;
-                return all.filter((o: any) => {
-                  if (o.status !== "delivered") return true;
-                  const ts = Number(o.timestamp / BigInt(1_000_000));
-                  return now - ts < hrs48;
-                });
-              }),
-          distId
-            ? (actor as any)
-                .getHistoryOrdersByDistributor(distId)
-                .catch(() => actor.getHistoryOrders().catch(() => [] as any[]))
-            : actor.getHistoryOrders().catch(async () => {
-                const all = await actor
-                  .getAllStaffOrders()
-                  .catch(() => [] as any[]);
-                const now = Date.now();
-                const hrs48 = 48 * 60 * 60 * 1000;
-                const yr1 = 365 * 24 * 60 * 60 * 1000;
-                return all.filter((o: any) => {
-                  if (o.status !== "delivered") return false;
-                  const ts = Number(o.timestamp / BigInt(1_000_000));
-                  const age = now - ts;
-                  return age >= hrs48 && age < yr1;
-                });
-              }),
-          distId
-            ? (actor as any)
-                .getPharmaciesByDistributor(distId)
-                .catch(() => actor.getPharmacies().catch(() => [] as any[]))
-            : actor.getPharmacies().catch(() => [] as any[]),
-          distId
-            ? (actor as any)
-                .getMedicinesByDistributor(distId)
-                .catch(() => actor.getMedicines().catch(() => [] as any[]))
-            : actor.getMedicines().catch(() => [] as any[]),
-        ]);
+      const [
+        rawActiveOrders,
+        rawHistoryOrders,
+        rawPharmacies,
+        rawMedicines,
+        rawMedicineGroups,
+      ] = await Promise.all([
+        distId
+          ? (actor as any)
+              .getActiveOrdersByDistributor(distId)
+              .catch(() => actor.getActiveOrders().catch(() => [] as any[]))
+          : actor.getActiveOrders().catch(async () => {
+              const all = await actor
+                .getAllStaffOrders()
+                .catch(() => [] as any[]);
+              const now = Date.now();
+              const hrs48 = 48 * 60 * 60 * 1000;
+              return all.filter((o: any) => {
+                if (o.status !== "delivered") return true;
+                const ts = Number(o.timestamp / BigInt(1_000_000));
+                return now - ts < hrs48;
+              });
+            }),
+        distId
+          ? (actor as any)
+              .getHistoryOrdersByDistributor(distId)
+              .catch(() => actor.getHistoryOrders().catch(() => [] as any[]))
+          : actor.getHistoryOrders().catch(async () => {
+              const all = await actor
+                .getAllStaffOrders()
+                .catch(() => [] as any[]);
+              const now = Date.now();
+              const hrs48 = 48 * 60 * 60 * 1000;
+              const yr1 = 365 * 24 * 60 * 60 * 1000;
+              return all.filter((o: any) => {
+                if (o.status !== "delivered") return false;
+                const ts = Number(o.timestamp / BigInt(1_000_000));
+                const age = now - ts;
+                return age >= hrs48 && age < yr1;
+              });
+            }),
+        distId
+          ? (actor as any)
+              .getPharmaciesByDistributor(distId)
+              .catch(() => actor.getPharmacies().catch(() => [] as any[]))
+          : actor.getPharmacies().catch(() => [] as any[]),
+        distId
+          ? (actor as any)
+              .getMedicinesByDistributor(distId)
+              .catch(() => actor.getMedicines().catch(() => [] as any[]))
+          : actor.getMedicines().catch(() => [] as any[]),
+        distId
+          ? (actor as any).getMedicineGroups(distId).catch(() => [] as any[])
+          : actor.getMedicineGroups(BigInt(0)).catch(() => [] as any[]),
+      ]);
 
       const pharmacyMap = new Map(
         (rawPharmacies as any[]).map((p) => [String(p.id), p]),
@@ -8817,9 +9735,20 @@ function OfficeDashboard() {
           genericName: m.genericName || "",
           batchNo: m.batchNo || "",
           medicineType: m.medicineType || "",
+          productCode: m.productCode || "",
+          groupId: m.groupId ?? BigInt(0),
         };
       });
       setAllMedicines(mappedMedicines);
+
+      // Load medicine groups
+      setAllMedicineGroups(
+        (rawMedicineGroups as any[]).map((g) => ({
+          id: g.id,
+          name: g.name,
+          distributorId: g.distributorId,
+        })),
+      );
 
       // Map active orders
       const activeWithLines = mapRawOrdersToDetail(
@@ -9045,6 +9974,7 @@ function OfficeDashboard() {
         contactNo: c.contactNo,
         groupName: c.groupName,
         code: c.code,
+        dealerCode: (c as any).dealerCode || "",
       }));
       setAllCustomers(mapped);
     } catch (e: unknown) {
@@ -9086,8 +10016,9 @@ function OfficeDashboard() {
             custCode.trim(),
             custNTN.trim(),
             custCNIC.trim(),
+            custDealerCode.trim(),
           )
-        : await actor.addCustomer(
+        : await (actor as any).addCustomer(
             custName.trim(),
             toBackendCustomerType(custType),
             custAddress.trim(),
@@ -9097,6 +10028,7 @@ function OfficeDashboard() {
             custCode.trim(),
             custNTN.trim(),
             custCNIC.trim(),
+            custDealerCode.trim(),
           );
       // Store NTN/CNIC/name in localStorage for invoice lookup
       try {
@@ -9122,6 +10054,16 @@ function OfficeDashboard() {
           localStorage.setItem(
             `medorder_customer_cnic_${newBackendId}`,
             custCNIC.trim(),
+          );
+        } catch {
+          /* ignore */
+        }
+      }
+      if (custPmdc?.trim()) {
+        try {
+          localStorage.setItem(
+            `medorder_customer_pmdc_${newBackendId}`,
+            custPmdc.trim(),
           );
         } catch {
           /* ignore */
@@ -9156,6 +10098,8 @@ function OfficeDashboard() {
       setCustCode("");
       setCustNTN("");
       setCustCNIC("");
+      setCustDealerCode("");
+      setCustPmdc("");
       await Promise.all([loadCustomers(), loadAllData()]);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Unknown error";
@@ -9212,10 +10156,11 @@ function OfficeDashboard() {
         purchaseGenericName.trim(),
         purchaseBatchNo.trim(),
         BigInt(Math.round(qty)),
-        BigInt(Math.round(price)),
+        BigInt(Math.round(price * 100)),
         purchasePackSize.trim(),
         purchaseCompanyName.trim(),
         purchaseMedicineType,
+        purchaseInvoiceNumber.trim() || null,
       );
 
       // Auto-update inventory: find matching medicine by name and increase stock
@@ -9244,6 +10189,7 @@ function OfficeDashboard() {
       setPurchaseCompanyName("");
       setPurchaseMedicineType("Tablet");
       setPurchaseStrength("");
+      setPurchaseInvoiceNumber("");
       await loadPurchases();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Unknown error";
@@ -9386,8 +10332,15 @@ function OfficeDashboard() {
   }, [orders]);
 
   const filteredHistory = useMemo((): OfficeOrderDetail[] => {
-    return historyOrders;
-  }, [historyOrders]);
+    const seen = new Set<string>();
+    const combined = [...historyOrders, ...orders];
+    return combined.filter((o) => {
+      const key = String(o.backendId);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [historyOrders, orders]);
 
   const todayOrders = useMemo(
     () => orders.filter((o) => o.date === officeTodayStr),
@@ -9645,18 +10598,6 @@ function OfficeDashboard() {
                   <User size={16} className="shrink-0" />
                   {sidebarOpen && <span>Customer Wise Sales | کسٹمر سیلز</span>}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveView("add-customer");
-                    setSidebarOpen(false);
-                  }}
-                  title="Add Customer"
-                  className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeView === "add-customer" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"} ${!sidebarOpen ? "justify-center" : ""}`}
-                >
-                  <Plus size={16} className="shrink-0" />
-                  {sidebarOpen && <span>Add Customer | کسٹمر شامل کریں</span>}
-                </button>
               </div>
               {/* Estimated Billing */}
               <button
@@ -9832,78 +10773,6 @@ function OfficeDashboard() {
                     ))}
                   </div>
                   <div className="ml-auto flex items-center gap-2">
-                    {/* Clear All Orders */}
-                    <button
-                      type="button"
-                      data-ocid="office.orders.delete_button"
-                      onClick={() => setConfirmClearOrders(true)}
-                      className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
-                    >
-                      <Trash2 size={14} />
-                      Clear All | صاف کریں
-                    </button>
-                    {/* Clear Orders Confirm Dialog */}
-                    {confirmClearOrders && (
-                      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-                        <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full mx-4">
-                          <h3 className="text-lg font-bold text-gray-900 mb-2">
-                            Sab Orders Clear Karein?
-                          </h3>
-                          <p className="text-sm text-gray-500 mb-4">
-                            Yeh action undo nahi ho sakti. Saray orders
-                            permanently delete ho jayenge.
-                          </p>
-                          <div className="flex gap-3 justify-end">
-                            <button
-                              type="button"
-                              onClick={() => setConfirmClearOrders(false)}
-                              className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="button"
-                              data-ocid="office.orders.confirm_button"
-                              disabled={isClearingOrders}
-                              onClick={async () => {
-                                if (!actor) return;
-                                const clearSess = getSession();
-                                if (!clearSess?.distributorId) return;
-                                setIsClearingOrders(true);
-                                try {
-                                  await (
-                                    actor as any
-                                  ).clearOrdersForDistributor(
-                                    BigInt(clearSess.distributorId),
-                                  );
-                                  setConfirmClearOrders(false);
-                                  toast.success(
-                                    "Sab orders clear ho gaye | All orders cleared",
-                                  );
-                                  await loadAllData();
-                                } catch (e: unknown) {
-                                  const msg =
-                                    e instanceof Error
-                                      ? e.message
-                                      : "Unknown error";
-                                  toast.error(`Error: ${msg}`);
-                                } finally {
-                                  setIsClearingOrders(false);
-                                }
-                              }}
-                              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-semibold disabled:opacity-50"
-                            >
-                              {isClearingOrders ? (
-                                <Loader2 size={14} className="animate-spin" />
-                              ) : (
-                                <Trash2 size={14} />
-                              )}
-                              Confirm Delete
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
                     {/* Confirm All */}
                     <button
                       type="button"
@@ -10325,7 +11194,7 @@ function OfficeDashboard() {
                       History | تاریخ
                     </h2>
                     <p className="text-sm text-gray-500 mt-0.5">
-                      Delivered orders older than 48 hours · up to 1 year
+                      All orders history | آرڈر تاریخ
                     </p>
                   </div>
                   <div className="flex items-center gap-3">
@@ -10348,6 +11217,15 @@ function OfficeDashboard() {
                       <Printer size={14} />
                       Print History | تاریخ پرنٹ
                     </button>
+                    <button
+                      type="button"
+                      data-ocid="office.history.delete_button"
+                      onClick={() => setShowClearHistoryDialog(true)}
+                      className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                    >
+                      <Trash2 size={14} />
+                      Clear History | تاریخ صاف کریں
+                    </button>
                   </div>
                 </div>
 
@@ -10356,6 +11234,93 @@ function OfficeDashboard() {
                   filteredHistory={filteredHistory}
                   setSelectedOrder={setSelectedOrder}
                 />
+
+                {/* Clear History Password Dialog */}
+                {showClearHistoryDialog && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+                    <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full mx-4">
+                      <h3 className="text-lg font-bold text-gray-900 mb-2">
+                        Clear History | تاریخ صاف کریں
+                      </h3>
+                      <p className="text-sm text-gray-500 mb-4">
+                        Apna password enter karein. Yeh action undo nahi ho
+                        sakti. Saari history permanently delete ho jayegi.
+                      </p>
+                      <input
+                        type="password"
+                        value={clearHistoryPassword}
+                        onChange={(e) =>
+                          setClearHistoryPassword(e.target.value)
+                        }
+                        placeholder="Password dalein | Enter password"
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 mb-4 focus:outline-none focus:ring-2 focus:ring-red-500"
+                        data-ocid="office.history.password.input"
+                      />
+                      <div className="flex gap-3 justify-end">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowClearHistoryDialog(false);
+                            setClearHistoryPassword("");
+                          }}
+                          className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50"
+                          data-ocid="office.history.cancel_button"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          data-ocid="office.history.confirm_button"
+                          disabled={
+                            isClearingHistory || !clearHistoryPassword.trim()
+                          }
+                          onClick={async () => {
+                            const clearSess = getSession();
+                            if (!clearSess?.distributorId) return;
+                            // Verify password against known users
+                            const userRecord = lookupUser(
+                              clearSess.username,
+                              clearHistoryPassword,
+                            );
+                            if (!userRecord) {
+                              toast.error("Wrong password | غلط پاس ورڈ");
+                              return;
+                            }
+                            if (!actor) return;
+                            setIsClearingHistory(true);
+                            try {
+                              await (actor as any).clearOrdersForDistributor(
+                                BigInt(clearSess.distributorId),
+                              );
+                              setShowClearHistoryDialog(false);
+                              setClearHistoryPassword("");
+                              toast.success(
+                                "History clear ho gayi | History cleared",
+                              );
+                              await loadAllData();
+                            } catch (e: unknown) {
+                              const msg =
+                                e instanceof Error
+                                  ? e.message
+                                  : "Unknown error";
+                              toast.error(`Error: ${msg}`);
+                            } finally {
+                              setIsClearingHistory(false);
+                            }
+                          }}
+                          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-semibold disabled:opacity-50"
+                        >
+                          {isClearingHistory ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <Trash2 size={14} />
+                          )}
+                          Confirm Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </>
             )}
 
@@ -10370,11 +11335,112 @@ function OfficeDashboard() {
                       Medicines grouped by company · stock qty editable
                     </p>
                   </div>
-                  <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1.5 rounded-lg font-medium">
-                    {allMedicines.length} medicines ·{" "}
-                    {medicinesByCompany.length} companies
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1.5 rounded-lg font-medium">
+                      {allMedicines.length} medicines ·{" "}
+                      {medicinesByCompany.length} companies
+                    </span>
+                    {inventoryEditMode ? (
+                      <button
+                        type="button"
+                        onClick={() => setInventoryEditMode(false)}
+                        className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                        data-ocid="inventory.toggle"
+                      >
+                        🔒 Lock | بند کریں
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setInventoryPasswordInput("");
+                          setShowInventoryPasswordDialog(true);
+                        }}
+                        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                        data-ocid="inventory.edit_button"
+                      >
+                        🔒 Edit Inventory | ترمیم
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                {/* Inventory Password Dialog */}
+                {showInventoryPasswordDialog && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+                    <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full mx-4">
+                      <h3 className="text-lg font-bold text-gray-900 mb-2">
+                        Inventory Edit | انوینٹری ترمیم
+                      </h3>
+                      <p className="text-sm text-gray-500 mb-4">
+                        Apna password enter karein stock edit karne ke liye |
+                        Enter password to edit stock quantities
+                      </p>
+                      <input
+                        type="password"
+                        value={inventoryPasswordInput}
+                        onChange={(e) =>
+                          setInventoryPasswordInput(e.target.value)
+                        }
+                        placeholder="Password | پاس ورڈ"
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        data-ocid="inventory.password.input"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            const invSess = getSession();
+                            if (!invSess) return;
+                            const invUser = lookupUser(
+                              invSess.username,
+                              inventoryPasswordInput,
+                            );
+                            if (invUser) {
+                              setInventoryEditMode(true);
+                              setShowInventoryPasswordDialog(false);
+                              setInventoryPasswordInput("");
+                            } else {
+                              toast.error("Wrong password | غلط پاس ورڈ");
+                            }
+                          }
+                        }}
+                      />
+                      <div className="flex gap-3 justify-end">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowInventoryPasswordDialog(false);
+                            setInventoryPasswordInput("");
+                          }}
+                          className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50"
+                          data-ocid="inventory.cancel_button"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          data-ocid="inventory.confirm_button"
+                          onClick={() => {
+                            const invSess = getSession();
+                            if (!invSess) return;
+                            const invUser = lookupUser(
+                              invSess.username,
+                              inventoryPasswordInput,
+                            );
+                            if (invUser) {
+                              setInventoryEditMode(true);
+                              setShowInventoryPasswordDialog(false);
+                              setInventoryPasswordInput("");
+                            } else {
+                              toast.error("Wrong password | غلط پاس ورڈ");
+                            }
+                          }}
+                          className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold"
+                        >
+                          Unlock | کھولیں
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {isLoading ? (
                   <div className="flex items-center justify-center py-20">
@@ -10483,6 +11549,7 @@ function OfficeDashboard() {
                                     type="number"
                                     min="0"
                                     defaultValue={stockVal}
+                                    disabled={!inventoryEditMode}
                                     onChange={(e) => {
                                       // Save to localStorage immediately on every change
                                       localStorage.setItem(
@@ -10491,6 +11558,7 @@ function OfficeDashboard() {
                                       );
                                     }}
                                     onBlur={(e) => {
+                                      if (!inventoryEditMode) return;
                                       // Save to backend only on blur (single call, not every keystroke)
                                       const val = e.target.value;
                                       localStorage.setItem(stockKey, val);
@@ -10507,7 +11575,7 @@ function OfficeDashboard() {
                                           .catch(() => {});
                                       }
                                     }}
-                                    className="w-20 text-center text-sm font-bold text-gray-900 border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                    className={`w-20 text-center text-sm font-bold border rounded-lg px-2 py-1.5 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${inventoryEditMode ? "text-gray-900 border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white" : "text-gray-500 border-gray-200 bg-gray-50 cursor-not-allowed"}`}
                                     aria-label={`Stock quantity for ${med.name}`}
                                   />
                                 </td>
@@ -10624,10 +11692,11 @@ function OfficeDashboard() {
                       <input
                         id="pur-price"
                         type="number"
-                        min="1"
+                        min="0.01"
+                        step="0.01"
                         value={purchasePrice}
                         onChange={(e) => setPurchasePrice(e.target.value)}
-                        placeholder="e.g. 15000"
+                        placeholder="e.g. 450.50"
                         disabled={isAddingPurchase}
                         className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
@@ -10710,6 +11779,26 @@ function OfficeDashboard() {
                         <option value="Other">Other | دیگر</option>
                       </select>
                     </div>
+                    <div>
+                      <label
+                        htmlFor="pur-invoice-number"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Invoice Number | انوائس نمبر
+                      </label>
+                      <input
+                        id="pur-invoice-number"
+                        type="text"
+                        value={purchaseInvoiceNumber}
+                        onChange={(e) =>
+                          setPurchaseInvoiceNumber(e.target.value)
+                        }
+                        placeholder="e.g. INV-2024-001"
+                        disabled={isAddingPurchase}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
+                        data-ocid="purchasing.invoice_number.input"
+                      />
+                    </div>
                     <div className="flex items-end">
                       <button
                         type="button"
@@ -10781,6 +11870,9 @@ function OfficeDashboard() {
                             Pack Size | پیک
                           </th>
                           <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            Invoice # | انوائس
+                          </th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                             Date | تاریخ
                           </th>
                           <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
@@ -10831,10 +11923,13 @@ function OfficeDashboard() {
                                 {String(purchase.quantity)}
                               </td>
                               <td className="px-4 py-3 text-sm text-right font-bold text-blue-700">
-                                {formatCurrency(Number(purchase.price))}
+                                {formatCurrency(Number(purchase.price) / 100)}
                               </td>
                               <td className="px-4 py-3 text-sm text-gray-600">
                                 {purchase.packSize || "—"}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-600 font-mono">
+                                {(purchase as any).invoiceNumber || "—"}
                               </td>
                               <td className="px-4 py-3 text-sm text-gray-500">
                                 {formatDate(date)}
@@ -11610,28 +12705,59 @@ function OfficeDashboard() {
               <div className="space-y-6">
                 <div>
                   <h2 className="text-xl font-bold text-gray-900 font-heading">
-                    Customer Wise Sales | کسٹمر وائز سیلز
+                    Customer Wise Sale | کسٹمر وائز سیل
                   </h2>
                   <p className="text-sm text-gray-500 mt-0.5">
-                    Track sales by customer, area, company, group, or product
+                    Detailed sales reports grouped by customer, company,
+                    product, month, or group
                   </p>
                 </div>
 
-                {/* Customer Selector */}
+                {/* Date Range + Filters */}
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-                  <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide block mb-2">
-                    Search Customer | کسٹمر تلاش کریں
-                  </p>
-                  <div className="relative">
-                    <div className="flex items-center gap-2">
-                      <div className="relative flex-1">
-                        <Search
-                          size={14}
-                          className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-                        />
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                    <div>
+                      <label
+                        htmlFor="cws-date-from"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        From Date | شروع تاریخ
+                      </label>
+                      <input
+                        id="cws-date-from"
+                        type="date"
+                        data-ocid="cws.date_from_input"
+                        value={cwsDateFrom}
+                        onChange={(e) => setCwsDateFrom(e.target.value)}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="cws-date-to"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        To Date | آخری تاریخ
+                      </label>
+                      <input
+                        id="cws-date-to"
+                        type="date"
+                        data-ocid="cws.date_to_input"
+                        value={cwsDateTo}
+                        onChange={(e) => setCwsDateTo(e.target.value)}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="cws-customer-search"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Customer Search | کسٹمر تلاش
+                      </label>
+                      <div className="relative">
                         <input
                           type="text"
-                          aria-label="Search customer"
                           data-ocid="cws.customer_search_input"
                           value={cwsCustomerSearch}
                           onChange={(e) => {
@@ -11639,830 +12765,568 @@ function OfficeDashboard() {
                             setCwsCustomerDropdownOpen(true);
                           }}
                           onFocus={() => setCwsCustomerDropdownOpen(true)}
-                          placeholder="Type customer name, code or area..."
-                          className="w-full h-10 text-sm border border-gray-300 rounded-lg pl-9 pr-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="All customers (optional filter)..."
+                          className="w-full h-10 text-sm border border-gray-300 rounded-lg pl-3 pr-8 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
+                        {(cwsSelectedCustomer || cwsSelectedPharmacy) && (
+                          <button
+                            type="button"
+                            data-ocid="cws.customer_clear_button"
+                            onClick={() => {
+                              setCwsSelectedCustomer(null);
+                              setCwsSelectedPharmacy(null);
+                              setCwsCustomerSearch("");
+                              setCwsCustomerDropdownOpen(false);
+                            }}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                          >
+                            <svg
+                              aria-hidden="true"
+                              xmlns="http://www.w3.org/2000/svg"
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                            >
+                              <line x1="18" y1="6" x2="6" y2="18" />
+                              <line x1="6" y1="6" x2="18" y2="18" />
+                            </svg>
+                          </button>
+                        )}
+                        {cwsCustomerDropdownOpen &&
+                          cwsCustomerSearch.trim().length > 0 && (
+                            <div className="absolute z-20 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                              {[
+                                ...allCustomers
+                                  .filter((c) =>
+                                    c.name
+                                      .toLowerCase()
+                                      .includes(
+                                        cwsCustomerSearch.toLowerCase(),
+                                      ),
+                                  )
+                                  .map((c) => (
+                                    <button
+                                      key={`cust-${c.id}`}
+                                      type="button"
+                                      className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50"
+                                      onClick={() => {
+                                        setCwsSelectedCustomer(c);
+                                        setCwsCustomerSearch(c.name);
+                                        setCwsCustomerDropdownOpen(false);
+                                      }}
+                                    >
+                                      <span className="font-medium">
+                                        {c.name}
+                                      </span>{" "}
+                                      <span className="text-xs text-gray-400">
+                                        {c.dealerCode && `· ${c.dealerCode}`}
+                                      </span>
+                                    </button>
+                                  )),
+                              ]}
+                            </div>
+                          )}
                       </div>
-                      {(cwsSelectedCustomer || cwsSelectedPharmacy) && (
+                    </div>
+                  </div>
+                </div>
+
+                {/* Report Tabs */}
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                  <div className="border-b border-gray-200 px-5 pt-4">
+                    <div className="flex gap-1 overflow-x-auto pb-0">
+                      {(
+                        [
+                          {
+                            key: "customer",
+                            label: "Customer Wise",
+                            urdu: "کسٹمر",
+                          },
+                          {
+                            key: "company",
+                            label: "Company Wise",
+                            urdu: "کمپنی",
+                          },
+                          {
+                            key: "product",
+                            label: "Product Wise",
+                            urdu: "پروڈکٹ",
+                          },
+                          { key: "month", label: "Month Wise", urdu: "ماہانہ" },
+                          { key: "group", label: "Group Wise", urdu: "گروپ" },
+                        ] as const
+                      ).map((tab) => (
                         <button
+                          key={tab.key}
                           type="button"
-                          data-ocid="cws.customer_clear_button"
-                          onClick={() => {
-                            setCwsSelectedCustomer(null);
-                            setCwsSelectedPharmacy(null);
-                            setCwsCustomerSearch("");
-                            setCwsCustomerDropdownOpen(false);
-                          }}
-                          className="flex items-center gap-1.5 bg-blue-100 text-blue-700 text-xs font-semibold px-3 py-2 rounded-lg hover:bg-blue-200 transition-colors"
+                          data-ocid={`cws.${tab.key}_tab`}
+                          onClick={() => setCwsActiveReportTab(tab.key)}
+                          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${cwsActiveReportTab === tab.key ? "border-blue-600 text-blue-700" : "border-transparent text-gray-500 hover:text-gray-700"}`}
                         >
-                          <span>
-                            Viewing:{" "}
-                            {cwsSelectedCustomer?.name ??
-                              cwsSelectedPharmacy?.name}
-                          </span>
-                          <X size={12} />
+                          {tab.label}
                         </button>
-                      )}
+                      ))}
                     </div>
-                    {cwsCustomerDropdownOpen &&
-                      cwsCustomerSearch.trim().length > 0 && (
-                        <div className="absolute z-20 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                          {/* Customers */}
-                          {allCustomers
-                            .filter((c) => {
-                              const q = cwsCustomerSearch.toLowerCase();
-                              return (
-                                c.name.toLowerCase().includes(q) ||
-                                c.code.toLowerCase().includes(q) ||
-                                c.area.toLowerCase().includes(q)
-                              );
-                            })
-                            .map((c) => (
-                              <button
-                                key={`cust-${c.id}`}
-                                type="button"
-                                className="w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 flex items-center justify-between gap-2"
-                                onClick={() => {
-                                  setCwsSelectedCustomer(c);
-                                  setCwsSelectedPharmacy(null);
-                                  setCwsCustomerSearch(c.name);
-                                  setCwsCustomerDropdownOpen(false);
-                                }}
-                              >
-                                <span className="font-medium text-gray-900">
-                                  {c.name}
-                                </span>
-                                <span className="flex items-center gap-1.5 shrink-0">
-                                  <span
-                                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${c.customerType === CustomerType.doctor ? "bg-green-100 text-green-700" : c.customerType === CustomerType.medicalStore ? "bg-orange-100 text-orange-700" : "bg-blue-100 text-blue-700"}`}
-                                  >
-                                    {c.customerType === CustomerType.doctor
-                                      ? "Doctor"
-                                      : c.customerType ===
-                                          CustomerType.medicalStore
-                                        ? "Store"
-                                        : "Pharmacy"}
-                                  </span>
-                                  <span className="text-xs text-gray-400">
-                                    {c.area} {c.code && `· ${c.code}`}
-                                  </span>
-                                </span>
-                              </button>
-                            ))}
-                          {/* Pharmacies from allPharmacies */}
-                          {allPharmacies
-                            .filter((p) => {
-                              const q = cwsCustomerSearch.toLowerCase();
-                              const { area } = parseLocation(p.location);
-                              return (
-                                p.name.toLowerCase().includes(q) ||
-                                area.toLowerCase().includes(q)
-                              );
-                            })
-                            .map((p) => {
-                              const { area } = parseLocation(p.location);
-                              return (
-                                <button
-                                  key={`pharm-${p.id}`}
-                                  type="button"
-                                  className="w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 flex items-center justify-between gap-2"
-                                  onClick={() => {
-                                    setCwsSelectedCustomer(null);
-                                    setCwsSelectedPharmacy({
-                                      id: p.id,
-                                      name: p.name,
-                                      area,
-                                      code: "",
-                                    });
-                                    setCwsCustomerSearch(p.name);
-                                    setCwsCustomerDropdownOpen(false);
-                                  }}
-                                >
-                                  <span className="font-medium text-gray-900">
-                                    {p.name}
-                                  </span>
-                                  <span className="flex items-center gap-1.5 shrink-0">
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-purple-100 text-purple-700">
-                                      Pharmacy
-                                    </span>
-                                    <span className="text-xs text-gray-400">
-                                      {area}
-                                    </span>
-                                  </span>
-                                </button>
-                              );
-                            })}
-                          {allCustomers.filter((c) => {
-                            const q = cwsCustomerSearch.toLowerCase();
-                            return (
-                              c.name.toLowerCase().includes(q) ||
-                              c.code.toLowerCase().includes(q) ||
-                              c.area.toLowerCase().includes(q)
+                  </div>
+
+                  <div className="p-5">
+                    {(() => {
+                      // Prepare data
+                      const allOrdersForReport = [
+                        ...ordersWithLines,
+                        ...historyOrdersWithLines,
+                      ].filter((o) => {
+                        if (o.status !== "delivered") return false;
+                        if (o.date < cwsDateFrom || o.date > cwsDateTo)
+                          return false;
+                        if (cwsSelectedCustomer) {
+                          const nameMatch =
+                            o.pharmacyName.toLowerCase() ===
+                            cwsSelectedCustomer.name.toLowerCase();
+                          const codeMatch =
+                            cwsSelectedCustomer.code &&
+                            o.pharmacyCode === cwsSelectedCustomer.code;
+                          return nameMatch || !!codeMatch;
+                        }
+                        if (cwsSelectedPharmacy) {
+                          return (
+                            o.pharmacyName.toLowerCase() ===
+                            cwsSelectedPharmacy.name.toLowerCase()
+                          );
+                        }
+                        return true;
+                      });
+
+                      // Build report rows from order lines
+                      type ReportRow = {
+                        groupKey: string;
+                        groupHeader: string;
+                        dealerCode?: string;
+                        productCode: string;
+                        productName: string;
+                        packing: string;
+                        itemRate: number;
+                        grossSale: number;
+                        salesReturn: number;
+                        netSaleQty: number;
+                        bonus: number;
+                        amount: number;
+                      };
+
+                      const rows: ReportRow[] = [];
+                      for (const order of allOrdersForReport) {
+                        const returnMap = new Map<string, number>();
+                        for (const ri of order.returnItems || []) {
+                          returnMap.set(
+                            String(ri.medicineId),
+                            (returnMap.get(String(ri.medicineId)) || 0) +
+                              Number(ri.returnedQty),
+                          );
+                        }
+                        for (const item of order.items) {
+                          const med = allMedicines.find(
+                            (m) => String(m.backendId) === item.medicineId,
+                          );
+                          const itemRate =
+                            (item as any).netRate > 0
+                              ? (item as any).netRate
+                              : item.unitPrice || 0;
+                          const grossSale = item.qty || 0;
+                          const salesReturn =
+                            returnMap.get(item.medicineId) || 0;
+                          const netSaleQty = Math.max(
+                            0,
+                            grossSale - salesReturn,
+                          );
+                          const bonus = item.bonusQty || 0;
+                          const amount = netSaleQty * itemRate;
+
+                          let groupKey = "";
+                          let groupHeader = "";
+                          let dealerCode = "";
+
+                          if (cwsActiveReportTab === "customer") {
+                            const cust = allCustomers.find(
+                              (c) =>
+                                c.name.toLowerCase() ===
+                                  order.pharmacyName.toLowerCase() ||
+                                c.code === order.pharmacyCode,
                             );
-                          }).length === 0 &&
-                            allPharmacies.filter((p) => {
-                              const q = cwsCustomerSearch.toLowerCase();
-                              const { area } = parseLocation(p.location);
-                              return (
-                                p.name.toLowerCase().includes(q) ||
-                                area.toLowerCase().includes(q)
-                              );
-                            }).length === 0 && (
-                              <div className="px-4 py-3 text-sm text-gray-400">
-                                No customers or pharmacies found
-                              </div>
-                            )}
-                        </div>
-                      )}
-                  </div>
-                  {(cwsSelectedCustomer || cwsSelectedPharmacy) && (
-                    <p className="text-xs text-blue-600 mt-2">
-                      Showing sales for:{" "}
-                      <strong>
-                        {cwsSelectedCustomer?.name ?? cwsSelectedPharmacy?.name}
-                      </strong>
-                      {(cwsSelectedCustomer?.area ||
-                        cwsSelectedPharmacy?.area) &&
-                        ` — ${cwsSelectedCustomer?.area ?? cwsSelectedPharmacy?.area}`}
-                    </p>
-                  )}
-                </div>
+                            groupKey = order.pharmacyName;
+                            groupHeader = order.pharmacyName;
+                            dealerCode = cust?.dealerCode || "";
+                          } else if (cwsActiveReportTab === "company") {
+                            groupKey = med?.company || "Unknown";
+                            groupHeader = med?.company || "Unknown";
+                          } else if (cwsActiveReportTab === "product") {
+                            groupKey = item.medicineName;
+                            groupHeader = item.medicineName;
+                          } else if (cwsActiveReportTab === "month") {
+                            const d = new Date(order.date);
+                            groupKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+                            groupHeader = d.toLocaleDateString("en-PK", {
+                              year: "numeric",
+                              month: "long",
+                            });
+                          } else if (cwsActiveReportTab === "group") {
+                            const grp = allMedicineGroups.find(
+                              (g) =>
+                                med?.groupId &&
+                                String(g.id) === String(med.groupId),
+                            );
+                            groupKey = grp ? String(grp.id) : "ungrouped";
+                            groupHeader = grp ? grp.name : "Ungrouped";
+                          }
 
-                {/* Date Range + Filter Tabs */}
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-                  <div className="flex flex-wrap items-center gap-4 mb-4">
-                    <div className="flex items-center gap-2">
-                      <label
-                        htmlFor="cws-date-from"
-                        className="text-xs font-semibold text-gray-600 uppercase tracking-wide"
-                      >
-                        From | سے
-                      </label>
-                      <input
-                        id="cws-date-from"
-                        type="date"
-                        value={cwsDateFrom}
-                        onChange={(e) => setCwsDateFrom(e.target.value)}
-                        className="h-9 text-sm border border-gray-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        data-ocid="cws.date_from_input"
-                      />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <label
-                        htmlFor="cws-date-to"
-                        className="text-xs font-semibold text-gray-600 uppercase tracking-wide"
-                      >
-                        To | تک
-                      </label>
-                      <input
-                        id="cws-date-to"
-                        type="date"
-                        value={cwsDateTo}
-                        onChange={(e) => setCwsDateTo(e.target.value)}
-                        className="h-9 text-sm border border-gray-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        data-ocid="cws.date_to_input"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {[
-                      {
-                        key: "allover" as const,
-                        label: "All Over",
-                        urdu: "سب",
-                      },
-                      {
-                        key: "company" as const,
-                        label: "Company Wise",
-                        urdu: "کمپنی",
-                      },
-                      {
-                        key: "group" as const,
-                        label: "Group Wise",
-                        urdu: "گروپ",
-                      },
-                      {
-                        key: "area" as const,
-                        label: "Area Wise",
-                        urdu: "علاقہ",
-                      },
-                      {
-                        key: "product" as const,
-                        label: "Product Wise",
-                        urdu: "پروڈکٹ",
-                      },
-                    ].map((tab) => (
-                      <button
-                        key={tab.key}
-                        type="button"
-                        data-ocid={`cws.${tab.key}_tab`}
-                        onClick={() => setCwsTab(tab.key)}
-                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${cwsTab === tab.key ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
-                      >
-                        {tab.label} | {tab.urdu}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Customer Wise Sales Data Table */}
-                {(() => {
-                  const allOrdersForCws = [
-                    ...ordersWithLines,
-                    ...historyOrders,
-                  ];
-                  const filteredCwsOrders = allOrdersForCws.filter((o) => {
-                    if (o.date < cwsDateFrom || o.date > cwsDateTo)
-                      return false;
-                    if (cwsSelectedCustomer) {
-                      const nameMatch =
-                        o.pharmacyName.toLowerCase() ===
-                        cwsSelectedCustomer.name.toLowerCase();
-                      const codeMatch =
-                        cwsSelectedCustomer.code &&
-                        o.pharmacyCode === cwsSelectedCustomer.code;
-                      return nameMatch || !!codeMatch;
-                    }
-                    if (cwsSelectedPharmacy) {
-                      return (
-                        o.pharmacyName.toLowerCase() ===
-                        cwsSelectedPharmacy.name.toLowerCase()
-                      );
-                    }
-                    return true;
-                  });
-
-                  if (cwsTab === "allover") {
-                    // Group by pharmacy
-                    const pharmMap = new Map<
-                      string,
-                      {
-                        name: string;
-                        area: string;
-                        units: number;
-                        value: number;
-                      }
-                    >();
-                    for (const o of filteredCwsOrders) {
-                      if (!pharmMap.has(o.pharmacyName)) {
-                        pharmMap.set(o.pharmacyName, {
-                          name: o.pharmacyName,
-                          area: o.pharmacyArea,
-                          units: 0,
-                          value: 0,
-                        });
-                      }
-                      const entry = pharmMap.get(o.pharmacyName)!;
-                      for (const item of o.items) {
-                        entry.units += item.qty;
-                        const discPct = item.discountPercent / 10;
-                        entry.value +=
-                          item.unitPrice * item.qty * (1 - discPct / 100);
-                      }
-                    }
-                    const rows = Array.from(pharmMap.values()).sort(
-                      (a, b) => b.value - a.value,
-                    );
-                    return (
-                      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                        <div className="px-5 py-3 border-b border-gray-200 bg-gray-50">
-                          <h3 className="font-bold text-gray-900">
-                            All Over — All Pharmacies | تمام فارمیسیاں
-                          </h3>
-                        </div>
-                        {rows.length === 0 ? (
-                          <div
-                            className="text-center py-12 text-gray-400"
-                            data-ocid="cws.allover_empty_state"
-                          >
-                            <User
-                              size={32}
-                              className="mx-auto mb-2 opacity-40"
-                            />
-                            <p>No sales data in selected date range</p>
-                          </div>
-                        ) : (
-                          <table className="w-full">
-                            <thead>
-                              <tr className="bg-gray-50 border-b border-gray-100">
-                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  #
-                                </th>
-                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Pharmacy | فارمیسی
-                                </th>
-                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Area | علاقہ
-                                </th>
-                                <th className="text-center px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Units | یونٹس
-                                </th>
-                                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Value (Rs) | قدر
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                              {rows.map((row, idx) => (
-                                <tr
-                                  key={row.name}
-                                  data-ocid={`cws.allover_item.${idx + 1}`}
-                                  className={
-                                    idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"
-                                  }
-                                >
-                                  <td className="px-4 py-2.5 text-sm text-gray-500">
-                                    {idx + 1}
-                                  </td>
-                                  <td className="px-4 py-2.5 font-semibold text-sm text-gray-900">
-                                    {row.name}
-                                  </td>
-                                  <td className="px-4 py-2.5 text-sm text-gray-600">
-                                    {row.area || "—"}
-                                  </td>
-                                  <td className="px-4 py-2.5 text-sm text-center font-bold text-gray-700">
-                                    {row.units}
-                                  </td>
-                                  <td className="px-4 py-2.5 text-sm text-right font-bold text-blue-700">
-                                    {formatCurrency(row.value)}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                            <tfoot>
-                              <tr className="border-t-2 border-blue-200 bg-blue-50">
-                                <td
-                                  colSpan={3}
-                                  className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right"
-                                >
-                                  Total
-                                </td>
-                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-center">
-                                  {rows.reduce((s, r) => s + r.units, 0)}
-                                </td>
-                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right">
-                                  {formatCurrency(
-                                    rows.reduce((s, r) => s + r.value, 0),
-                                  )}
-                                </td>
-                              </tr>
-                            </tfoot>
-                          </table>
-                        )}
-                      </div>
-                    );
-                  }
-
-                  if (cwsTab === "company") {
-                    const coMap = new Map<
-                      string,
-                      { units: number; value: number }
-                    >();
-                    for (const o of filteredCwsOrders) {
-                      for (const item of o.items) {
-                        const med = allMedicines.find(
-                          (m) => String(m.backendId) === item.medicineId,
-                        );
-                        const co = med?.company || "Unknown";
-                        if (!coMap.has(co))
-                          coMap.set(co, { units: 0, value: 0 });
-                        const entry = coMap.get(co)!;
-                        entry.units += item.qty;
-                        const discPct = item.discountPercent / 10;
-                        entry.value +=
-                          item.unitPrice * item.qty * (1 - discPct / 100);
-                      }
-                    }
-                    const rows = Array.from(coMap.entries()).sort(
-                      ([, a], [, b]) => b.value - a.value,
-                    );
-                    return (
-                      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                        <div className="px-5 py-3 border-b border-gray-200 bg-gray-50">
-                          <h3 className="font-bold text-gray-900">
-                            Company Wise Sales | کمپنی وائز سیلز
-                          </h3>
-                        </div>
-                        {rows.length === 0 ? (
-                          <div
-                            className="text-center py-12 text-gray-400"
-                            data-ocid="cws.company_empty_state"
-                          >
-                            <Building2
-                              size={32}
-                              className="mx-auto mb-2 opacity-40"
-                            />
-                            <p>No data in selected date range</p>
-                          </div>
-                        ) : (
-                          <table className="w-full">
-                            <thead>
-                              <tr className="bg-gray-50 border-b border-gray-100">
-                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  #
-                                </th>
-                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Company | کمپنی
-                                </th>
-                                <th className="text-center px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Units | یونٹس
-                                </th>
-                                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Value (Rs) | قدر
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                              {rows.map(([co, data], idx) => (
-                                <tr
-                                  key={co}
-                                  data-ocid={`cws.company_item.${idx + 1}`}
-                                  className={
-                                    idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"
-                                  }
-                                >
-                                  <td className="px-4 py-2.5 text-sm text-gray-500">
-                                    {idx + 1}
-                                  </td>
-                                  <td className="px-4 py-2.5 font-semibold text-sm text-gray-900">
-                                    {co}
-                                  </td>
-                                  <td className="px-4 py-2.5 text-sm text-center font-bold text-gray-700">
-                                    {data.units}
-                                  </td>
-                                  <td className="px-4 py-2.5 text-sm text-right font-bold text-blue-700">
-                                    {formatCurrency(data.value)}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                            <tfoot>
-                              <tr className="border-t-2 border-blue-200 bg-blue-50">
-                                <td
-                                  colSpan={2}
-                                  className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right"
-                                >
-                                  Total
-                                </td>
-                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-center">
-                                  {rows.reduce((s, [, d]) => s + d.units, 0)}
-                                </td>
-                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right">
-                                  {formatCurrency(
-                                    rows.reduce((s, [, d]) => s + d.value, 0),
-                                  )}
-                                </td>
-                              </tr>
-                            </tfoot>
-                          </table>
-                        )}
-                      </div>
-                    );
-                  }
-
-                  if (cwsTab === "group") {
-                    const groupMap = new Map<
-                      string,
-                      { units: number; value: number }
-                    >();
-                    for (const o of filteredCwsOrders) {
-                      // Find customer with matching pharmacy name
-                      const cust = allCustomers.find(
-                        (c) =>
-                          c.name.toLowerCase() ===
-                            o.pharmacyName.toLowerCase() ||
-                          c.area.toLowerCase() === o.pharmacyArea.toLowerCase(),
-                      );
-                      const group = cust?.groupName || "Ungrouped";
-                      if (!groupMap.has(group))
-                        groupMap.set(group, { units: 0, value: 0 });
-                      const entry = groupMap.get(group)!;
-                      for (const item of o.items) {
-                        entry.units += item.qty;
-                        const discPct = item.discountPercent / 10;
-                        entry.value +=
-                          item.unitPrice * item.qty * (1 - discPct / 100);
-                      }
-                    }
-                    const rows = Array.from(groupMap.entries()).sort(
-                      ([, a], [, b]) => b.value - a.value,
-                    );
-                    return (
-                      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                        <div className="px-5 py-3 border-b border-gray-200 bg-gray-50">
-                          <h3 className="font-bold text-gray-900">
-                            Group Wise Sales | گروپ وائز سیلز
-                          </h3>
-                        </div>
-                        {rows.length === 0 ? (
-                          <div
-                            className="text-center py-12 text-gray-400"
-                            data-ocid="cws.group_empty_state"
-                          >
-                            <Layers
-                              size={32}
-                              className="mx-auto mb-2 opacity-40"
-                            />
-                            <p>No data in selected date range</p>
-                          </div>
-                        ) : (
-                          <table className="w-full">
-                            <thead>
-                              <tr className="bg-gray-50 border-b border-gray-100">
-                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  #
-                                </th>
-                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Group | گروپ
-                                </th>
-                                <th className="text-center px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Units | یونٹس
-                                </th>
-                                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Value (Rs) | قدر
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                              {rows.map(([group, data], idx) => (
-                                <tr
-                                  key={group}
-                                  data-ocid={`cws.group_item.${idx + 1}`}
-                                  className={
-                                    idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"
-                                  }
-                                >
-                                  <td className="px-4 py-2.5 text-sm text-gray-500">
-                                    {idx + 1}
-                                  </td>
-                                  <td className="px-4 py-2.5 font-semibold text-sm text-gray-900">
-                                    {group}
-                                  </td>
-                                  <td className="px-4 py-2.5 text-sm text-center font-bold text-gray-700">
-                                    {data.units}
-                                  </td>
-                                  <td className="px-4 py-2.5 text-sm text-right font-bold text-blue-700">
-                                    {formatCurrency(data.value)}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                            <tfoot>
-                              <tr className="border-t-2 border-blue-200 bg-blue-50">
-                                <td
-                                  colSpan={2}
-                                  className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right"
-                                >
-                                  Total
-                                </td>
-                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-center">
-                                  {rows.reduce((s, [, d]) => s + d.units, 0)}
-                                </td>
-                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right">
-                                  {formatCurrency(
-                                    rows.reduce((s, [, d]) => s + d.value, 0),
-                                  )}
-                                </td>
-                              </tr>
-                            </tfoot>
-                          </table>
-                        )}
-                      </div>
-                    );
-                  }
-
-                  if (cwsTab === "area") {
-                    const areaMap = new Map<
-                      string,
-                      { units: number; value: number }
-                    >();
-                    for (const o of filteredCwsOrders) {
-                      const area = o.pharmacyArea || "Unknown";
-                      if (!areaMap.has(area))
-                        areaMap.set(area, { units: 0, value: 0 });
-                      const entry = areaMap.get(area)!;
-                      for (const item of o.items) {
-                        entry.units += item.qty;
-                        const discPct = item.discountPercent / 10;
-                        entry.value +=
-                          item.unitPrice * item.qty * (1 - discPct / 100);
-                      }
-                    }
-                    const rows = Array.from(areaMap.entries()).sort(
-                      ([, a], [, b]) => b.value - a.value,
-                    );
-                    return (
-                      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                        <div className="px-5 py-3 border-b border-gray-200 bg-gray-50">
-                          <h3 className="font-bold text-gray-900">
-                            Area Wise Sales | علاقہ وائز سیلز
-                          </h3>
-                        </div>
-                        {rows.length === 0 ? (
-                          <div
-                            className="text-center py-12 text-gray-400"
-                            data-ocid="cws.area_empty_state"
-                          >
-                            <MapPin
-                              size={32}
-                              className="mx-auto mb-2 opacity-40"
-                            />
-                            <p>No data in selected date range</p>
-                          </div>
-                        ) : (
-                          <table className="w-full">
-                            <thead>
-                              <tr className="bg-gray-50 border-b border-gray-100">
-                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  #
-                                </th>
-                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Area | علاقہ
-                                </th>
-                                <th className="text-center px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Units | یونٹس
-                                </th>
-                                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Value (Rs) | قدر
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                              {rows.map(([area, data], idx) => (
-                                <tr
-                                  key={area}
-                                  data-ocid={`cws.area_item.${idx + 1}`}
-                                  className={
-                                    idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"
-                                  }
-                                >
-                                  <td className="px-4 py-2.5 text-sm text-gray-500">
-                                    {idx + 1}
-                                  </td>
-                                  <td className="px-4 py-2.5 font-semibold text-sm text-gray-900">
-                                    {area}
-                                  </td>
-                                  <td className="px-4 py-2.5 text-sm text-center font-bold text-gray-700">
-                                    {data.units}
-                                  </td>
-                                  <td className="px-4 py-2.5 text-sm text-right font-bold text-blue-700">
-                                    {formatCurrency(data.value)}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                            <tfoot>
-                              <tr className="border-t-2 border-blue-200 bg-blue-50">
-                                <td
-                                  colSpan={2}
-                                  className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right"
-                                >
-                                  Total
-                                </td>
-                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-center">
-                                  {rows.reduce((s, [, d]) => s + d.units, 0)}
-                                </td>
-                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right">
-                                  {formatCurrency(
-                                    rows.reduce((s, [, d]) => s + d.value, 0),
-                                  )}
-                                </td>
-                              </tr>
-                            </tfoot>
-                          </table>
-                        )}
-                      </div>
-                    );
-                  }
-
-                  if (cwsTab === "product") {
-                    const prodMap = new Map<
-                      string,
-                      {
-                        name: string;
-                        company: string;
-                        units: number;
-                        value: number;
-                      }
-                    >();
-                    for (const o of filteredCwsOrders) {
-                      for (const item of o.items) {
-                        const med = allMedicines.find(
-                          (m) => String(m.backendId) === item.medicineId,
-                        );
-                        const key = item.medicineName;
-                        if (!prodMap.has(key))
-                          prodMap.set(key, {
-                            name: item.medicineName,
-                            company: med?.company || "Unknown",
-                            units: 0,
-                            value: 0,
+                          rows.push({
+                            groupKey,
+                            groupHeader,
+                            dealerCode,
+                            productCode: med?.productCode || "-",
+                            productName: item.medicineName,
+                            packing: med?.packSize || "1",
+                            itemRate,
+                            grossSale,
+                            salesReturn,
+                            netSaleQty,
+                            bonus,
+                            amount,
                           });
-                        const entry = prodMap.get(key)!;
-                        entry.units += item.qty;
-                        const discPct = item.discountPercent / 10;
-                        entry.value +=
-                          item.unitPrice * item.qty * (1 - discPct / 100);
+                        }
                       }
-                    }
-                    const rows = Array.from(prodMap.values()).sort(
-                      (a, b) => b.value - a.value,
-                    );
-                    return (
-                      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                        <div className="px-5 py-3 border-b border-gray-200 bg-gray-50">
-                          <h3 className="font-bold text-gray-900">
-                            Product Wise Sales | پروڈکٹ وائز سیلز
-                          </h3>
-                        </div>
-                        {rows.length === 0 ? (
+
+                      // Group rows
+                      const grouped = new Map<
+                        string,
+                        {
+                          header: string;
+                          dealerCode: string;
+                          rows: ReportRow[];
+                        }
+                      >();
+                      for (const row of rows) {
+                        if (!grouped.has(row.groupKey)) {
+                          grouped.set(row.groupKey, {
+                            header: row.groupHeader,
+                            dealerCode: row.dealerCode || "",
+                            rows: [],
+                          });
+                        }
+                        grouped.get(row.groupKey)!.rows.push(row);
+                      }
+
+                      const grandTotal = rows.reduce((s, r) => s + r.amount, 0);
+                      const reportTitleMap = {
+                        customer: "Customer Wise Dealer Net Purchase Detail",
+                        company: "Company Wise Net Purchase Detail",
+                        product: "Product Wise Net Purchase Detail",
+                        month: "Month Wise Net Purchase Detail",
+                        group: "Group Wise Dealer Net Purchase Detail",
+                      };
+                      const reportTitle = reportTitleMap[cwsActiveReportTab];
+
+                      const fmtAmt = (n: number) =>
+                        n.toLocaleString("en-PK", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        });
+
+                      function handlePrintCWSReport() {
+                        const today = new Date().toLocaleDateString("en-PK", {
+                          day: "2-digit",
+                          month: "2-digit",
+                          year: "numeric",
+                        });
+                        let html = `
+                          <html><head><style>
+                            body { font-family: Arial, sans-serif; font-size: 10px; margin: 20px; }
+                            h2 { text-align: center; font-size: 14px; margin: 0; }
+                            h3 { text-align: center; font-size: 11px; margin: 4px 0; }
+                            .subheader { text-align: center; font-size: 9px; margin-bottom: 8px; }
+                            table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+                            th { background: #eee; font-weight: bold; border: 1px solid #ccc; padding: 4px 6px; text-align: center; font-size: 9px; }
+                            td { border: 1px solid #ddd; padding: 3px 6px; font-size: 9px; }
+                            .group-header td { background: #d0e4f7; font-weight: bold; font-size: 10px; }
+                            .total-row td { background: #f0f0f0; font-weight: bold; }
+                            .grand-total td { background: #cce0ff; font-weight: bold; font-size: 11px; }
+                            @media print { body { margin: 10px; } }
+                          </style></head><body>
+                          <h2>MIAN MEDICINE DISTRIBUTOR</h2>
+                          <h3>${reportTitle}</h3>
+                          <div class="subheader">From: ${cwsDateFrom} &nbsp;&nbsp; To: ${cwsDateTo} &nbsp;&nbsp; Print Date: ${today}</div>
+                          <table>
+                            <thead><tr>
+                              <th>Product Code</th><th>Name of Product</th><th>Packing</th><th>Item Rate</th>
+                              <th>Gross Sale</th><th>Sales Retru</th><th>Net Sale Qty</th><th>Bonus</th><th>Amount</th>
+                            </tr></thead>
+                            <tbody>`;
+
+                        for (const [, grpData] of grouped) {
+                          html += `<tr class="group-header"><td colspan="9">${grpData.dealerCode ? `Dealer Code # ${grpData.dealerCode} &nbsp; ` : ""}${grpData.header}</td></tr>`;
+                          let grpTotal = 0;
+                          for (const r of grpData.rows) {
+                            grpTotal += r.amount;
+                            html += `<tr>
+                              <td>${r.productCode}</td>
+                              <td>${r.productName}</td>
+                              <td style="text-align:center">${r.packing}</td>
+                              <td style="text-align:right">${r.itemRate.toFixed(2)}</td>
+                              <td style="text-align:center">${r.grossSale}</td>
+                              <td style="text-align:center">${r.salesReturn}</td>
+                              <td style="text-align:center">${r.netSaleQty}</td>
+                              <td style="text-align:center">${r.bonus}</td>
+                              <td style="text-align:right">${fmtAmt(r.amount)}</td>
+                            </tr>`;
+                          }
+                          html += `<tr class="total-row"><td colspan="8" style="text-align:right">Total of ${grpData.header}:</td><td style="text-align:right">${fmtAmt(grpTotal)}</td></tr>`;
+                        }
+
+                        html += `<tr class="grand-total"><td colspan="8" style="text-align:right">Grand Total:</td><td style="text-align:right">${fmtAmt(grandTotal)}</td></tr>`;
+                        html += "</tbody></table></body></html>";
+
+                        const w = window.open("", "_blank");
+                        if (w) {
+                          w.document.write(html);
+                          w.document.close();
+                          w.onload = () => w.print();
+                        }
+                      }
+
+                      if (rows.length === 0) {
+                        return (
                           <div
-                            className="text-center py-12 text-gray-400"
-                            data-ocid="cws.product_empty_state"
+                            className="text-center py-16 text-gray-400"
+                            data-ocid="cws.report_empty_state"
                           >
-                            <Package
-                              size={32}
-                              className="mx-auto mb-2 opacity-40"
-                            />
-                            <p>No data in selected date range</p>
+                            <svg
+                              aria-hidden="true"
+                              xmlns="http://www.w3.org/2000/svg"
+                              width="40"
+                              height="40"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                              className="mx-auto mb-3 opacity-30"
+                            >
+                              <path d="M9 17H7A5 5 0 0 1 7 7h2" />
+                              <path d="M15 7h2a5 5 0 0 1 0 10h-2" />
+                              <line x1="8" y1="12" x2="16" y2="12" />
+                            </svg>
+                            <p className="font-medium text-gray-500">
+                              No delivered orders found in selected date range
+                            </p>
+                            <p className="text-xs mt-1">
+                              Try adjusting the date range or customer filter
+                            </p>
                           </div>
-                        ) : (
-                          <table className="w-full">
-                            <thead>
-                              <tr className="bg-gray-50 border-b border-gray-100">
-                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  #
-                                </th>
-                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Product | پروڈکٹ
-                                </th>
-                                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Company | کمپنی
-                                </th>
-                                <th className="text-center px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Units | یونٹس
-                                </th>
-                                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">
-                                  Value (Rs) | قدر
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                              {rows.map((row, idx) => (
-                                <tr
-                                  key={row.name}
-                                  data-ocid={`cws.product_item.${idx + 1}`}
-                                  className={
-                                    idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"
-                                  }
-                                >
-                                  <td className="px-4 py-2.5 text-sm text-gray-500">
-                                    {idx + 1}
+                        );
+                      }
+
+                      return (
+                        <div className="space-y-4">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <h3 className="font-bold text-gray-900">
+                                {reportTitle}
+                              </h3>
+                              <p className="text-xs text-gray-500">
+                                {cwsDateFrom} to {cwsDateTo} · {rows.length}{" "}
+                                line items · {grouped.size} groups
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              data-ocid="cws.download_pdf_button"
+                              onClick={handlePrintCWSReport}
+                              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+                            >
+                              <svg
+                                aria-hidden="true"
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                              >
+                                <polyline points="6 9 6 2 18 2 18 9" />
+                                <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                                <rect x="6" y="14" width="12" height="8" />
+                              </svg>
+                              Download PDF
+                            </button>
+                          </div>
+
+                          <div className="overflow-x-auto rounded-lg border border-gray-200">
+                            <table className="w-full text-sm min-w-[900px]">
+                              <thead>
+                                <tr className="bg-gray-100 border-b border-gray-200">
+                                  <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-600 uppercase">
+                                    Product Code
+                                  </th>
+                                  <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-600 uppercase">
+                                    Name of Product
+                                  </th>
+                                  <th className="text-center px-3 py-2.5 text-xs font-semibold text-gray-600 uppercase">
+                                    Packing
+                                  </th>
+                                  <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-600 uppercase">
+                                    Item Rate
+                                  </th>
+                                  <th className="text-center px-3 py-2.5 text-xs font-semibold text-gray-600 uppercase">
+                                    Gross Sale
+                                  </th>
+                                  <th className="text-center px-3 py-2.5 text-xs font-semibold text-gray-600 uppercase">
+                                    Sales Retru
+                                  </th>
+                                  <th className="text-center px-3 py-2.5 text-xs font-semibold text-gray-600 uppercase">
+                                    Net Sale Qty
+                                  </th>
+                                  <th className="text-center px-3 py-2.5 text-xs font-semibold text-gray-600 uppercase">
+                                    Bonus
+                                  </th>
+                                  <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-600 uppercase">
+                                    Amount
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {Array.from(grouped.entries()).map(
+                                  ([gKey, grpData], gIdx) => {
+                                    const grpTotal = grpData.rows.reduce(
+                                      (s, r) => s + r.amount,
+                                      0,
+                                    );
+                                    return (
+                                      <React.Fragment key={gKey}>
+                                        <tr
+                                          className="bg-blue-50 border-y border-blue-200"
+                                          data-ocid={`cws.group_header.${gIdx + 1}`}
+                                        >
+                                          <td
+                                            colSpan={9}
+                                            className="px-3 py-2 font-bold text-blue-900 text-xs"
+                                          >
+                                            {grpData.dealerCode && (
+                                              <span className="mr-3 text-blue-600">
+                                                Dealer Code #{" "}
+                                                {grpData.dealerCode}
+                                              </span>
+                                            )}
+                                            {grpData.header}
+                                          </td>
+                                        </tr>
+                                        {grpData.rows.map((r, rIdx) => (
+                                          <tr
+                                            key={`${r.productName}-${r.productCode}-${rIdx}`}
+                                            data-ocid={`cws.row.${gIdx + 1}.${rIdx + 1}`}
+                                            className={
+                                              rIdx % 2 === 0
+                                                ? "bg-white"
+                                                : "bg-gray-50/50"
+                                            }
+                                          >
+                                            <td className="px-3 py-2 text-xs font-mono text-gray-500">
+                                              {r.productCode}
+                                            </td>
+                                            <td className="px-3 py-2 font-medium text-gray-900">
+                                              {r.productName}
+                                            </td>
+                                            <td className="px-3 py-2 text-center text-gray-600">
+                                              {r.packing}
+                                            </td>
+                                            <td className="px-3 py-2 text-right text-gray-700">
+                                              {r.itemRate.toFixed(2)}
+                                            </td>
+                                            <td className="px-3 py-2 text-center text-gray-700">
+                                              {r.grossSale}
+                                            </td>
+                                            <td className="px-3 py-2 text-center text-red-600">
+                                              {r.salesReturn}
+                                            </td>
+                                            <td className="px-3 py-2 text-center font-semibold text-gray-800">
+                                              {r.netSaleQty}
+                                            </td>
+                                            <td className="px-3 py-2 text-center text-emerald-600">
+                                              {r.bonus}
+                                            </td>
+                                            <td className="px-3 py-2 text-right font-semibold text-blue-700">
+                                              {fmtAmt(r.amount)}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                        <tr className="bg-gray-100 border-y border-gray-300">
+                                          <td
+                                            colSpan={8}
+                                            className="px-3 py-2 text-xs font-bold text-gray-700 text-right"
+                                          >
+                                            Total of {grpData.header}:
+                                          </td>
+                                          <td className="px-3 py-2 text-right font-bold text-gray-900">
+                                            {fmtAmt(grpTotal)}
+                                          </td>
+                                        </tr>
+                                      </React.Fragment>
+                                    );
+                                  },
+                                )}
+                              </tbody>
+                              <tfoot>
+                                <tr className="bg-blue-100 border-t-2 border-blue-300">
+                                  <td
+                                    colSpan={8}
+                                    className="px-3 py-3 text-sm font-bold text-blue-900 text-right"
+                                  >
+                                    Grand Total:
                                   </td>
-                                  <td className="px-4 py-2.5 font-semibold text-sm text-gray-900">
-                                    {row.name}
-                                  </td>
-                                  <td className="px-4 py-2.5 text-sm text-gray-600">
-                                    {row.company}
-                                  </td>
-                                  <td className="px-4 py-2.5 text-sm text-center font-bold text-gray-700">
-                                    {row.units}
-                                  </td>
-                                  <td className="px-4 py-2.5 text-sm text-right font-bold text-blue-700">
-                                    {formatCurrency(row.value)}
+                                  <td className="px-3 py-3 text-right font-bold text-blue-900 text-base">
+                                    {fmtAmt(grandTotal)}
                                   </td>
                                 </tr>
-                              ))}
-                            </tbody>
-                            <tfoot>
-                              <tr className="border-t-2 border-blue-200 bg-blue-50">
-                                <td
-                                  colSpan={3}
-                                  className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right"
-                                >
-                                  Total
-                                </td>
-                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-center">
-                                  {rows.reduce((s, r) => s + r.units, 0)}
-                                </td>
-                                <td className="px-4 py-2.5 text-sm font-bold text-blue-800 text-right">
-                                  {formatCurrency(
-                                    rows.reduce((s, r) => s + r.value, 0),
-                                  )}
-                                </td>
-                              </tr>
-                            </tfoot>
-                          </table>
-                        )}
-                      </div>
-                    );
-                  }
+                              </tfoot>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
 
-                  return null;
-                })()}
+                {/* Group Management */}
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                  <div className="px-5 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+                    <div>
+                      <h3 className="font-bold text-gray-900">
+                        Medicine Groups | دوائی گروپس
+                      </h3>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        Create groups to organize medicines (e.g. Blue, Indigo,
+                        Green)
+                      </p>
+                    </div>
+                  </div>
+                  <div className="p-5 space-y-4">
+                    {/* Add Group Form */}
+                    <GroupManagementPanel
+                      allMedicineGroups={allMedicineGroups}
+                      actor={actor}
+                      distributorId={(() => {
+                        const s = getSession();
+                        return s?.distributorId
+                          ? BigInt(s.distributorId)
+                          : BigInt(0);
+                      })()}
+                      onGroupsChanged={(groups) => setAllMedicineGroups(groups)}
+                    />
+                  </div>
+                </div>
               </div>
             )}
-
             {/* Add Customer */}
             {activeView === "add-customer" && (
               <div className="space-y-6">
@@ -12505,7 +13369,7 @@ function OfficeDashboard() {
                         htmlFor="cust-type"
                         className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
                       >
-                        Customer Type | قسم *
+                        Type | قسم *
                       </label>
                       <select
                         id="cust-type"
@@ -12572,7 +13436,7 @@ function OfficeDashboard() {
                         htmlFor="cust-group"
                         className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
                       >
-                        Group Name | گروپ نام
+                        Group | گروپ
                       </label>
                       <input
                         id="cust-group"
@@ -12603,6 +13467,24 @@ function OfficeDashboard() {
                         className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
                       />
                     </div>
+                    <div>
+                      <label
+                        htmlFor="cust-dealer-code"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Dealer Code | ڈیلر کوڈ
+                      </label>
+                      <input
+                        id="cust-dealer-code"
+                        type="text"
+                        data-ocid="add_customer.dealer_code_input"
+                        value={custDealerCode}
+                        onChange={(e) => setCustDealerCode(e.target.value)}
+                        placeholder="e.g. 002-0043"
+                        disabled={isAddingCustomer}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
+                      />
+                    </div>
                     <div className="md:col-span-2">
                       <label
                         htmlFor="cust-address"
@@ -12626,7 +13508,7 @@ function OfficeDashboard() {
                         htmlFor="cust-ntn"
                         className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
                       >
-                        NTN# | این ٹی این
+                        NTN#
                       </label>
                       <input
                         id="cust-ntn"
@@ -12644,7 +13526,7 @@ function OfficeDashboard() {
                         htmlFor="cust-cnic"
                         className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
                       >
-                        CNIC# | شناختی کارڈ
+                        CNIC#
                       </label>
                       <input
                         id="cust-cnic"
@@ -12653,6 +13535,24 @@ function OfficeDashboard() {
                         value={custCNIC}
                         onChange={(e) => setCustCNIC(e.target.value)}
                         placeholder="e.g. 12345-1234567-1"
+                        disabled={isAddingCustomer}
+                        className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="cust-pmdc"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        PMDC# (Doctors)
+                      </label>
+                      <input
+                        id="cust-pmdc"
+                        type="text"
+                        data-ocid="add_customer.pmdc_input"
+                        value={custPmdc}
+                        onChange={(e) => setCustPmdc(e.target.value)}
+                        placeholder="PMDC registration no."
                         disabled={isAddingCustomer}
                         className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
                       />
@@ -12680,7 +13580,7 @@ function OfficeDashboard() {
 
                 {/* Customers List */}
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                  <div className="px-5 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+                  <div className="px-5 py-3 border-b border-gray-200 bg-gray-50">
                     <h3 className="font-bold text-gray-900">
                       Customers List | کسٹمر لسٹ ({allCustomers.length})
                     </h3>
@@ -12691,203 +13591,93 @@ function OfficeDashboard() {
                       data-ocid="add_customer.empty_state"
                     >
                       <User size={36} className="mx-auto mb-3 opacity-30" />
-                      <p className="font-medium">
-                        No customers yet | ابھی کوئی کسٹمر نہیں
-                      </p>
-                      <p className="text-xs mt-1">
-                        Use the form above to add doctors, stores, and
-                        pharmacies
-                      </p>
+                      <p className="font-medium">No customers yet</p>
                     </div>
                   ) : (
                     <div className="divide-y divide-gray-100">
-                      {allCustomers.map((cust, idx) => {
-                        const typeConfig: Record<
-                          string,
-                          {
-                            label: string;
-                            urdu: string;
-                            color: string;
-                            icon: ReturnType<typeof Stethoscope>;
-                          }
-                        > = {
-                          [CustomerType.doctor]: {
-                            label: "Doctor",
-                            urdu: "ڈاکٹر",
-                            color: "bg-blue-100 text-blue-700",
-                            icon: <Stethoscope size={12} />,
-                          },
-                          [CustomerType.hospital]: {
-                            label: "Hospital",
-                            urdu: "ہسپتال",
-                            color: "bg-cyan-100 text-cyan-700",
-                            icon: <Building2 size={12} />,
-                          },
-                          [CustomerType.medicalStore]: {
-                            label: "Medical Store",
-                            urdu: "میڈیکل اسٹور",
-                            color: "bg-green-100 text-green-700",
-                            icon: <Store size={12} />,
-                          },
-                          [CustomerType.pharmacy]: {
-                            label: "Pharmacy",
-                            urdu: "فارمیسی",
-                            color: "bg-purple-100 text-purple-700",
-                            icon: <Building2 size={12} />,
-                          },
-                        };
-                        const cfg =
-                          typeConfig[cust.customerType] ||
-                          typeConfig[CustomerType.pharmacy];
-                        return (
-                          <div
-                            key={cust.id}
-                            data-ocid={`add_customer.item.${idx + 1}`}
-                            className="flex items-start justify-between gap-3 px-5 py-4 hover:bg-gray-50/50"
-                          >
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-semibold text-sm text-gray-900">
-                                  {cust.name}
-                                </span>
-                                <span
-                                  className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold ${cfg.color}`}
-                                >
-                                  {cfg.icon}
-                                  {cfg.label}
-                                </span>
-                                {cust.code && (
-                                  <span className="text-xs font-mono bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
-                                    {cust.code}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-3 mt-1 flex-wrap">
-                                {cust.area && (
-                                  <span className="text-xs text-gray-500 flex items-center gap-1">
-                                    <MapPin size={10} />
-                                    {cust.area}
-                                  </span>
-                                )}
-                                {cust.contactNo && (
-                                  <span className="text-xs text-gray-500 flex items-center gap-1">
-                                    <Phone size={10} />
-                                    {cust.contactNo}
-                                  </span>
-                                )}
-                                {cust.groupName && (
-                                  <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full">
-                                    {cust.groupName}
-                                  </span>
-                                )}
-                              </div>
-                              {cust.address && (
-                                <p className="text-xs text-gray-400 mt-0.5">
-                                  {cust.address}
-                                </p>
-                              )}
-                              {(() => {
-                                const ntn = (() => {
-                                  try {
-                                    return localStorage.getItem(
-                                      `medorder_customer_ntn_${cust.backendId}`,
-                                    );
-                                  } catch {
-                                    return null;
-                                  }
-                                })();
-                                const cnic = (() => {
-                                  try {
-                                    return localStorage.getItem(
-                                      `medorder_customer_cnic_${cust.backendId}`,
-                                    );
-                                  } catch {
-                                    return null;
-                                  }
-                                })();
-                                if (!ntn && !cnic) return null;
-                                return (
-                                  <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-                                    {ntn && (
-                                      <span className="text-xs text-gray-500">
-                                        NTN:{" "}
-                                        <span className="font-mono">{ntn}</span>
-                                      </span>
-                                    )}
-                                    {cnic && (
-                                      <span className="text-xs text-gray-500">
-                                        CNIC:{" "}
-                                        <span className="font-mono">
-                                          {cnic}
-                                        </span>
-                                      </span>
-                                    )}
-                                  </div>
-                                );
-                              })()}
+                      {allCustomers.map((cust, idx) => (
+                        <div
+                          key={String(cust.id)}
+                          data-ocid={`add_customer.item.${idx + 1}`}
+                          className="px-5 py-3 flex items-center justify-between gap-3"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold text-sm text-gray-900">
+                              {cust.name}
                             </div>
-                            <div className="shrink-0">
-                              {confirmDeleteCustomerId === cust.backendId ? (
-                                <div className="flex items-center gap-1">
-                                  <button
-                                    type="button"
-                                    data-ocid={`add_customer.confirm_button.${idx + 1}`}
-                                    onClick={() =>
-                                      handleDeleteCustomer(cust.backendId)
-                                    }
-                                    disabled={
-                                      deletingCustomerId === cust.backendId
-                                    }
-                                    className="flex items-center gap-1 bg-red-500 hover:bg-red-600 text-white text-xs px-2 py-1 rounded-lg font-semibold transition-colors disabled:opacity-50"
-                                  >
-                                    {deletingCustomerId === cust.backendId ? (
-                                      <Loader2
-                                        size={10}
-                                        className="animate-spin"
-                                      />
-                                    ) : null}
-                                    Yes
-                                  </button>
-                                  <button
-                                    type="button"
-                                    data-ocid={`add_customer.cancel_button.${idx + 1}`}
-                                    onClick={() =>
-                                      setConfirmDeleteCustomerId(null)
-                                    }
-                                    className="text-xs px-2 py-1 rounded-lg border border-gray-300 font-semibold hover:bg-gray-50 transition-colors"
-                                    disabled={
-                                      deletingCustomerId === cust.backendId
-                                    }
-                                  >
-                                    No
-                                  </button>
-                                </div>
-                              ) : (
+                            <div className="text-xs text-gray-400 mt-0.5">
+                              {cust.area && <span>{cust.area}</span>}
+                              {cust.code && (
+                                <span className="ml-2">· {cust.code}</span>
+                              )}
+                              {cust.dealerCode && (
+                                <span className="ml-2 text-blue-500">
+                                  · DC: {cust.dealerCode}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {confirmDeleteCustomerId === cust.backendId ? (
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs text-red-600 font-medium">
+                                  Sure?
+                                </span>
                                 <button
                                   type="button"
-                                  data-ocid={`add_customer.delete_button.${idx + 1}`}
+                                  data-ocid={`add_customer.confirm_button.${idx + 1}`}
                                   onClick={() =>
-                                    setConfirmDeleteCustomerId(cust.backendId)
+                                    handleDeleteCustomer(cust.backendId)
                                   }
-                                  className="flex items-center gap-1 text-red-500 hover:text-red-700 hover:bg-red-50 text-xs px-2 py-1 rounded-lg transition-colors"
+                                  disabled={
+                                    deletingCustomerId === cust.backendId
+                                  }
+                                  className="flex items-center gap-1 bg-red-500 hover:bg-red-600 text-white text-xs px-2 py-1 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                                >
+                                  {deletingCustomerId === cust.backendId ? (
+                                    <Loader2
+                                      size={10}
+                                      className="animate-spin"
+                                    />
+                                  ) : null}
+                                  Yes
+                                </button>
+                                <button
+                                  type="button"
+                                  data-ocid={`add_customer.cancel_button.${idx + 1}`}
+                                  onClick={() =>
+                                    setConfirmDeleteCustomerId(null)
+                                  }
+                                  className="text-xs px-2 py-1 rounded-lg border border-gray-300 font-semibold hover:bg-gray-50 transition-colors"
                                   disabled={
                                     deletingCustomerId === cust.backendId
                                   }
                                 >
-                                  <Trash2 size={12} />
-                                  Delete
+                                  No
                                 </button>
-                              )}
-                            </div>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                data-ocid={`add_customer.delete_button.${idx + 1}`}
+                                onClick={() =>
+                                  setConfirmDeleteCustomerId(cust.backendId)
+                                }
+                                className="flex items-center gap-1 text-red-500 hover:text-red-700 hover:bg-red-50 text-xs px-2 py-1 rounded-lg transition-colors"
+                                disabled={deletingCustomerId === cust.backendId}
+                              >
+                                <Trash2 size={12} />
+                                Delete
+                              </button>
+                            )}
                           </div>
-                        );
-                      })}
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
               </div>
             )}
-
             {/* Manage — same as staff ManageScreen */}
             {activeView === "manage" && (
               <div className="space-y-4">
@@ -12916,6 +13706,7 @@ function OfficeDashboard() {
                   })}
                   medicines={allMedicines}
                   actor={actor}
+                  allMedicineGroups={allMedicineGroups}
                   showPharmacies={true}
                   onDataReloaded={(newPharms, newMeds) => {
                     setAllPharmacies(
@@ -14564,6 +15355,8 @@ function MobileApp() {
                 "",
                 "",
                 categoryToTypeLabel(s.category),
+                "",
+                BigInt(0),
               ),
             ),
           );

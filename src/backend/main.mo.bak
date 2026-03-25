@@ -726,7 +726,9 @@ actor {
     let currentTime = Time.now();
     orders.values().toArray().filter(
       func(order) {
-        order.timestamp < (currentTime - fortyEightHoursInNanoseconds)
+        order.status == #delivered and
+        order.timestamp < (currentTime - fortyEightHoursInNanoseconds) and
+        order.timestamp >= (currentTime - oneYearInNanoseconds)
       }
     ).sort(OrderRecord.compareByIdDescending);
   };
@@ -738,7 +740,7 @@ actor {
         case (null) false;
         case (?d) d == distId;
       };
-      inDist
+      inDist and order.status == #delivered
     });
     filtered.sort(OrderRecord.compareByIdDescending);
   };
@@ -830,13 +832,6 @@ actor {
     let result = paymentRecords.containsKey(id);
     paymentRecords.remove(id);
     result;
-  };
-
-  public shared ({ caller }) func clearAllPaymentRecords() : async Nat {
-    let count = paymentRecords.size();
-    let keys = paymentRecords.keys().toArray();
-    for (k in keys.vals()) { paymentRecords.remove(k) };
-    count;
   };
 
   // ==================== ESTIMATED ORDERS ====================
