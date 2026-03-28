@@ -9605,17 +9605,37 @@ function OfficeDashboard() {
   const [_cwsTab, _setCwsTab] = useState<
     "allover" | "company" | "group" | "area" | "product"
   >("allover");
-  const [cwsSelectedCustomer, setCwsSelectedCustomer] =
+  const [_cwsSelectedCustomer, _setCwsSelectedCustomer] =
     useState<Customer | null>(null);
   // Also track a selected pharmacy (from allPharmacies) for CWS filter
-  const [cwsSelectedPharmacy, setCwsSelectedPharmacy] = useState<{
+  const [_cwsSelectedPharmacy, _setCwsSelectedPharmacy] = useState<{
     id: bigint;
     name: string;
     area: string;
     code: string;
   } | null>(null);
-  const [cwsCustomerSearch, setCwsCustomerSearch] = useState("");
-  const [cwsCustomerDropdownOpen, setCwsCustomerDropdownOpen] = useState(false);
+  const [_cwsCustomerSearch, _setCwsCustomerSearch] = useState("");
+  const [_cwsCustomerDropdownOpen, _setCwsCustomerDropdownOpen] =
+    useState(false);
+  // Multi-select filter state for Customer Wise Sale
+  const [cwsSelectedCustomers, setCwsSelectedCustomers] = useState<Customer[]>(
+    [],
+  );
+  const [cwsCustomerSearch2, setCwsCustomerSearch2] = useState("");
+  const [cwsCustomerDropdown2, setCwsCustomerDropdown2] = useState(false);
+  const [cwsSelectedCompanies, setCwsSelectedCompanies] = useState<string[]>(
+    [],
+  );
+  const [cwsCompanySearch, setCwsCompanySearch] = useState("");
+  const [cwsCompanyDropdown, setCwsCompanyDropdown] = useState(false);
+  const [cwsSelectedMedicines, setCwsSelectedMedicines] = useState<string[]>(
+    [],
+  );
+  const [cwsMedicineSearch, setCwsMedicineSearch] = useState("");
+  const [cwsMedicineDropdown, setCwsMedicineDropdown] = useState(false);
+  const [cwsSelectedGroups, setCwsSelectedGroups] = useState<string[]>([]);
+  const [cwsGroupSearch, setCwsGroupSearch] = useState("");
+  const [cwsGroupDropdown, setCwsGroupDropdown] = useState(false);
   const [cwsDateFrom, setCwsDateFrom] = useState(
     new Date(new Date().getFullYear(), new Date().getMonth(), 1)
       .toISOString()
@@ -12876,8 +12896,9 @@ function OfficeDashboard() {
                 </div>
 
                 {/* Date Range + Filters */}
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+                  {/* Date Row */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label
                         htmlFor="cws-date-from"
@@ -12910,90 +12931,460 @@ function OfficeDashboard() {
                         className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
-                    <div>
-                      <label
-                        htmlFor="cws-customer-search"
-                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
-                      >
-                        Customer Search | کسٹمر تلاش
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="text"
-                          data-ocid="cws.customer_search_input"
-                          value={cwsCustomerSearch}
-                          onChange={(e) => {
-                            setCwsCustomerSearch(e.target.value);
-                            setCwsCustomerDropdownOpen(true);
-                          }}
-                          onFocus={() => setCwsCustomerDropdownOpen(true)}
-                          placeholder="All customers (optional filter)..."
-                          className="w-full h-10 text-sm border border-gray-300 rounded-lg pl-3 pr-8 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                        {(cwsSelectedCustomer || cwsSelectedPharmacy) && (
-                          <button
-                            type="button"
-                            data-ocid="cws.customer_clear_button"
-                            onClick={() => {
-                              setCwsSelectedCustomer(null);
-                              setCwsSelectedPharmacy(null);
-                              setCwsCustomerSearch("");
-                              setCwsCustomerDropdownOpen(false);
-                            }}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  </div>
+
+                  {/* Multi-select Filters Row */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {/* Customer multi-select */}
+                    {(() => {
+                      const filteredCusts = allCustomers.filter(
+                        (c) =>
+                          c.name
+                            .toLowerCase()
+                            .includes(cwsCustomerSearch2.toLowerCase()) &&
+                          !cwsSelectedCustomers.some(
+                            (s) => String(s.id) === String(c.id),
+                          ),
+                      );
+                      return (
+                        <div className="relative">
+                          <span className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide">
+                            Customer | کسٹمر
+                          </span>
+                          <div
+                            className="min-h-[40px] border border-gray-300 rounded-lg px-2 py-1 bg-white focus-within:ring-2 focus-within:ring-blue-500 cursor-text"
+                            onClick={() => setCwsCustomerDropdown2(true)}
+                            onKeyDown={() => setCwsCustomerDropdown2(true)}
                           >
-                            <svg
-                              aria-hidden="true"
-                              xmlns="http://www.w3.org/2000/svg"
-                              width="14"
-                              height="14"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                            >
-                              <line x1="18" y1="6" x2="6" y2="18" />
-                              <line x1="6" y1="6" x2="18" y2="18" />
-                            </svg>
-                          </button>
-                        )}
-                        {cwsCustomerDropdownOpen &&
-                          cwsCustomerSearch.trim().length > 0 && (
-                            <div className="absolute z-20 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                              {[
-                                ...allCustomers
-                                  .filter((c) =>
-                                    c.name
-                                      .toLowerCase()
-                                      .includes(
-                                        cwsCustomerSearch.toLowerCase(),
-                                      ),
-                                  )
-                                  .map((c) => (
-                                    <button
-                                      key={`cust-${c.id}`}
-                                      type="button"
-                                      className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50"
-                                      onClick={() => {
-                                        setCwsSelectedCustomer(c);
-                                        setCwsCustomerSearch(c.name);
-                                        setCwsCustomerDropdownOpen(false);
-                                      }}
-                                    >
-                                      <span className="font-medium">
-                                        {c.name}
-                                      </span>{" "}
+                            <div className="flex flex-wrap gap-1 mb-1">
+                              {cwsSelectedCustomers.map((c) => (
+                                <span
+                                  key={String(c.id)}
+                                  className="inline-flex items-center gap-1 bg-blue-100 text-blue-800 text-xs font-medium px-2 py-0.5 rounded-full"
+                                >
+                                  {c.name}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setCwsSelectedCustomers((prev) =>
+                                        prev.filter(
+                                          (x) => String(x.id) !== String(c.id),
+                                        ),
+                                      );
+                                    }}
+                                    className="hover:text-blue-600"
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                            <input
+                              data-ocid="cws.customer_search_input"
+                              type="text"
+                              value={cwsCustomerSearch2}
+                              onChange={(e) => {
+                                setCwsCustomerSearch2(e.target.value);
+                                setCwsCustomerDropdown2(true);
+                              }}
+                              onFocus={() => setCwsCustomerDropdown2(true)}
+                              onBlur={() =>
+                                setTimeout(
+                                  () => setCwsCustomerDropdown2(false),
+                                  200,
+                                )
+                              }
+                              placeholder={
+                                cwsSelectedCustomers.length === 0
+                                  ? "Search customers..."
+                                  : ""
+                              }
+                              className="text-sm outline-none border-none p-0 w-full bg-transparent"
+                            />
+                          </div>
+                          {cwsCustomerDropdown2 && (
+                            <div className="absolute z-30 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                              {filteredCusts.length === 0 ? (
+                                <div className="px-3 py-2 text-xs text-gray-400">
+                                  No customers found
+                                </div>
+                              ) : (
+                                filteredCusts.map((c) => (
+                                  <button
+                                    key={String(c.id)}
+                                    type="button"
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() => {
+                                      setCwsSelectedCustomers((prev) => [
+                                        ...prev,
+                                        c,
+                                      ]);
+                                      setCwsCustomerSearch2("");
+                                    }}
+                                    className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 flex items-center gap-2"
+                                  >
+                                    <span className="w-3 h-3 border border-gray-400 rounded-sm flex-shrink-0" />
+                                    <span className="font-medium">
+                                      {c.name}
+                                    </span>
+                                    {c.dealerCode && (
                                       <span className="text-xs text-gray-400">
-                                        {c.dealerCode && `· ${c.dealerCode}`}
+                                        · {c.dealerCode}
                                       </span>
-                                    </button>
-                                  )),
-                              ]}
+                                    )}
+                                  </button>
+                                ))
+                              )}
                             </div>
                           )}
-                      </div>
-                    </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Company multi-select */}
+                    {(() => {
+                      const allCompanies = [
+                        ...new Set(
+                          allMedicines.map((m) => m.company).filter(Boolean),
+                        ),
+                      ] as string[];
+                      const filteredComps = allCompanies.filter(
+                        (c) =>
+                          c
+                            .toLowerCase()
+                            .includes(cwsCompanySearch.toLowerCase()) &&
+                          !cwsSelectedCompanies.includes(c),
+                      );
+                      return (
+                        <div className="relative">
+                          <span className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide">
+                            Company | کمپنی
+                          </span>
+                          <div
+                            className="min-h-[40px] border border-gray-300 rounded-lg px-2 py-1 bg-white focus-within:ring-2 focus-within:ring-blue-500 cursor-text"
+                            onClick={() => setCwsCompanyDropdown(true)}
+                            onKeyDown={() => setCwsCompanyDropdown(true)}
+                          >
+                            <div className="flex flex-wrap gap-1 mb-1">
+                              {cwsSelectedCompanies.map((c) => (
+                                <span
+                                  key={c}
+                                  className="inline-flex items-center gap-1 bg-green-100 text-green-800 text-xs font-medium px-2 py-0.5 rounded-full"
+                                >
+                                  {c}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setCwsSelectedCompanies((prev) =>
+                                        prev.filter((x) => x !== c),
+                                      );
+                                    }}
+                                    className="hover:text-green-600"
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                            <input
+                              data-ocid="cws.company_search_input"
+                              type="text"
+                              value={cwsCompanySearch}
+                              onChange={(e) => {
+                                setCwsCompanySearch(e.target.value);
+                                setCwsCompanyDropdown(true);
+                              }}
+                              onFocus={() => setCwsCompanyDropdown(true)}
+                              onBlur={() =>
+                                setTimeout(
+                                  () => setCwsCompanyDropdown(false),
+                                  200,
+                                )
+                              }
+                              placeholder={
+                                cwsSelectedCompanies.length === 0
+                                  ? "Search companies..."
+                                  : ""
+                              }
+                              className="text-sm outline-none border-none p-0 w-full bg-transparent"
+                            />
+                          </div>
+                          {cwsCompanyDropdown && (
+                            <div className="absolute z-30 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                              {filteredComps.length === 0 ? (
+                                <div className="px-3 py-2 text-xs text-gray-400">
+                                  No companies found
+                                </div>
+                              ) : (
+                                filteredComps.map((c) => (
+                                  <button
+                                    key={c}
+                                    type="button"
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() => {
+                                      setCwsSelectedCompanies((prev) => [
+                                        ...prev,
+                                        c,
+                                      ]);
+                                      setCwsCompanySearch("");
+                                    }}
+                                    className="w-full text-left px-3 py-2 text-sm hover:bg-green-50 flex items-center gap-2"
+                                  >
+                                    <span className="w-3 h-3 border border-gray-400 rounded-sm flex-shrink-0" />
+                                    <span className="font-medium">{c}</span>
+                                  </button>
+                                ))
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Medicine multi-select */}
+                    {(() => {
+                      const filteredMeds = allMedicines.filter(
+                        (m) =>
+                          m.name
+                            .toLowerCase()
+                            .includes(cwsMedicineSearch.toLowerCase()) &&
+                          !cwsSelectedMedicines.includes(m.name),
+                      );
+                      return (
+                        <div className="relative">
+                          <span className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide">
+                            Medicine | دوائی
+                          </span>
+                          <div
+                            className="min-h-[40px] border border-gray-300 rounded-lg px-2 py-1 bg-white focus-within:ring-2 focus-within:ring-blue-500 cursor-text"
+                            onClick={() => setCwsMedicineDropdown(true)}
+                            onKeyDown={() => setCwsMedicineDropdown(true)}
+                          >
+                            <div className="flex flex-wrap gap-1 mb-1">
+                              {cwsSelectedMedicines.map((m) => (
+                                <span
+                                  key={m}
+                                  className="inline-flex items-center gap-1 bg-purple-100 text-purple-800 text-xs font-medium px-2 py-0.5 rounded-full"
+                                >
+                                  {m}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setCwsSelectedMedicines((prev) =>
+                                        prev.filter((x) => x !== m),
+                                      );
+                                    }}
+                                    className="hover:text-purple-600"
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                            <input
+                              data-ocid="cws.medicine_search_input"
+                              type="text"
+                              value={cwsMedicineSearch}
+                              onChange={(e) => {
+                                setCwsMedicineSearch(e.target.value);
+                                setCwsMedicineDropdown(true);
+                              }}
+                              onFocus={() => setCwsMedicineDropdown(true)}
+                              onBlur={() =>
+                                setTimeout(
+                                  () => setCwsMedicineDropdown(false),
+                                  200,
+                                )
+                              }
+                              placeholder={
+                                cwsSelectedMedicines.length === 0
+                                  ? "Search medicines..."
+                                  : ""
+                              }
+                              className="text-sm outline-none border-none p-0 w-full bg-transparent"
+                            />
+                          </div>
+                          {cwsMedicineDropdown && (
+                            <div className="absolute z-30 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                              {filteredMeds.length === 0 ? (
+                                <div className="px-3 py-2 text-xs text-gray-400">
+                                  No medicines found
+                                </div>
+                              ) : (
+                                filteredMeds.map((m) => (
+                                  <button
+                                    key={String(m.backendId)}
+                                    type="button"
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() => {
+                                      setCwsSelectedMedicines((prev) => [
+                                        ...prev,
+                                        m.name,
+                                      ]);
+                                      setCwsMedicineSearch("");
+                                    }}
+                                    className="w-full text-left px-3 py-2 text-sm hover:bg-purple-50 flex items-center gap-2"
+                                  >
+                                    <span className="w-3 h-3 border border-gray-400 rounded-sm flex-shrink-0" />
+                                    <span className="font-medium">
+                                      {m.name}
+                                    </span>
+                                    {m.company && (
+                                      <span className="text-xs text-gray-400">
+                                        · {m.company}
+                                      </span>
+                                    )}
+                                  </button>
+                                ))
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Group multi-select */}
+                    {(() => {
+                      const filteredGrps = allMedicineGroups.filter(
+                        (g) =>
+                          g.name
+                            .toLowerCase()
+                            .includes(cwsGroupSearch.toLowerCase()) &&
+                          !cwsSelectedGroups.includes(g.name),
+                      );
+                      return (
+                        <div className="relative">
+                          <span className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide">
+                            Group | گروپ
+                          </span>
+                          <div
+                            className="min-h-[40px] border border-gray-300 rounded-lg px-2 py-1 bg-white focus-within:ring-2 focus-within:ring-blue-500 cursor-text"
+                            onClick={() => setCwsGroupDropdown(true)}
+                            onKeyDown={() => setCwsGroupDropdown(true)}
+                          >
+                            <div className="flex flex-wrap gap-1 mb-1">
+                              {cwsSelectedGroups.map((g) => (
+                                <span
+                                  key={g}
+                                  className="inline-flex items-center gap-1 bg-orange-100 text-orange-800 text-xs font-medium px-2 py-0.5 rounded-full"
+                                >
+                                  {g}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setCwsSelectedGroups((prev) =>
+                                        prev.filter((x) => x !== g),
+                                      );
+                                    }}
+                                    className="hover:text-orange-600"
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                            <input
+                              data-ocid="cws.group_search_input"
+                              type="text"
+                              value={cwsGroupSearch}
+                              onChange={(e) => {
+                                setCwsGroupSearch(e.target.value);
+                                setCwsGroupDropdown(true);
+                              }}
+                              onFocus={() => setCwsGroupDropdown(true)}
+                              onBlur={() =>
+                                setTimeout(
+                                  () => setCwsGroupDropdown(false),
+                                  200,
+                                )
+                              }
+                              placeholder={
+                                cwsSelectedGroups.length === 0
+                                  ? "Search groups..."
+                                  : ""
+                              }
+                              className="text-sm outline-none border-none p-0 w-full bg-transparent"
+                            />
+                          </div>
+                          {cwsGroupDropdown && (
+                            <div className="absolute z-30 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                              {filteredGrps.length === 0 ? (
+                                <div className="px-3 py-2 text-xs text-gray-400">
+                                  No groups found
+                                </div>
+                              ) : (
+                                filteredGrps.map((g) => (
+                                  <button
+                                    key={String(g.id)}
+                                    type="button"
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() => {
+                                      setCwsSelectedGroups((prev) => [
+                                        ...prev,
+                                        g.name,
+                                      ]);
+                                      setCwsGroupSearch("");
+                                    }}
+                                    className="w-full text-left px-3 py-2 text-sm hover:bg-orange-50 flex items-center gap-2"
+                                  >
+                                    <span className="w-3 h-3 border border-gray-400 rounded-sm flex-shrink-0" />
+                                    <span className="font-medium">
+                                      {g.name}
+                                    </span>
+                                  </button>
+                                ))
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
+
+                  {/* Active Filters Summary + Clear All */}
+                  {(cwsSelectedCustomers.length > 0 ||
+                    cwsSelectedCompanies.length > 0 ||
+                    cwsSelectedMedicines.length > 0 ||
+                    cwsSelectedGroups.length > 0) && (
+                    <div className="flex items-center justify-between pt-1 border-t border-gray-100">
+                      <span className="text-xs text-gray-500">
+                        Filters active:{" "}
+                        {[
+                          cwsSelectedCustomers.length > 0 &&
+                            `${cwsSelectedCustomers.length} customer(s)`,
+                          cwsSelectedCompanies.length > 0 &&
+                            `${cwsSelectedCompanies.length} company/ies`,
+                          cwsSelectedMedicines.length > 0 &&
+                            `${cwsSelectedMedicines.length} medicine(s)`,
+                          cwsSelectedGroups.length > 0 &&
+                            `${cwsSelectedGroups.length} group(s)`,
+                        ]
+                          .filter(Boolean)
+                          .join(", ")}
+                      </span>
+                      <button
+                        type="button"
+                        data-ocid="cws.clear_filters_button"
+                        onClick={() => {
+                          setCwsSelectedCustomers([]);
+                          setCwsSelectedCompanies([]);
+                          setCwsSelectedMedicines([]);
+                          setCwsSelectedGroups([]);
+                          setCwsCustomerSearch2("");
+                          setCwsCompanySearch("");
+                          setCwsMedicineSearch("");
+                          setCwsGroupSearch("");
+                        }}
+                        className="text-xs text-gray-500 hover:text-red-600 border border-gray-300 hover:border-red-300 px-2 py-1 rounded-md transition-colors"
+                      >
+                        Clear All Filters
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Report Tabs */}
@@ -13044,20 +13435,50 @@ function OfficeDashboard() {
                         if (o.status !== "delivered") return false;
                         if (o.date < cwsDateFrom || o.date > cwsDateTo)
                           return false;
-                        if (cwsSelectedCustomer) {
-                          const nameMatch =
-                            o.pharmacyName.toLowerCase() ===
-                            cwsSelectedCustomer.name.toLowerCase();
-                          const codeMatch =
-                            cwsSelectedCustomer.code &&
-                            o.pharmacyCode === cwsSelectedCustomer.code;
-                          return nameMatch || !!codeMatch;
-                        }
-                        if (cwsSelectedPharmacy) {
-                          return (
-                            o.pharmacyName.toLowerCase() ===
-                            cwsSelectedPharmacy.name.toLowerCase()
+                        // Customer filter (multi-select)
+                        if (cwsSelectedCustomers.length > 0) {
+                          const match = cwsSelectedCustomers.some(
+                            (c) =>
+                              o.pharmacyName.toLowerCase() ===
+                                c.name.toLowerCase() ||
+                              (c.code && o.pharmacyCode === c.code),
                           );
+                          if (!match) return false;
+                        }
+                        // Company filter
+                        if (cwsSelectedCompanies.length > 0) {
+                          const hasCompany = o.items.some((item: any) => {
+                            const med = allMedicines.find(
+                              (m) => String(m.backendId) === item.medicineId,
+                            );
+                            return (
+                              med?.company &&
+                              cwsSelectedCompanies.includes(med.company)
+                            );
+                          });
+                          if (!hasCompany) return false;
+                        }
+                        // Medicine filter
+                        if (cwsSelectedMedicines.length > 0) {
+                          const hasMed = o.items.some((item: any) =>
+                            cwsSelectedMedicines.includes(item.medicineName),
+                          );
+                          if (!hasMed) return false;
+                        }
+                        // Group filter
+                        if (cwsSelectedGroups.length > 0) {
+                          const hasGroup = o.items.some((item: any) => {
+                            const med = allMedicines.find(
+                              (m) => String(m.backendId) === item.medicineId,
+                            );
+                            const grp = allMedicineGroups.find(
+                              (g) =>
+                                med?.groupId &&
+                                String(g.id) === String(med.groupId),
+                            );
+                            return grp && cwsSelectedGroups.includes(grp.name);
+                          });
+                          if (!hasGroup) return false;
                         }
                         return true;
                       });
