@@ -3036,6 +3036,66 @@ function OrderTakingScreen({
 
 // ─── Order History Screen ─────────────────────────────────────────────────────
 
+function buildStaffDatePrintHtml(orders: Order[]): string {
+  const invoices = orders
+    .map((order) => {
+      const itemRows = order.items
+        .map((item) => {
+          const distDisc = (item.distributionDiscount ?? 0) / 10;
+          const compDisc = (item.companyDiscount ?? 0) / 10;
+          const netRate =
+            item.manualNetRate ??
+            item.unitPrice * (1 - (distDisc + compDisc) / 100);
+          return `<tr>
+        <td style="padding:4px 6px;border:1px solid #ddd">${item.medicineName}</td>
+        <td style="padding:4px 6px;border:1px solid #ddd;text-align:center">${item.qty}</td>
+        <td style="padding:4px 6px;border:1px solid #ddd;text-align:center">${item.bonusQty ?? 0}</td>
+        <td style="padding:4px 6px;border:1px solid #ddd;text-align:right">${distDisc > 0 ? `${distDisc.toFixed(1)}%` : "-"}</td>
+        <td style="padding:4px 6px;border:1px solid #ddd;text-align:right">Rs ${netRate.toFixed(2)}</td>
+        <td style="padding:4px 6px;border:1px solid #ddd;text-align:right">Rs ${(netRate * item.qty).toFixed(2)}</td>
+      </tr>`;
+        })
+        .join("");
+      return `<div style="page-break-after:always;padding:20px;font-family:Arial,sans-serif;max-width:700px;margin:0 auto">
+      <div style="text-align:center;margin-bottom:12px">
+        <h2 style="margin:0;font-size:18px">MIAN MEDICINE DISTRIBUTORS</h2>
+        <p style="margin:2px 0;font-size:12px;color:#555">Invoice | بل</p>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:12px;font-size:13px">
+        <div><strong>Invoice#:</strong> ${order.id}</div>
+        <div><strong>Date:</strong> ${order.date}</div>
+      </div>
+      <div style="margin-bottom:12px;font-size:13px">
+        <strong>Customer:</strong> ${order.pharmacyName}<br/>
+        <strong>Booker:</strong> ${order.staffName}
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:12px">
+        <thead>
+          <tr style="background:#f0f4ff">
+            <th style="padding:6px;border:1px solid #ddd;text-align:left">Medicine</th>
+            <th style="padding:6px;border:1px solid #ddd">Qty</th>
+            <th style="padding:6px;border:1px solid #ddd">Bonus</th>
+            <th style="padding:6px;border:1px solid #ddd">Disc%</th>
+            <th style="padding:6px;border:1px solid #ddd">Net Rate</th>
+            <th style="padding:6px;border:1px solid #ddd">Amount</th>
+          </tr>
+        </thead>
+        <tbody>${itemRows}</tbody>
+      </table>
+      <div style="text-align:right;font-size:14px;font-weight:bold">
+        Total: Rs ${order.totalAmount.toFixed(2)}
+      </div>
+      <div style="text-align:center;margin-top:16px;font-size:11px;color:#888">
+        Status: ${order.status.toUpperCase()}
+      </div>
+    </div>`;
+    })
+    .join("");
+  return `<!DOCTYPE html><html><head><title>Invoices</title>
+  <style>@media print{body{margin:0}}</style>
+  </head><body>${invoices}</body></html>`;
+}
+
 function OrderHistoryScreen({
   state,
   dispatch,
@@ -3181,37 +3241,57 @@ function OrderHistoryScreen({
                           key={dateStr}
                           className="border-b border-border last:border-0"
                         >
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setExpandedDate(isDateOpen ? null : dateStr)
-                            }
-                            className="w-full flex items-center justify-between px-4 py-3 bg-muted/30 hover:bg-muted/60 transition-colors"
-                            data-ocid="order_history.date.button"
-                          >
-                            <div className="flex items-center gap-2 pl-2">
-                              <div className="w-1.5 h-1.5 rounded-full bg-primary/50" />
-                              <span className="font-semibold text-sm text-foreground">
-                                {formatDateLabel(dateStr)}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-muted-foreground">
-                                {orders.length} orders
-                              </span>
-                              {isDateOpen ? (
-                                <ChevronUp
-                                  size={14}
-                                  className="text-muted-foreground"
-                                />
-                              ) : (
-                                <ChevronDown
-                                  size={14}
-                                  className="text-muted-foreground"
-                                />
-                              )}
-                            </div>
-                          </button>
+                          <div className="flex items-center">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedDate(isDateOpen ? null : dateStr)
+                              }
+                              className="flex-1 flex items-center justify-between px-4 py-3 bg-muted/30 hover:bg-muted/60 transition-colors"
+                              data-ocid="order_history.date.button"
+                            >
+                              <div className="flex items-center gap-2 pl-2">
+                                <div className="w-1.5 h-1.5 rounded-full bg-primary/50" />
+                                <span className="font-semibold text-sm text-foreground">
+                                  {formatDateLabel(dateStr)}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-muted-foreground">
+                                  {orders.length} orders
+                                </span>
+                                {isDateOpen ? (
+                                  <ChevronUp
+                                    size={14}
+                                    className="text-muted-foreground"
+                                  />
+                                ) : (
+                                  <ChevronDown
+                                    size={14}
+                                    className="text-muted-foreground"
+                                  />
+                                )}
+                              </div>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const win = window.open("", "_blank");
+                                if (!win) return;
+                                win.document.write(
+                                  buildStaffDatePrintHtml(orders),
+                                );
+                                win.document.close();
+                                win.print();
+                              }}
+                              className="px-3 py-3 bg-muted/30 hover:bg-blue-50 transition-colors border-l border-border text-blue-600"
+                              title="Print invoices for this date"
+                              data-ocid="order_history.date.print_button"
+                            >
+                              <Printer size={14} />
+                            </button>
+                          </div>
 
                           {/* Level 3: Orders for this date */}
                           {isDateOpen && (
@@ -9605,6 +9685,8 @@ function OfficeDashboard() {
   >([]);
   const [isLoadingPurchases, setIsLoadingPurchases] = useState(false);
   // Purchasing form state
+  const [purchaseMedSearch, setPurchaseMedSearch] = useState("");
+  const [purchaseMedDropOpen, setPurchaseMedDropOpen] = useState(false);
   const [purchaseProductName, setPurchaseProductName] = useState("");
   const [purchaseGenericName, setPurchaseGenericName] = useState("");
   const [purchaseBatchNo, setPurchaseBatchNo] = useState("");
@@ -10180,6 +10262,7 @@ function OfficeDashboard() {
       toast.success(
         `Purchase record added for "${purchaseProductName.trim()}"!${matchedMed ? ` Inventory +${qty} updated.` : " (Add medicine to inventory to auto-sync stock.)"}`,
       );
+      setPurchaseMedSearch("");
       setPurchaseProductName("");
       setPurchaseGenericName("");
       setPurchaseBatchNo("");
@@ -11613,6 +11696,85 @@ function OfficeDashboard() {
                     Add New Purchase Record | نئی خریداری شامل کریں
                   </h3>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    {/* Medicine Search */}
+                    <div className="col-span-2 md:col-span-3 relative">
+                      <label
+                        htmlFor="pur-med-search"
+                        className="text-xs font-semibold text-gray-600 mb-1.5 block uppercase tracking-wide"
+                      >
+                        Search Medicine | دوائی تلاش کریں
+                      </label>
+                      <input
+                        id="pur-med-search"
+                        type="text"
+                        value={purchaseMedSearch}
+                        onChange={(e) => {
+                          setPurchaseMedSearch(e.target.value);
+                          setPurchaseMedDropOpen(true);
+                        }}
+                        onFocus={() => setPurchaseMedDropOpen(true)}
+                        onBlur={() =>
+                          setTimeout(() => setPurchaseMedDropOpen(false), 200)
+                        }
+                        placeholder="Type medicine name to search and auto-fill fields..."
+                        className="w-full h-10 text-sm border border-blue-300 rounded-lg px-3 bg-blue-50 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      {purchaseMedDropOpen &&
+                        purchaseMedSearch.trim().length > 0 && (
+                          <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
+                            {allMedicines
+                              .filter((m) =>
+                                m.name
+                                  .toLowerCase()
+                                  .includes(purchaseMedSearch.toLowerCase()),
+                              )
+                              .slice(0, 20)
+                              .map((med) => (
+                                <button
+                                  key={String(med.backendId)}
+                                  type="button"
+                                  className="w-full text-left px-4 py-2.5 hover:bg-blue-50 text-sm border-b border-gray-100 last:border-0"
+                                  onClick={() => {
+                                    setPurchaseProductName(med.name);
+                                    setPurchaseGenericName(
+                                      med.genericName ?? "",
+                                    );
+                                    setPurchasePackSize(med.packSize ?? "");
+                                    setPurchaseCompanyName(med.company ?? "");
+                                    setPurchaseStrength(med.strength ?? "");
+                                    if (med.medicineType)
+                                      setPurchaseMedicineType(med.medicineType);
+                                    setPurchaseMedSearch(med.name);
+                                    setPurchaseMedDropOpen(false);
+                                  }}
+                                >
+                                  <span className="font-semibold text-gray-900">
+                                    {med.name}
+                                  </span>
+                                  {med.strength && (
+                                    <span className="text-gray-500 ml-2 text-xs">
+                                      {med.strength}
+                                    </span>
+                                  )}
+                                  {med.company && (
+                                    <span className="text-gray-400 ml-2 text-xs">
+                                      · {med.company}
+                                    </span>
+                                  )}
+                                </button>
+                              ))}
+                            {allMedicines.filter((m) =>
+                              m.name
+                                .toLowerCase()
+                                .includes(purchaseMedSearch.toLowerCase()),
+                            ).length === 0 && (
+                              <p className="px-4 py-3 text-sm text-gray-400">
+                                No medicines found
+                              </p>
+                            )}
+                          </div>
+                        )}
+                    </div>
                     <div>
                       <label
                         htmlFor="pur-product-name"
@@ -15228,7 +15390,9 @@ function MobileApp() {
                 (o) =>
                   o.staffId === staffId ||
                   o.staffName === staffName ||
-                  o.staffId === session.username,
+                  o.staffId === session.username ||
+                  !o.staffId ||
+                  o.staffId === "",
               )
             : orders;
 
