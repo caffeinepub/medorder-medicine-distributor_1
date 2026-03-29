@@ -15,8 +15,17 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Calculator, Package, Printer, Search, Users, X } from "lucide-react";
+import {
+  Calculator,
+  Package,
+  Plus,
+  Search,
+  ShoppingCart,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 
 interface PoolItem {
   medicineId: string;
@@ -53,10 +62,24 @@ interface PharmacyInfo {
   location: string;
 }
 
+interface OrderRow {
+  _key: string;
+  medicineId: string;
+  medicineName: string;
+  medicineBackendId: bigint;
+  qty: string;
+  bonus: string;
+  dist: string;
+  co: string;
+  netRate: string;
+}
+
 interface EstimatedBillingScreenProps {
   allMedicines: MedicineInfo[];
   allPharmacies: PharmacyInfo[];
   allOrders?: any[];
+  actor?: any;
+  distributorId?: bigint | null;
 }
 
 function getStock(backendId: bigint): number {
@@ -76,16 +99,28 @@ function formatDate(ts: number) {
   });
 }
 
+const EMPTY_ROW = (): OrderRow => ({
+  _key: Date.now().toString() + Math.random(),
+  medicineId: "",
+  medicineName: "",
+  medicineBackendId: BigInt(0),
+  qty: "",
+  bonus: "",
+  dist: "",
+  co: "",
+  netRate: "",
+});
+
 export default function EstimatedBillingScreen({
   allMedicines,
   allPharmacies,
   allOrders,
+  actor,
+  distributorId,
 }: EstimatedBillingScreenProps) {
   const [selectedProduct, setSelectedProduct] = useState<string | null>(null);
-  const [billCustomer, setBillCustomer] = useState<string | null>(null);
-  const [customerSearch, setCustomerSearch] = useState("");
 
-  // Fix: derive pool from backend orders (cross-device), fallback to localStorage
+  // ── Pool ─────────────────────────────────────────────────────────────────────
   const [pool, setPool] = useState<PoolEntry[]>([]);
   useEffect(() => {
     if (allOrders && allOrders.length > 0) {
@@ -128,7 +163,7 @@ export default function EstimatedBillingScreen({
     }
   }, [allOrders]);
 
-  // Filter items where companyDiscount > 0
+  // ── Filtered & aggregated data ────────────────────────────────────────────────
   const coDiscountEntries = useMemo(
     () =>
       pool
@@ -140,7 +175,6 @@ export default function EstimatedBillingScreen({
     [pool],
   );
 
-  // Aggregate by product name
   const productRows = useMemo(() => {
     const map: Record<
       string,
@@ -174,31 +208,20 @@ export default function EstimatedBillingScreen({
     });
   }, [coDiscountEntries, allMedicines]);
 
-  // ALL customers list for bill creation (all pharmacies)
-  const allCustomerRows = useMemo(() => {
-    const filtered = allPharmacies.filter((p) =>
-      p.name.toLowerCase().includes(customerSearch.toLowerCase()),
-    );
-    return filtered.map((p) => {
-      // Check if this customer has Co% orders in pool
-      const poolEntries = coDiscountEntries.filter(
-        (e) => e.pharmacyName === p.name,
-      );
-      const poolValue = poolEntries.reduce(
-        (sum, e) =>
-          sum + e.items.reduce((s, it) => s + it.qty * it.unitPrice, 0),
-        0,
-      );
-      return {
-        pharmacyName: p.name,
-        hasPoolOrders: poolEntries.length > 0,
-        poolOrderCount: poolEntries.length,
-        poolValue,
-      };
-    });
-  }, [allPharmacies, coDiscountEntries, customerSearch]);
+  // Helper: booked qty remaining in pool for a medicine name
+  function getAvailableQty(medicineName: string): number {
+    let total = 0;
+    for (const entry of pool) {
+      for (const item of entry.items) {
+        if (item.medicineName.toLowerCase() === medicineName.toLowerCase()) {
+          total += item.qty;
+        }
+      }
+    }
+    return total;
+  }
 
-  // Selected product orders
+  // Selected product orders for dialog
   const productOrders = useMemo(() => {
     if (!selectedProduct) return [];
     return coDiscountEntries
@@ -212,24 +235,118 @@ export default function EstimatedBillingScreen({
       .filter((e) => e.items.length > 0);
   }, [coDiscountEntries, selectedProduct]);
 
-  // Bill customer orders
-  const billOrders = useMemo(() => {
-    if (!billCustomer) return [];
-    return coDiscountEntries.filter((e) => e.pharmacyName === billCustomer);
-  }, [coDiscountEntries, billCustomer]);
+  // ── Add Order tab state ───────────────────────────────────────────────────────
+  const [selectedCustomer, setSelectedCustomer] = useState<{
+    id: bigint;
+    name: string;
+  } | null>(null);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+  const [orderRows, setOrderRows] = useState<OrderRow[]>([EMPTY_ROW()]);
+  const [medSearches, setMedSearches] = useState<Record<string, string>>({});
+  const [medDropdownOpen, setMedDropdownOpen] = useState<
+    Record<string, boolean>
+  >({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const billTotal = useMemo(
-    () =>
-      billOrders.reduce(
-        (sum, e) =>
-          sum + e.items.reduce((s, it) => s + it.qty * it.unitPrice, 0),
-        0,
-      ),
-    [billOrders],
-  );
+  const filteredCustomers = useMemo(() => {
+    const q = customerSearch.toLowerCase();
+    return allPharmacies.filter((p) => p.name.toLowerCase().includes(q));
+  }, [allPharmacies, customerSearch]);
 
-  function handlePrint() {
-    window.print();
+  function updateRow(
+    key: string,
+    field: keyof OrderRow,
+    value: string | bigint,
+  ) {
+    setOrderRows((prev) =>
+      prev.map((r) => (r._key === key ? { ...r, [field]: value } : r)),
+    );
+  }
+
+  function addRow() {
+    setOrderRows((prev) => [...prev, EMPTY_ROW()]);
+  }
+
+  function removeRow(key: string) {
+    setOrderRows((prev) => prev.filter((r) => r._key !== key));
+  }
+
+  async function handleSubmitOrder() {
+    if (!actor || !selectedCustomer) {
+      toast.error("Please select a customer");
+      return;
+    }
+    const validRows = orderRows.filter(
+      (r) => r.medicineName && Number(r.qty) > 0,
+    );
+    if (validRows.length === 0) {
+      toast.error("Please add at least one medicine with quantity");
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const orderLines = validRows.map((row) => ({
+        medicineId: row.medicineBackendId,
+        qty: BigInt(Math.round(Number(row.qty))),
+        bonusQty: BigInt(Number(row.bonus) || 0),
+        distributionDiscount: BigInt(Number(row.dist) || 0),
+        companyDiscount: BigInt(Number(row.co) || 0),
+        manualNetRate: row.netRate
+          ? [BigInt(Math.round(Number(row.netRate) * 100))]
+          : [],
+      }));
+
+      if (distributorId) {
+        await actor.createOrderForDistributor(
+          distributorId,
+          selectedCustomer.id,
+          orderLines,
+          "Admin",
+          "admin",
+          "",
+        );
+      } else {
+        await actor.createOrder(
+          selectedCustomer.id,
+          orderLines,
+          "Admin",
+          "admin",
+          "",
+        );
+      }
+
+      // Subtract from estimated pool in localStorage
+      try {
+        const poolRaw = localStorage.getItem("estimatedOrders_pool");
+        const localPool = poolRaw ? JSON.parse(poolRaw) : [];
+        for (const row of validRows) {
+          let remaining = Number(row.qty);
+          for (const entry of localPool) {
+            for (const item of entry.items) {
+              if (item.medicineName === row.medicineName && remaining > 0) {
+                const deduct = Math.min(item.qty, remaining);
+                item.qty -= deduct;
+                remaining -= deduct;
+              }
+            }
+          }
+        }
+        localStorage.setItem("estimatedOrders_pool", JSON.stringify(localPool));
+      } catch {}
+
+      toast.success("Order added successfully!");
+      setSelectedCustomer(null);
+      setCustomerSearch("");
+      setOrderRows([EMPTY_ROW()]);
+      setMedSearches({});
+    } catch (e) {
+      toast.error(
+        `Failed to add order: ${e instanceof Error ? e.message : "Unknown error"}`,
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -260,12 +377,12 @@ export default function EstimatedBillingScreen({
             Products | مصنوعات
           </TabsTrigger>
           <TabsTrigger
-            value="bill"
+            value="add-order"
             className="flex-1 data-[state=active]:bg-blue-600 data-[state=active]:text-white"
-            data-ocid="estimated.bill.tab"
+            data-ocid="estimated.add_order.tab"
           >
-            <Users size={14} className="mr-1.5" />
-            Create Bill | بل بنائیں
+            <ShoppingCart size={14} className="mr-1.5" />
+            Add Order | آرڈر شامل کریں
           </TabsTrigger>
         </TabsList>
 
@@ -346,88 +463,295 @@ export default function EstimatedBillingScreen({
           )}
         </TabsContent>
 
-        {/* Tab 2: Bill - All Customers */}
-        <TabsContent value="bill">
-          {/* Search */}
-          <div className="relative mb-4">
-            <Search
-              size={16}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-            />
-            <input
-              type="text"
-              placeholder="Search customer | کسٹمر تلاش کریں"
-              value={customerSearch}
-              onChange={(e) => setCustomerSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 border border-blue-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-              data-ocid="estimated.bill.search_input"
-            />
-          </div>
-
-          {allCustomerRows.length === 0 ? (
-            <div
-              className="text-center py-16 text-gray-400"
-              data-ocid="estimated.bill.empty_state"
-            >
-              <Users size={40} className="mx-auto mb-3 opacity-30" />
-              <p className="text-sm">
-                No customers found | کوئی کسٹمر نہیں ملا
+        {/* Tab 2: Add Order */}
+        <TabsContent value="add-order">
+          <div className="space-y-5">
+            {/* Customer selector */}
+            <div className="bg-white rounded-xl border border-blue-100 p-4">
+              <p className="block text-sm font-semibold text-gray-700 mb-2">
+                Customer | کسٹمر <span className="text-red-500">*</span>
               </p>
+              <div className="relative">
+                <Search
+                  size={15}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                />
+                <input
+                  type="text"
+                  placeholder="Search customer | کسٹمر تلاش کریں"
+                  value={
+                    selectedCustomer ? selectedCustomer.name : customerSearch
+                  }
+                  onChange={(e) => {
+                    setSelectedCustomer(null);
+                    setCustomerSearch(e.target.value);
+                    setShowCustomerDropdown(true);
+                  }}
+                  onFocus={() => setShowCustomerDropdown(true)}
+                  className="w-full pl-9 pr-4 py-2.5 border border-blue-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  data-ocid="estimated.add_order.search_input"
+                />
+                {selectedCustomer && (
+                  <button
+                    type="button"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    onClick={() => {
+                      setSelectedCustomer(null);
+                      setCustomerSearch("");
+                    }}
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+                {showCustomerDropdown &&
+                  !selectedCustomer &&
+                  filteredCustomers.length > 0 && (
+                    <div className="absolute z-20 left-0 right-0 mt-1 bg-white border border-blue-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                      {filteredCustomers.map((p) => (
+                        <button
+                          key={String(p.id)}
+                          type="button"
+                          className="w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 border-b border-gray-50 last:border-0"
+                          onClick={() => {
+                            setSelectedCustomer({ id: p.id, name: p.name });
+                            setCustomerSearch("");
+                            setShowCustomerDropdown(false);
+                          }}
+                        >
+                          {p.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+              </div>
+              {selectedCustomer && (
+                <div className="mt-2 inline-flex items-center gap-2 bg-blue-50 text-blue-700 rounded-lg px-3 py-1.5 text-sm font-medium">
+                  {selectedCustomer.name}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedCustomer(null);
+                      setCustomerSearch("");
+                    }}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
             </div>
-          ) : (
-            <div
-              className="grid gap-3 sm:grid-cols-2"
-              data-ocid="estimated.bill.list"
-            >
-              {allCustomerRows.map((cr, idx) => (
-                <div
-                  key={cr.pharmacyName}
-                  className={`rounded-xl border bg-white p-4 flex flex-col gap-2 ${
-                    cr.hasPoolOrders
-                      ? "border-blue-200 shadow-sm"
-                      : "border-gray-100"
-                  }`}
-                  data-ocid={`estimated.bill.item.${idx + 1}`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="font-semibold text-gray-900">
-                        {cr.pharmacyName}
-                      </p>
-                      {cr.hasPoolOrders ? (
-                        <p className="text-xs text-blue-600 mt-0.5">
-                          {cr.poolOrderCount} Co% order
-                          {cr.poolOrderCount !== 1 ? "s" : ""} |{" "}
-                          {formatCurrency(cr.poolValue)}
-                        </p>
-                      ) : (
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          No Co% orders | کوئی Co% آرڈر نہیں
-                        </p>
+
+            {/* Medicine rows */}
+            <div className="space-y-3">
+              {orderRows.map((row, idx) => {
+                const availQty = row.medicineName
+                  ? getAvailableQty(row.medicineName)
+                  : 0;
+                const medSearch = medSearches[row._key] ?? "";
+                const filteredMeds = allMedicines.filter((m) =>
+                  m.name
+                    .toLowerCase()
+                    .includes((row.medicineName || medSearch).toLowerCase()),
+                );
+                return (
+                  <div
+                    key={row._key}
+                    className="bg-white rounded-xl border border-blue-100 p-4"
+                    data-ocid={`estimated.add_order.item.${idx + 1}`}
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-sm font-semibold text-gray-600">
+                        Medicine {idx + 1}
+                      </span>
+                      {orderRows.length > 1 && (
+                        <button
+                          type="button"
+                          className="text-red-400 hover:text-red-600 p-1"
+                          onClick={() => removeRow(row._key)}
+                          data-ocid={`estimated.add_order.delete_button.${idx + 1}`}
+                        >
+                          <Trash2 size={14} />
+                        </button>
                       )}
                     </div>
-                    {cr.hasPoolOrders && (
-                      <Badge className="bg-blue-100 text-blue-700 shrink-0">
-                        {formatCurrency(cr.poolValue)}
-                      </Badge>
+
+                    {/* Medicine search */}
+                    <div className="relative mb-3">
+                      <Search
+                        size={14}
+                        className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Search medicine | دوائی تلاش کریں"
+                        value={row.medicineName || medSearch}
+                        onChange={(e) => {
+                          updateRow(row._key, "medicineName", "");
+                          updateRow(row._key, "medicineBackendId", BigInt(0));
+                          setMedSearches((prev) => ({
+                            ...prev,
+                            [row._key]: e.target.value,
+                          }));
+                          setMedDropdownOpen((prev) => ({
+                            ...prev,
+                            [row._key]: true,
+                          }));
+                        }}
+                        onFocus={() =>
+                          setMedDropdownOpen((prev) => ({
+                            ...prev,
+                            [row._key]: true,
+                          }))
+                        }
+                        className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                      {medDropdownOpen[row._key] && !row.medicineName && (
+                        <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                          {filteredMeds.length === 0 ? (
+                            <div className="px-4 py-3 text-sm text-gray-400">
+                              No medicines found
+                            </div>
+                          ) : (
+                            filteredMeds.slice(0, 20).map((m) => {
+                              const avail = getAvailableQty(m.name);
+                              return (
+                                <button
+                                  key={m.id}
+                                  type="button"
+                                  className="w-full text-left px-4 py-2 text-sm hover:bg-blue-50 border-b border-gray-50 last:border-0 flex justify-between"
+                                  onClick={() => {
+                                    updateRow(row._key, "medicineName", m.name);
+                                    updateRow(
+                                      row._key,
+                                      "medicineBackendId",
+                                      m.backendId,
+                                    );
+                                    setMedSearches((prev) => ({
+                                      ...prev,
+                                      [row._key]: "",
+                                    }));
+                                    setMedDropdownOpen((prev) => ({
+                                      ...prev,
+                                      [row._key]: false,
+                                    }));
+                                  }}
+                                >
+                                  <span>{m.name}</span>
+                                  {avail > 0 && (
+                                    <span className="text-xs text-blue-500 ml-2">
+                                      ({avail} available)
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {row.medicineName && availQty > 0 && (
+                      <p className="text-xs text-blue-600 mb-2">
+                        Pool: {availQty} available | دستیاب: {availQty}
+                      </p>
                     )}
+
+                    {/* Fields grid */}
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                      <div>
+                        <p className="text-xs text-gray-500 mb-1">Qty *</p>
+                        <input
+                          type="number"
+                          min="1"
+                          max={availQty > 0 ? availQty : undefined}
+                          placeholder="0"
+                          value={row.qty}
+                          onChange={(e) =>
+                            updateRow(row._key, "qty", e.target.value)
+                          }
+                          className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        />
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-500 mb-1">Bonus</p>
+                        <input
+                          type="number"
+                          min="0"
+                          placeholder="0"
+                          value={row.bonus}
+                          onChange={(e) =>
+                            updateRow(row._key, "bonus", e.target.value)
+                          }
+                          className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        />
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-500 mb-1">Dist%</p>
+                        <input
+                          type="number"
+                          min="0"
+                          placeholder="0"
+                          value={row.dist}
+                          onChange={(e) =>
+                            updateRow(row._key, "dist", e.target.value)
+                          }
+                          className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        />
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-500 mb-1">Co%</p>
+                        <input
+                          type="number"
+                          min="0"
+                          placeholder="0"
+                          value={row.co}
+                          onChange={(e) =>
+                            updateRow(row._key, "co", e.target.value)
+                          }
+                          className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        />
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-500 mb-1">Net Rate</p>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          placeholder="0"
+                          value={row.netRate}
+                          onChange={(e) =>
+                            updateRow(row._key, "netRate", e.target.value)
+                          }
+                          className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <Button
-                    size="sm"
-                    className={`w-full mt-1 ${
-                      cr.hasPoolOrders
-                        ? "bg-blue-600 hover:bg-blue-700 text-white"
-                        : "bg-gray-100 hover:bg-gray-200 text-gray-700"
-                    }`}
-                    onClick={() => setBillCustomer(cr.pharmacyName)}
-                    data-ocid={`estimated.bill.open_modal_button.${idx + 1}`}
-                  >
-                    Create Bill | بل بنائیں
-                  </Button>
-                </div>
-              ))}
+                );
+              })}
+
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full border-dashed border-blue-300 text-blue-600 hover:bg-blue-50"
+                onClick={addRow}
+                data-ocid="estimated.add_order.button"
+              >
+                <Plus size={14} className="mr-1.5" />
+                Add Medicine | دوائی شامل کریں
+              </Button>
             </div>
-          )}
+
+            <Button
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3"
+              onClick={handleSubmitOrder}
+              disabled={isSubmitting || !selectedCustomer}
+              data-ocid="estimated.add_order.submit_button"
+            >
+              {isSubmitting
+                ? "Adding Order..."
+                : "Submit Order | آرڈر جمع کریں"}
+            </Button>
+          </div>
         </TabsContent>
       </Tabs>
 
@@ -504,121 +828,6 @@ export default function EstimatedBillingScreen({
               <X size={14} className="mr-1.5" /> Close | بند کریں
             </Button>
           </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Bill Dialog */}
-      <Dialog
-        open={!!billCustomer}
-        onOpenChange={(o) => !o && setBillCustomer(null)}
-      >
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-blue-800">
-              Bill: {billCustomer} | بل
-            </DialogTitle>
-          </DialogHeader>
-
-          {billOrders.length === 0 ? (
-            <div className="text-center py-10 text-gray-400">
-              <Package size={36} className="mx-auto mb-3 opacity-30" />
-              <p className="text-sm">No Co% orders for this customer</p>
-              <p className="text-xs mt-1">کوئی Co% آرڈر نہیں ہے</p>
-            </div>
-          ) : (
-            <>
-              {/* Printable area */}
-              <div id="bill-print-area" className="space-y-3 mt-2">
-                <div className="text-center border-b border-blue-200 pb-3 mb-3">
-                  <h2 className="text-lg font-bold text-blue-900">
-                    Mian Medicine Distributors
-                  </h2>
-                  <p className="text-xs text-gray-500">
-                    Estimated Bill | اندازہ بل
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    Customer: {billCustomer} | Date:{" "}
-                    {new Date().toLocaleDateString("en-PK")}
-                  </p>
-                </div>
-
-                {billOrders.map((entry, ei) => (
-                  <div
-                    key={entry.id}
-                    className="rounded-lg border border-gray-200 p-3"
-                    data-ocid={`estimated.bill.detail.item.${ei + 1}`}
-                  >
-                    <div className="flex justify-between text-xs text-gray-500 mb-2">
-                      <span>Order: {entry.orderId ?? entry.id}</span>
-                      <span>{formatDate(entry.timestamp)}</span>
-                    </div>
-                    <p className="text-xs text-gray-500 mb-2">
-                      Staff: {entry.staffName}
-                    </p>
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="text-gray-400 border-b">
-                          <th className="text-left pb-1">Medicine</th>
-                          <th className="text-right pb-1">Qty</th>
-                          <th className="text-right pb-1">Rate</th>
-                          <th className="text-right pb-1">Co%</th>
-                          <th className="text-right pb-1">Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {entry.items.map((item) => (
-                          <tr
-                            key={item.medicineName}
-                            className="border-b border-gray-100"
-                          >
-                            <td className="py-1 text-gray-900">
-                              {item.medicineName}
-                            </td>
-                            <td className="py-1 text-right">{item.qty}</td>
-                            <td className="py-1 text-right">
-                              {formatCurrency(item.unitPrice)}
-                            </td>
-                            <td className="py-1 text-right text-amber-700">
-                              {(item.companyDiscount / 10).toFixed(1)}%
-                            </td>
-                            <td className="py-1 text-right font-medium">
-                              {formatCurrency(item.total)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ))}
-
-                <div className="flex justify-between items-center bg-blue-50 rounded-lg px-4 py-3 mt-2">
-                  <span className="font-semibold text-blue-900">
-                    Total | کل رقم
-                  </span>
-                  <span className="font-bold text-lg text-blue-700">
-                    {formatCurrency(billTotal)}
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2 mt-4">
-                <Button
-                  variant="outline"
-                  onClick={() => setBillCustomer(null)}
-                  data-ocid="estimated.bill.cancel_button"
-                >
-                  <X size={14} className="mr-1.5" /> Close
-                </Button>
-                <Button
-                  className="bg-blue-600 hover:bg-blue-700 text-white"
-                  onClick={handlePrint}
-                  data-ocid="estimated.bill.print_button"
-                >
-                  <Printer size={14} className="mr-1.5" /> Print | پرنٹ
-                </Button>
-              </div>
-            </>
-          )}
         </DialogContent>
       </Dialog>
     </div>

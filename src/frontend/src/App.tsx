@@ -4301,26 +4301,45 @@ function ManageCustomersTab({
       : actor.getCustomers();
     fetchFn
       .then((raw: any[]) => {
-        setCustomers(
-          raw.map((c) => ({
-            id: String(c.id),
-            backendId: c.id,
-            name: c.name,
-            customerType: c.customerType as CustomerType,
-            contactNo: c.contact || "",
-            address: c.address || "",
-            area: c.area || "",
-            groupName: c.group || "",
-            code: c.code || "",
-            ntn: c.ntn || "",
-            cnic: c.cnic || "",
-            dealerCode: (c as any).dealerCode || "",
-            pmdc: (c as any).pmdc || "",
-          })),
-        );
+        const rawMapped: Customer[] = raw.map((c) => ({
+          id: String(c.id),
+          backendId: c.id,
+          name: c.name,
+          customerType: c.customerType as CustomerType,
+          contactNo: c.contactNo || c.contact || "",
+          address: c.address || "",
+          area: c.area || "",
+          groupName: c.groupName || c.group || "",
+          code: c.code || "",
+          ntn: c.ntn || "",
+          cnic: c.cnic || "",
+          dealerCode: (c as any).dealerCode || "",
+          pmdc: (c as any).pmdc || "",
+        }));
+        // Also merge pharmacies so list is populated
+        const pharmConverted: Customer[] = _pharmacies.map((p) => ({
+          id: `ph-${String(p.backendId)}`,
+          backendId: p.backendId,
+          name: p.name,
+          customerType: CustomerType.pharmacy,
+          contactNo: p.contactNo || "",
+          address: p.address || "",
+          area: p.area || "",
+          groupName: "",
+          code: p.code || "",
+          ntn: "",
+          cnic: "",
+          dealerCode: "",
+          pmdc: "",
+        }));
+        const names = new Set(rawMapped.map((c) => c.name.toLowerCase()));
+        setCustomers([
+          ...rawMapped,
+          ...pharmConverted.filter((p) => !names.has(p.name.toLowerCase())),
+        ]);
       })
       .catch(() => {});
-  }, [actor]);
+  }, [actor, _pharmacies]);
 
   async function handleAdd() {
     if (!actor || !custName.trim()) {
@@ -10078,12 +10097,30 @@ function OfficeDashboard() {
         code: c.code,
         dealerCode: (c as any).dealerCode || "",
       }));
-      setAllCustomers(mapped);
+      // Also merge allPharmacies so existing pharmacy data shows in filters
+      const pharmMapped: Customer[] = allPharmacies.map((p) => ({
+        id: `ph-${String(p.id)}`,
+        backendId: p.id as unknown as bigint,
+        name: p.name,
+        customerType: CustomerType.pharmacy,
+        address: p.location || "",
+        area: "",
+        contactNo: "",
+        groupName: "",
+        code: "",
+        dealerCode: "",
+      }));
+      const existingNames = new Set(mapped.map((c) => c.name.toLowerCase()));
+      const merged = [
+        ...mapped,
+        ...pharmMapped.filter((p) => !existingNames.has(p.name.toLowerCase())),
+      ];
+      setAllCustomers(merged);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Unknown error";
       toast.error(`Error loading customers: ${msg}`);
     }
-  }, [actor]);
+  }, [actor, allPharmacies]);
 
   useEffect(() => {
     if (
@@ -14321,6 +14358,11 @@ function OfficeDashboard() {
                 allMedicines={allMedicines}
                 allPharmacies={allPharmacies}
                 allOrders={orders}
+                actor={actor}
+                distributorId={(() => {
+                  const s = getSession();
+                  return s?.distributorId ? BigInt(s.distributorId) : null;
+                })()}
               />
             )}
 
