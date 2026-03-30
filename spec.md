@@ -1,32 +1,30 @@
-# MedFlow
+# MedFlow -- Three Frontend Decimal & Missing Field Fixes
 
 ## Current State
-EstimatedBillingScreen has two issues:
-1. Manage > Customers tab and Customer Wise Sale filters show empty because existing data is in `pharmacies` table, not `customers` table
-2. Estimated Billing has a 'Create Bill' button that only allows printing -- no way to save/add a real order
+- Estimated Billing Add Order tab submits orders via `createOrderForDistributor` but does not always include `netRate` field in order items, causing backend rejection.
+- Order forms in App.tsx and EstimatedBillingScreen.tsx pass decimal values (e.g. 3.5) directly to BigInt conversion, causing runtime error.
+- Medicine add/edit form saves price/rate as integer (rounds decimals) because it converts float directly to BigInt without ×100 scaling.
 
 ## Requested Changes (Diff)
 
 ### Add
-- New "Add Order" tab in EstimatedBillingScreen alongside existing Products tab
-- Add Order form: customer searchable dropdown, medicine rows (name, qty, bonus, dist%, co%, net rate), submit button
-- On submit: call createOrderForDistributor with status Confirmed, subtract qty from estimated pool, show success toast
-- EstimatedBillingScreen receives new props: actor, distributorId
+- ×100/÷100 scaling logic for all nat fields that accept decimals: `distributionDiscount`, `companyDiscount`, `netRate`, `discountPercent`, `bonusQty` in both App.tsx order form and EstimatedBillingScreen.tsx Add Order form
+- ×100/÷100 scaling for medicine price/rate fields in App.tsx medicine add/edit form
+- Default `netRate: BigInt(0)` when field is empty in EstimatedBillingScreen Add Order submission
 
 ### Modify
-- `loadCustomers` in OfficeDashboard: after fetching from getCustomers/getCustomersByDistributor, also merge in pharmacies from allPharmacies state (already loaded), deduplicating by name
-- ManageView customer list useEffect: merge `_pharmacies` prop (passed as pharmacies) with `customers` state for display -- convert pharmacies to Customer shape
-- EstimatedBillingScreen rendering in App.tsx: pass `actor` and `distributorId` props
+- `EstimatedBillingScreen.tsx`: order item builder -- always include `netRate`, apply `Math.round(value * 100)` before BigInt for all discount/rate/bonus fields; display ÷100
+- `App.tsx` order form: same ×100 on save, ÷100 on display for all discount/rate/bonus fields
+- `App.tsx` medicine form: price/rate fields use `Math.round(value * 100)` on save, `storedValue / 100` on display and prefill
 
 ### Remove
-- "Create Bill | بل بنائیں" button from Customers tab in EstimatedBillingScreen
-- Bill dialog/modal entirely
+- Nothing removed
 
 ## Implementation Plan
-1. Fix `loadCustomers` in OfficeDashboard to merge allPharmacies into allCustomers
-2. Fix ManageView useEffect to merge pharmacies prop into customers list
-3. Update EstimatedBillingScreen props interface to accept actor and distributorId
-4. Remove Create Bill button and dialog from EstimatedBillingScreen
-5. Add "Add Order" tab with order form to EstimatedBillingScreen
-6. Wire up submit: createOrderForDistributor with Confirmed status, pool qty subtraction
-7. Pass actor and distributorId from OfficeDashboard to EstimatedBillingScreen
+1. In `EstimatedBillingScreen.tsx` Add Order submit handler: wrap each nat field with `BigInt(Math.round((parseFloat(val) || 0) * 100))`, ensure `netRate` is always present defaulting to `BigInt(0)`
+2. In `EstimatedBillingScreen.tsx` display of order item values: divide stored values by 100 where shown to user
+3. In `App.tsx` order form submission: apply same `Math.round(val * 100)` → BigInt for `distributionDiscount`, `companyDiscount`, `netRate`, `discountPercent`, `bonusQty`
+4. In `App.tsx` order form display/prefill: divide stored values by 100
+5. In `App.tsx` medicine add form submit: apply `Math.round(price * 100)` → BigInt for price/rate fields
+6. In `App.tsx` medicine edit prefill: divide stored price by 100 to restore decimal
+7. Anywhere medicine price is displayed in lists/tables: divide by 100
