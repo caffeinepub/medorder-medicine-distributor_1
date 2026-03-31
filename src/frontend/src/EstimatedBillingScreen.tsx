@@ -288,15 +288,13 @@ export default function EstimatedBillingScreen({
     try {
       const orderLines = validRows.map((row) => ({
         medicineId: row.medicineBackendId,
-        qty: BigInt(Math.round(Number(row.qty))),
+        quantity: Number.parseFloat(String(row.qty)) || 0,
         bonusQty: BigInt(Math.round(Number.parseFloat(row.bonus) || 0)),
         discountPercent: BigInt(0),
         distributionDiscount: BigInt(
           Math.round((Number.parseFloat(row.dist) || 0) * 10),
         ),
-        companyDiscount: BigInt(
-          Math.round((Number.parseFloat(row.co) || 0) * 10),
-        ),
+        companyDiscount: BigInt(0),
         netRate: BigInt(
           Math.round((Number.parseFloat(row.netRate) || 0) * 100),
         ),

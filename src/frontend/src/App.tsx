@@ -4908,7 +4908,7 @@ function ManageScreen({
         category: seed?.category ?? inferCategory(m.name),
         strength: m.strength || seed?.strength || "",
         unit: seed?.unit ?? "unit",
-        price: Number(m.price) / 100,
+        price: Number(m.price),
         packSize: m.packSize || seed?.packSize || "",
         genericName: m.genericName || "",
         batchNo: m.batchNo || "",
@@ -5049,7 +5049,7 @@ function ManageScreen({
         await (actor as any).addMedicineForDistributor(
           medDistId,
           medName.trim(),
-          BigInt(Math.round(priceNum * 100)),
+          BigInt(Math.round(priceNum)),
           "",
           medCompany.trim(),
           medStrength.trim(),
@@ -5063,7 +5063,7 @@ function ManageScreen({
       } else {
         await actor.addMedicine(
           medName.trim(),
-          BigInt(Math.round(priceNum * 100)),
+          BigInt(Math.round(priceNum)),
           "",
           medCompany.trim(),
           medStrength.trim(),
@@ -9596,9 +9596,7 @@ function OfficeDashboard() {
   const [allMedicineGroups, setAllMedicineGroups] = useState<
     Array<{ id: bigint; name: string; distributorId: bigint }>
   >([]);
-  const [cwsActiveReportTab, setCwsActiveReportTab] = useState<
-    "customer" | "company" | "product" | "month" | "group"
-  >("customer");
+
   // Customer form state
   const [custName, setCustName] = useState("");
   const [custType, setCustType] = useState<ExtendedCustomerType>(
@@ -9851,7 +9849,7 @@ function OfficeDashboard() {
           category: seed?.category ?? inferCategory(m.name),
           strength: m.strength || seed?.strength || "",
           unit: seed?.unit ?? "unit",
-          price: Number(m.price) / 100,
+          price: Number(m.price),
           packSize: m.packSize || seed?.packSize || "",
           genericName: m.genericName || "",
           batchNo: m.batchNo || "",
@@ -13424,44 +13422,8 @@ function OfficeDashboard() {
                   )}
                 </div>
 
-                {/* Report Tabs */}
+                {/* Report Table */}
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                  <div className="border-b border-gray-200 px-5 pt-4">
-                    <div className="flex gap-1 overflow-x-auto pb-0">
-                      {(
-                        [
-                          {
-                            key: "customer",
-                            label: "Customer Wise",
-                            urdu: "کسٹمر",
-                          },
-                          {
-                            key: "company",
-                            label: "Company Wise",
-                            urdu: "کمپنی",
-                          },
-                          {
-                            key: "product",
-                            label: "Product Wise",
-                            urdu: "پروڈکٹ",
-                          },
-                          { key: "month", label: "Month Wise", urdu: "ماہانہ" },
-                          { key: "group", label: "Group Wise", urdu: "گروپ" },
-                        ] as const
-                      ).map((tab) => (
-                        <button
-                          key={tab.key}
-                          type="button"
-                          data-ocid={`cws.${tab.key}_tab`}
-                          onClick={() => setCwsActiveReportTab(tab.key)}
-                          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${cwsActiveReportTab === tab.key ? "border-blue-600 text-blue-700" : "border-transparent text-gray-500 hover:text-gray-700"}`}
-                        >
-                          {tab.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
                   <div className="p-5">
                     {(() => {
                       // Prepare data
@@ -13547,9 +13509,37 @@ function OfficeDashboard() {
                           );
                         }
                         for (const item of order.items) {
+                          // Item-level filter: skip items not matching selected medicines
+                          if (
+                            cwsSelectedMedicines.length > 0 &&
+                            !cwsSelectedMedicines.includes(item.medicineName)
+                          ) {
+                            continue;
+                          }
                           const med = allMedicines.find(
                             (m) => String(m.backendId) === item.medicineId,
                           );
+                          // Item-level filter: skip items not matching selected companies
+                          if (cwsSelectedCompanies.length > 0) {
+                            if (
+                              !med?.company ||
+                              !cwsSelectedCompanies.includes(med.company)
+                            )
+                              continue;
+                          }
+                          // Item-level filter: skip items not matching selected groups
+                          if (cwsSelectedGroups.length > 0) {
+                            const grpCheck = allMedicineGroups.find(
+                              (g) =>
+                                med?.groupId &&
+                                String(g.id) === String(med.groupId),
+                            );
+                            if (
+                              !grpCheck ||
+                              !cwsSelectedGroups.includes(grpCheck.name)
+                            )
+                              continue;
+                          }
                           const itemRate =
                             (item as any).netRate > 0
                               ? (item as any).netRate
@@ -13568,7 +13558,7 @@ function OfficeDashboard() {
                           let groupHeader = "";
                           let dealerCode = "";
 
-                          if (cwsActiveReportTab === "customer") {
+                          {
                             const cust = allCustomers.find(
                               (c) =>
                                 c.name.toLowerCase() ===
@@ -13578,27 +13568,6 @@ function OfficeDashboard() {
                             groupKey = order.pharmacyName;
                             groupHeader = order.pharmacyName;
                             dealerCode = cust?.dealerCode || "";
-                          } else if (cwsActiveReportTab === "company") {
-                            groupKey = med?.company || "Unknown";
-                            groupHeader = med?.company || "Unknown";
-                          } else if (cwsActiveReportTab === "product") {
-                            groupKey = item.medicineName;
-                            groupHeader = item.medicineName;
-                          } else if (cwsActiveReportTab === "month") {
-                            const d = new Date(order.date);
-                            groupKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-                            groupHeader = d.toLocaleDateString("en-PK", {
-                              year: "numeric",
-                              month: "long",
-                            });
-                          } else if (cwsActiveReportTab === "group") {
-                            const grp = allMedicineGroups.find(
-                              (g) =>
-                                med?.groupId &&
-                                String(g.id) === String(med.groupId),
-                            );
-                            groupKey = grp ? String(grp.id) : "ungrouped";
-                            groupHeader = grp ? grp.name : "Ungrouped";
                           }
 
                           rows.push({
@@ -13639,14 +13608,7 @@ function OfficeDashboard() {
                       }
 
                       const grandTotal = rows.reduce((s, r) => s + r.amount, 0);
-                      const reportTitleMap = {
-                        customer: "Customer Wise Dealer Net Purchase Detail",
-                        company: "Company Wise Net Purchase Detail",
-                        product: "Product Wise Net Purchase Detail",
-                        month: "Month Wise Net Purchase Detail",
-                        group: "Group Wise Dealer Net Purchase Detail",
-                      };
-                      const reportTitle = reportTitleMap[cwsActiveReportTab];
+                      const reportTitle = "Customer Wise Sale Report";
 
                       const fmtAmt = (n: number) =>
                         n.toLocaleString("en-PK", {
@@ -15999,7 +15961,7 @@ function MobileApp() {
               category: seed?.category ?? inferCategory(m.name),
               strength: m.strength || seed?.strength || "",
               unit: seed?.unit ?? "unit",
-              price: Number(m.price) / 100,
+              price: Number(m.price),
               packSize: m.packSize || seed?.packSize || "",
               genericName: m.genericName || "",
               batchNo: m.batchNo || "",
@@ -16017,7 +15979,7 @@ function MobileApp() {
               category: seed?.category ?? inferCategory(m.name),
               strength: m.strength || seed?.strength || "",
               unit: seed?.unit ?? "unit",
-              price: Number(m.price) / 100,
+              price: Number(m.price),
               packSize: m.packSize || seed?.packSize || "",
               genericName: m.genericName || "",
               batchNo: m.batchNo || "",
