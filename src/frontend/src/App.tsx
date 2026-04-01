@@ -14973,17 +14973,23 @@ function DeliveryDashboard() {
                 (sum, order) => {
                   if (!order.returnItems || order.returnItems.length === 0)
                     return sum;
-                  const returnedValue = order.items
-                    .filter((item: { medicineId: string; total: number }) =>
-                      order.returnItems.some(
-                        (r: { medicineId: string }) =>
-                          r.medicineId === item.medicineId,
-                      ),
-                    )
-                    .reduce(
-                      (s: number, item: { total: number }) => s + item.total,
-                      0,
-                    );
+                  const returnedValue = order.returnItems.reduce(
+                    (
+                      s: number,
+                      ri: { medicineId: string; returnedQty: number },
+                    ) => {
+                      const it = order.items.find(
+                        (i: {
+                          medicineId: string;
+                          qty: number;
+                          total: number;
+                        }) => i.medicineId === ri.medicineId,
+                      );
+                      if (!it || it.qty === 0) return s;
+                      return s + (it.total / it.qty) * ri.returnedQty;
+                    },
+                    0,
+                  );
                   return sum + returnedValue;
                 },
                 0,
@@ -14994,18 +15000,23 @@ function DeliveryDashboard() {
                 );
                 const returnedValue =
                   order.returnItems && order.returnItems.length > 0
-                    ? order.items
-                        .filter((item: { medicineId: string; total: number }) =>
-                          order.returnItems.some(
-                            (r: { medicineId: string }) =>
-                              r.medicineId === item.medicineId,
-                          ),
-                        )
-                        .reduce(
-                          (s: number, item: { total: number }) =>
-                            s + item.total,
-                          0,
-                        )
+                    ? order.returnItems.reduce(
+                        (
+                          s: number,
+                          ri: { medicineId: string; returnedQty: number },
+                        ) => {
+                          const it = order.items.find(
+                            (i: {
+                              medicineId: string;
+                              qty: number;
+                              total: number;
+                            }) => i.medicineId === ri.medicineId,
+                          );
+                          if (!it || it.qty === 0) return s;
+                          return s + (it.total / it.qty) * ri.returnedQty;
+                        },
+                        0,
+                      )
                     : 0;
                 const netPayable = order.totalAmount - returnedValue;
                 const balance = netPayable - received;
@@ -15151,13 +15162,24 @@ function DeliveryDashboard() {
                           {order.returnItems &&
                             order.returnItems.length > 0 &&
                             (() => {
-                              const returnedValue = order.items
-                                .filter((item) =>
-                                  order.returnItems.some(
-                                    (r) => r.medicineId === item.medicineId,
-                                  ),
-                                )
-                                .reduce((sum, item) => sum + item.total, 0);
+                              const returnedValue = order.returnItems.reduce(
+                                (
+                                  s: number,
+                                  ri: {
+                                    medicineId: string;
+                                    returnedQty: number;
+                                  },
+                                ) => {
+                                  const it = order.items.find(
+                                    (i) => i.medicineId === ri.medicineId,
+                                  );
+                                  if (!it || it.qty === 0) return s;
+                                  return (
+                                    s + (it.total / it.qty) * ri.returnedQty
+                                  );
+                                },
+                                0,
+                              );
                               const netAmount =
                                 order.totalAmount - returnedValue;
                               return (
@@ -15210,13 +15232,24 @@ function DeliveryDashboard() {
                           );
                           const returnedValue =
                             order.returnItems && order.returnItems.length > 0
-                              ? order.items
-                                  .filter((item) =>
-                                    order.returnItems.some(
-                                      (r) => r.medicineId === item.medicineId,
-                                    ),
-                                  )
-                                  .reduce((sum, item) => sum + item.total, 0)
+                              ? order.returnItems.reduce(
+                                  (
+                                    s: number,
+                                    ri: {
+                                      medicineId: string;
+                                      returnedQty: number;
+                                    },
+                                  ) => {
+                                    const it = order.items.find(
+                                      (i) => i.medicineId === ri.medicineId,
+                                    );
+                                    if (!it || it.qty === 0) return s;
+                                    return (
+                                      s + (it.total / it.qty) * ri.returnedQty
+                                    );
+                                  },
+                                  0,
+                                )
                               : 0;
                           const netPayable = order.totalAmount - returnedValue;
                           const balance = netPayable - received;
@@ -15255,7 +15288,15 @@ function DeliveryDashboard() {
                                   className={`text-xs py-0.5 font-medium ${isReturned ? "text-red-600" : "text-emerald-600"}`}
                                 >
                                   {isReturned ? "↩ " : "✓ "}
-                                  {item.medicineName} x{item.qty}
+                                  {item.medicineName} x{(() => {
+                                    const ri = order.returnItems.find(
+                                      (r: {
+                                        medicineId: string;
+                                        returnedQty: number;
+                                      }) => r.medicineId === item.medicineId,
+                                    );
+                                    return ri ? ri.returnedQty : item.qty;
+                                  })()}
                                 </div>
                               );
                             })}
@@ -16118,7 +16159,10 @@ function MobileApp() {
   // ── Mark pharmacies as visited based on orders ────────────────────────
   useEffect(() => {
     if (pharmacies.length === 0) return;
-    const visitedIds = new Set(state.orders.map((o) => o.pharmacyId));
+    const todayStr = new Date().toISOString().split("T")[0];
+    const visitedIds = new Set(
+      state.orders.filter((o) => o.date === todayStr).map((o) => o.pharmacyId),
+    );
     setPharmacies((prev) =>
       prev.map((p) => ({ ...p, isVisited: visitedIds.has(p.id) })),
     );
