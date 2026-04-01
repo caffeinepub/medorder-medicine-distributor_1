@@ -43,6 +43,7 @@ import {
   Stethoscope,
   Store,
   Syringe,
+  Tag,
   Trash2,
   Truck,
   User,
@@ -4817,6 +4818,7 @@ function ManageScreen({
   showPharmacies = false,
   readOnly = false,
   allMedicineGroups: propsAllMedicineGroups = [],
+  distributorId,
 }: {
   pharmacies: Pharmacy[];
   medicines: Medicine[];
@@ -4830,10 +4832,11 @@ function ManageScreen({
     name: string;
     distributorId: bigint;
   }>;
+  distributorId?: bigint;
 }) {
-  const [activeTab, setActiveTab] = useState<"pharmacies" | "medicines">(
-    showPharmacies ? "pharmacies" : "medicines",
-  );
+  const [activeTab, setActiveTab] = useState<
+    "pharmacies" | "medicines" | "groups"
+  >(showPharmacies ? "pharmacies" : "medicines");
   // ── Pharmacy form state ──
   const [_showPharmacyForm, setShowPharmacyForm] = useState(false);
   const [pharmName, setPharmName] = useState("");
@@ -5191,6 +5194,21 @@ function ManageScreen({
             {medicines.length} total
           </div>
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("groups")}
+          className={`flex-1 py-3 text-sm font-semibold transition-colors ${
+            activeTab === "groups"
+              ? "text-primary border-b-2 border-primary"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+          data-ocid="manage.groups.tab"
+        >
+          <div className="flex items-center justify-center gap-1.5">
+            <Tag size={15} />
+            <span>Groups | گروپس</span>
+          </div>
+        </button>
       </div>
 
       {/* ── Customers Tab ── */}
@@ -5201,6 +5219,18 @@ function ManageScreen({
           onDataReloaded={onDataReloaded}
           medicines={medicines}
         />
+      )}
+
+      {/* ── Groups Tab ── */}
+      {activeTab === "groups" && (
+        <div className="px-4 pt-4 pb-4">
+          <GroupManagementPanel
+            allMedicineGroups={propsAllMedicineGroups}
+            actor={actor}
+            distributorId={distributorId ?? BigInt(0)}
+            onGroupsChanged={() => {}}
+          />
+        </div>
       )}
 
       {/* ── Medicines Tab ── */}
@@ -13878,35 +13908,6 @@ function OfficeDashboard() {
                     })()}
                   </div>
                 </div>
-
-                {/* Group Management */}
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                  <div className="px-5 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
-                    <div>
-                      <h3 className="font-bold text-gray-900">
-                        Medicine Groups | دوائی گروپس
-                      </h3>
-                      <p className="text-xs text-gray-500 mt-0.5">
-                        Create groups to organize medicines (e.g. Blue, Indigo,
-                        Green)
-                      </p>
-                    </div>
-                  </div>
-                  <div className="p-5 space-y-4">
-                    {/* Add Group Form */}
-                    <GroupManagementPanel
-                      allMedicineGroups={allMedicineGroups}
-                      actor={actor}
-                      distributorId={(() => {
-                        const s = getSession();
-                        return s?.distributorId
-                          ? BigInt(s.distributorId)
-                          : BigInt(0);
-                      })()}
-                      onGroupsChanged={(groups) => setAllMedicineGroups(groups)}
-                    />
-                  </div>
-                </div>
               </div>
             )}
             {/* Add Customer */}
@@ -14304,6 +14305,12 @@ function OfficeDashboard() {
                     loadAllData();
                   }}
                   dispatch={() => {}}
+                  distributorId={(() => {
+                    const s = getSession();
+                    return s?.distributorId
+                      ? BigInt(s.distributorId)
+                      : BigInt(0);
+                  })()}
                 />
               </div>
             )}

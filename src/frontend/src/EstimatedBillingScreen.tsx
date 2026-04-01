@@ -120,13 +120,19 @@ export default function EstimatedBillingScreen({
 }: EstimatedBillingScreenProps) {
   const [selectedProduct, setSelectedProduct] = useState<string | null>(null);
 
+  // ── Dispensed version counter to force pool re-derive after order submit ──
+  const [dispensedVersion, setDispensedVersion] = useState(0);
+
   // ── Pool ─────────────────────────────────────────────────────────────────────
   const [pool, setPool] = useState<PoolEntry[]>([]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: dispensedVersion is used as a cache-bust trigger
   useEffect(() => {
     if (allOrders && allOrders.length > 0) {
       const derivedPool: PoolEntry[] = allOrders
-        .filter((o: any) =>
-          o.items?.some((i: any) => (i.companyDiscount ?? 0) > 0),
+        .filter(
+          (o: any) =>
+            o.items?.some((i: any) => (i.companyDiscount ?? 0) > 0) &&
+            (o.staffName ?? o.bookerName ?? "") !== "EstimatedBilling",
         )
         .map((o: any) => ({
           id: String(o.id),
@@ -152,7 +158,30 @@ export default function EstimatedBillingScreen({
               bonusQty: Number(i.bonusQty ?? 0),
             })),
         }));
-      setPool(derivedPool);
+
+      // Apply dispensed subtractions
+      try {
+        const dispensedRaw = localStorage.getItem("estimatedBilling_dispensed");
+        const dispensed: { medicineName: string; qty: number }[] = dispensedRaw
+          ? JSON.parse(dispensedRaw)
+          : [];
+        for (const entry of derivedPool) {
+          for (const item of entry.items) {
+            const totalDispensed = dispensed
+              .filter(
+                (d) =>
+                  d.medicineName.toLowerCase() ===
+                  item.medicineName.toLowerCase(),
+              )
+              .reduce((sum, d) => sum + d.qty, 0);
+            item.qty = Math.max(0, item.qty - totalDispensed);
+          }
+          entry.items = entry.items.filter((item) => item.qty > 0);
+        }
+      } catch {}
+
+      const finalPool = derivedPool.filter((entry) => entry.items.length > 0);
+      setPool(finalPool);
     } else {
       try {
         const raw = localStorage.getItem("estimatedOrders_pool");
@@ -161,7 +190,7 @@ export default function EstimatedBillingScreen({
         setPool([]);
       }
     }
-  }, [allOrders]);
+  }, [allOrders, dispensedVersion]);
 
   // ── Filtered & aggregated data ────────────────────────────────────────────────
   const coDiscountEntries = useMemo(
@@ -294,7 +323,9 @@ export default function EstimatedBillingScreen({
         distributionDiscount: BigInt(
           Math.round((Number.parseFloat(row.dist) || 0) * 10),
         ),
-        companyDiscount: BigInt(0),
+        companyDiscount: BigInt(
+          Math.round((Number.parseFloat(row.co) || 0) * 10),
+        ),
         netRate: BigInt(
           Math.round((Number.parseFloat(row.netRate) || 0) * 100),
         ),
@@ -306,7 +337,7 @@ export default function EstimatedBillingScreen({
           selectedCustomer.id,
           orderLines,
           "Admin",
-          "admin",
+          "EstimatedBilling",
           "",
         );
       } else {
@@ -314,12 +345,30 @@ export default function EstimatedBillingScreen({
           selectedCustomer.id,
           orderLines,
           "Admin",
-          "admin",
+          "EstimatedBilling",
           "",
         );
       }
 
-      // Subtract from estimated pool in localStorage
+      // Track dispensed quantities so pool subtracts correctly
+      try {
+        const dispensedRaw = localStorage.getItem("estimatedBilling_dispensed");
+        const dispensed: { medicineName: string; qty: number }[] = dispensedRaw
+          ? JSON.parse(dispensedRaw)
+          : [];
+        for (const row of validRows) {
+          dispensed.push({
+            medicineName: row.medicineName,
+            qty: Number(row.qty),
+          });
+        }
+        localStorage.setItem(
+          "estimatedBilling_dispensed",
+          JSON.stringify(dispensed),
+        );
+      } catch {}
+
+      // Also update legacy pool in localStorage
       try {
         const poolRaw = localStorage.getItem("estimatedOrders_pool");
         const localPool = poolRaw ? JSON.parse(poolRaw) : [];
@@ -337,6 +386,9 @@ export default function EstimatedBillingScreen({
         }
         localStorage.setItem("estimatedOrders_pool", JSON.stringify(localPool));
       } catch {}
+
+      // Trigger pool re-derive
+      setDispensedVersion((v) => v + 1);
 
       toast.success("Order added successfully!");
       setSelectedCustomer(null);
