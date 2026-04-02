@@ -16487,10 +16487,18 @@ function TestView() {
 // ─── Auth Guard: wraps OfficeDashboard with login requirement ────────────────
 
 function OfficeAuthGuard() {
-  const session = getSession();
-  const [authed, setAuthed] = useState<boolean>(
-    () => session?.role === "admin",
-  );
+  const [authed, setAuthed] = useState<boolean>(() => {
+    const s = getSession();
+    return s?.role === "admin";
+  });
+
+  // Re-check localStorage on mount to handle browser navigation/refresh
+  useEffect(() => {
+    const s = getSession();
+    if (s?.role === "admin") {
+      setAuthed(true);
+    }
+  }, []);
 
   if (!authed) {
     return (
