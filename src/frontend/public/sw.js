@@ -1,4 +1,4 @@
-const CACHE_NAME = 'medflow-v5';
+const CACHE_NAME = 'medflow-v6';
 const SHELL = ['/', '/index.html'];
 
 self.addEventListener('install', (e) => {
@@ -68,8 +68,8 @@ self.addEventListener('push', (e) => {
   const data = e.data ? e.data.json() : {};
   e.waitUntil(self.registration.showNotification(data.title || 'MedFlow', {
     body: data.body || 'New notification from MedFlow',
-    icon: '/assets/generated/medflow-icon-192.dim_192x192.png',
-    badge: '/assets/generated/medflow-icon-192.dim_192x192.png',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
     data: data.url || '/'
   }));
 });

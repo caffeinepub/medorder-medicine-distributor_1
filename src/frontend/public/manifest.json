@@ -15,25 +15,25 @@
   "prefer_related_applications": false,
   "icons": [
     {
-      "src": "/assets/generated/medflow-icon-192.dim_192x192.png",
+      "src": "/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/assets/generated/medflow-icon.dim_512x512.png",
+      "src": "/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/assets/generated/medflow-maskable-192.dim_192x192.png",
+      "src": "/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "/assets/generated/medflow-maskable-icon.dim_512x512.png",
+      "src": "/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
@@ -61,14 +61,14 @@
       "short_name": "Order",
       "description": "Add a new medicine order",
       "url": "/?action=new-order",
-      "icons": [{ "src": "/assets/generated/medflow-maskable-192.dim_192x192.png", "sizes": "192x192" }]
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
     },
     {
       "name": "Inventory",
       "short_name": "Stock",
       "description": "View inventory",
       "url": "/?action=inventory",
-      "icons": [{ "src": "/assets/generated/medflow-maskable-192.dim_192x192.png", "sizes": "192x192" }]
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
     }
   ]
 }

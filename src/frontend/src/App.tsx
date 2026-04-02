@@ -4080,11 +4080,32 @@ function OrderDetailScreen({
 
 // ─── Group Management Panel ───────────────────────────────────────────────────
 
+function loadGroupDetails(
+  distributorId: bigint,
+): Record<string, { company: string; medicines: string[] }> {
+  try {
+    const raw = localStorage.getItem(`medflow_group_details_${distributorId}`);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+function saveGroupDetails(
+  distributorId: bigint,
+  details: Record<string, { company: string; medicines: string[] }>,
+) {
+  localStorage.setItem(
+    `medflow_group_details_${distributorId}`,
+    JSON.stringify(details),
+  );
+}
+
 function GroupManagementPanel({
   allMedicineGroups,
   actor,
   distributorId,
   onGroupsChanged,
+  allMedicines,
 }: {
   allMedicineGroups: Array<{ id: bigint; name: string; distributorId: bigint }>;
   actor: backendInterface | null;
@@ -4092,16 +4113,78 @@ function GroupManagementPanel({
   onGroupsChanged: (
     groups: Array<{ id: bigint; name: string; distributorId: bigint }>,
   ) => void;
+  allMedicines?: Medicine[];
 }) {
   const [newGroupName, setNewGroupName] = useState("");
   const [isAddingGroup, setIsAddingGroup] = useState(false);
   const [deletingGroupId, setDeletingGroupId] = useState<bigint | null>(null);
+  const [selectedCompany, setSelectedCompany] = useState("");
+  const [companySearch, setCompanySearch] = useState("");
+  const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
+  const [selectedMedicines, setSelectedMedicines] = useState<string[]>([]);
+  const [medicineSearch, setMedicineSearch] = useState("");
+  const [medicineDropdownOpen, setMedicineDropdownOpen] = useState(false);
+  const [editingGroupId, setEditingGroupId] = useState<bigint | null>(null);
+
+  const meds = allMedicines ?? [];
+  const companies = Array.from(
+    new Set(meds.map((m) => m.company || "").filter(Boolean)),
+  ).sort();
+  const filteredCompanies = companies.filter((c) =>
+    c.toLowerCase().includes(companySearch.toLowerCase()),
+  );
+  const companyMedicines = selectedCompany
+    ? meds.filter((m) => m.company === selectedCompany)
+    : meds;
+  const filteredMedList = companyMedicines.filter(
+    (m) =>
+      m.name.toLowerCase().includes(medicineSearch.toLowerCase()) &&
+      !selectedMedicines.includes(m.name),
+  );
+
+  function resetForm() {
+    setNewGroupName("");
+    setSelectedCompany("");
+    setCompanySearch("");
+    setSelectedMedicines([]);
+    setMedicineSearch("");
+    setEditingGroupId(null);
+  }
 
   async function handleAddGroup() {
     if (!actor || !newGroupName.trim()) return;
     setIsAddingGroup(true);
     try {
-      await actor.addMedicineGroup(newGroupName.trim(), distributorId);
+      let groupId: bigint;
+      if (editingGroupId !== null) {
+        // Update name via backend (use delete + add as workaround if no update fn)
+        await actor.deleteMedicineGroup(editingGroupId, distributorId);
+        const newId = await actor.addMedicineGroup(
+          newGroupName.trim(),
+          distributorId,
+        );
+        groupId = typeof newId === "bigint" ? newId : editingGroupId;
+        // Remove old details
+        const details = loadGroupDetails(distributorId);
+        delete details[editingGroupId.toString()];
+        details[groupId.toString()] = {
+          company: selectedCompany,
+          medicines: selectedMedicines,
+        };
+        saveGroupDetails(distributorId, details);
+      } else {
+        const newId = await actor.addMedicineGroup(
+          newGroupName.trim(),
+          distributorId,
+        );
+        groupId = typeof newId === "bigint" ? newId : BigInt(0);
+        const details = loadGroupDetails(distributorId);
+        details[groupId.toString()] = {
+          company: selectedCompany,
+          medicines: selectedMedicines,
+        };
+        saveGroupDetails(distributorId, details);
+      }
       const updated = await actor.getMedicineGroups(distributorId);
       onGroupsChanged(
         updated.map((g) => ({
@@ -4110,8 +4193,12 @@ function GroupManagementPanel({
           distributorId: g.distributorId,
         })),
       );
-      setNewGroupName("");
-      toast.success(`Group "${newGroupName.trim()}" add ho gaya!`);
+      toast.success(
+        editingGroupId !== null
+          ? "Group updated!"
+          : `Group "${newGroupName.trim()}" add ho gaya!`,
+      );
+      resetForm();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Unknown error";
       toast.error(`Error: ${msg}`);
@@ -4125,6 +4212,10 @@ function GroupManagementPanel({
     setDeletingGroupId(groupId);
     try {
       await actor.deleteMedicineGroup(groupId, distributorId);
+      // Remove from localStorage
+      const details = loadGroupDetails(distributorId);
+      delete details[groupId.toString()];
+      saveGroupDetails(distributorId, details);
       const updated = await actor.getMedicineGroups(distributorId);
       onGroupsChanged(
         updated.map((g) => ({
@@ -4134,6 +4225,7 @@ function GroupManagementPanel({
         })),
       );
       toast.success(`Group "${groupName}" delete ho gaya!`);
+      if (editingGroupId === groupId) resetForm();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Unknown error";
       toast.error(`Error: ${msg}`);
@@ -4142,61 +4234,267 @@ function GroupManagementPanel({
     }
   }
 
+  function startEdit(grp: { id: bigint; name: string }) {
+    const details = loadGroupDetails(distributorId);
+    const d = details[grp.id.toString()] ?? { company: "", medicines: [] };
+    setEditingGroupId(grp.id);
+    setNewGroupName(grp.name);
+    setSelectedCompany(d.company);
+    setSelectedMedicines(d.medicines);
+    setCompanySearch("");
+    setMedicineSearch("");
+  }
+
   return (
-    <div className="space-y-3">
-      <div className="flex gap-2">
-        <input
-          type="text"
-          data-ocid="group_mgmt.name_input"
-          value={newGroupName}
-          onChange={(e) => setNewGroupName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") handleAddGroup();
-          }}
-          placeholder="Group name e.g. Blue, Indigo, Series-A"
-          disabled={isAddingGroup}
-          className="flex-1 h-10 text-sm border border-gray-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
-        />
-        <button
-          type="button"
-          data-ocid="group_mgmt.add_button"
-          onClick={handleAddGroup}
-          disabled={isAddingGroup || !newGroupName.trim()}
-          className="h-10 flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold text-sm px-4 rounded-lg transition-colors"
-        >
-          {isAddingGroup ? (
-            <svg
-              aria-hidden="true"
-              xmlns="http://www.w3.org/2000/svg"
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              className="animate-spin"
+    <div className="space-y-4">
+      {/* Form */}
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
+        <h4 className="text-sm font-bold text-blue-800">
+          {editingGroupId !== null
+            ? "✏️ Edit Group | گروپ ترمیم"
+            : "➕ New Group | نیا گروپ"}
+        </h4>
+        {/* Company selector */}
+        <div className="relative">
+          <label
+            htmlFor="group-company-trigger"
+            className="text-xs font-semibold text-gray-600 block mb-1"
+          >
+            Company | کمپنی
+          </label>
+          <button
+            type="button"
+            id="group-company-trigger"
+            className="w-full flex items-center gap-2 h-10 border border-gray-300 rounded-lg px-3 bg-white cursor-pointer select-none text-left"
+            onClick={() => setCompanyDropdownOpen((v) => !v)}
+          >
+            <span
+              className={`flex-1 text-sm ${selectedCompany ? "text-gray-900" : "text-gray-400"}`}
             >
-              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-            </svg>
-          ) : (
-            <svg
-              aria-hidden="true"
-              xmlns="http://www.w3.org/2000/svg"
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
+              {selectedCompany || "Select company..."}
+            </span>
+            {selectedCompany && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedCompany("");
+                  setSelectedMedicines([]);
+                }}
+                className="text-gray-400 hover:text-gray-700 text-xs"
+              >
+                ×
+              </button>
+            )}
+          </button>
+          {companyDropdownOpen && (
+            <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg">
+              <div className="p-2 border-b border-gray-100">
+                <input
+                  type="text"
+                  placeholder="Search company..."
+                  value={companySearch}
+                  onChange={(e) => setCompanySearch(e.target.value)}
+                  className="w-full h-8 text-sm border border-gray-200 rounded px-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+              </div>
+              <div className="max-h-40 overflow-y-auto">
+                {filteredCompanies.length === 0 ? (
+                  <div className="text-xs text-gray-400 text-center py-3">
+                    No companies found
+                  </div>
+                ) : (
+                  filteredCompanies.map((co) => (
+                    <div
+                      key={co}
+                      className="px-3 py-2 text-sm hover:bg-blue-50 cursor-pointer"
+                      onClick={() => {
+                        setSelectedCompany(co);
+                        setSelectedMedicines([]);
+                        setCompanyDropdownOpen(false);
+                        setCompanySearch("");
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          setSelectedCompany(co);
+                          setSelectedMedicines([]);
+                          setCompanyDropdownOpen(false);
+                          setCompanySearch("");
+                        }
+                      }}
+                    >
+                      {co}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           )}
-          Add Group
-        </button>
+        </div>
+
+        {/* Medicine multi-select */}
+        <div className="relative">
+          <label
+            htmlFor="group-medicine-trigger"
+            className="text-xs font-semibold text-gray-600 block mb-1"
+          >
+            Medicines | ادویات
+          </label>
+          {selectedMedicines.length > 0 && (
+            <div className="flex flex-wrap gap-1 mb-1">
+              {selectedMedicines.map((m) => (
+                <span
+                  key={m}
+                  className="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-medium"
+                >
+                  {m}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSelectedMedicines((prev) =>
+                        prev.filter((x) => x !== m),
+                      )
+                    }
+                    className="text-blue-600 hover:text-blue-900 leading-none ml-0.5"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <button
+            type="button"
+            id="group-medicine-trigger"
+            className="w-full flex items-center gap-2 h-10 border border-gray-300 rounded-lg px-3 bg-white cursor-pointer select-none text-left"
+            onClick={() => setMedicineDropdownOpen((v) => !v)}
+          >
+            <span className="flex-1 text-sm text-gray-400">
+              Add medicine...
+            </span>
+          </button>
+          {medicineDropdownOpen && (
+            <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg">
+              <div className="p-2 border-b border-gray-100">
+                <input
+                  type="text"
+                  placeholder="Search medicine..."
+                  value={medicineSearch}
+                  onChange={(e) => setMedicineSearch(e.target.value)}
+                  className="w-full h-8 text-sm border border-gray-200 rounded px-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+              </div>
+              <div className="max-h-48 overflow-y-auto">
+                {filteredMedList.length === 0 ? (
+                  <div className="text-xs text-gray-400 text-center py-3">
+                    No medicines found
+                  </div>
+                ) : (
+                  filteredMedList.map((m) => (
+                    <div
+                      key={m.id}
+                      className="px-3 py-2 text-sm hover:bg-blue-50 cursor-pointer"
+                      onClick={() => {
+                        setSelectedMedicines((prev) => [...prev, m.name]);
+                        setMedicineSearch("");
+                        setMedicineDropdownOpen(false);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          setSelectedMedicines((prev) => [...prev, m.name]);
+                          setMedicineSearch("");
+                          setMedicineDropdownOpen(false);
+                        }
+                      }}
+                    >
+                      <span className="font-medium">{m.name}</span>
+                      {m.strength && (
+                        <span className="text-gray-400 ml-1 text-xs">
+                          {m.strength}
+                        </span>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Group name */}
+        <div>
+          <label
+            htmlFor="group-name-input"
+            className="text-xs font-semibold text-gray-600 block mb-1"
+          >
+            Group Name | گروپ کا نام
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              id="group-name-input"
+              data-ocid="group_mgmt.name_input"
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleAddGroup();
+              }}
+              placeholder="e.g. Indigo, Series-A, Blue"
+              disabled={isAddingGroup}
+              className="flex-1 h-10 text-sm border border-gray-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
+            />
+            {editingGroupId !== null && (
+              <button
+                type="button"
+                onClick={resetForm}
+                className="h-10 px-3 text-sm border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            )}
+            <button
+              type="button"
+              data-ocid="group_mgmt.add_button"
+              onClick={handleAddGroup}
+              disabled={isAddingGroup || !newGroupName.trim()}
+              className="h-10 flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold text-sm px-4 rounded-lg transition-colors"
+            >
+              {isAddingGroup ? (
+                <svg
+                  aria-hidden="true"
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  className="animate-spin"
+                >
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                </svg>
+              ) : (
+                <svg
+                  aria-hidden="true"
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+              )}
+              {editingGroupId !== null ? "Update" : "Add Group"}
+            </button>
+          </div>
+        </div>
       </div>
 
+      {/* List */}
       {allMedicineGroups.length === 0 ? (
         <div
           className="text-center py-8 text-gray-400"
@@ -4205,55 +4503,101 @@ function GroupManagementPanel({
           <p className="text-sm">No groups created yet. Add a group above.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-          {allMedicineGroups.map((grp, idx) => (
-            <div
-              key={String(grp.id)}
-              data-ocid={`group_mgmt.item.${idx + 1}`}
-              className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5"
-            >
-              <span className="text-sm font-medium text-gray-900">
-                {grp.name}
-              </span>
-              <button
-                type="button"
-                data-ocid={`group_mgmt.delete_button.${idx + 1}`}
-                onClick={() => handleDeleteGroup(grp.id, grp.name)}
-                disabled={deletingGroupId === grp.id}
-                className="ml-2 text-red-400 hover:text-red-600 disabled:opacity-50 transition-colors"
+        <div className="space-y-2">
+          {allMedicineGroups.map((grp, idx) => {
+            const details = loadGroupDetails(distributorId);
+            const d = details[grp.id.toString()] ?? {
+              company: "",
+              medicines: [],
+            };
+            return (
+              <div
+                key={grp.id.toString()}
+                className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-colors ${editingGroupId === grp.id ? "border-blue-400 bg-blue-50" : "border-gray-200 bg-white hover:bg-gray-50"}`}
+                data-ocid={`group_mgmt.item.${idx + 1}`}
               >
-                {deletingGroupId === grp.id ? (
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold text-gray-900 text-sm">
+                    {grp.name}
+                  </div>
+                  {d.company && (
+                    <div className="text-xs text-blue-600 font-medium mt-0.5">
+                      {d.company}
+                    </div>
+                  )}
+                  {d.medicines.length > 0 && (
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {d.medicines.length} medicine
+                      {d.medicines.length !== 1 ? "s" : ""}:{" "}
+                      {d.medicines.slice(0, 3).join(", ")}
+                      {d.medicines.length > 3
+                        ? ` +${d.medicines.length - 3}`
+                        : ""}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  data-ocid={`group_mgmt.edit_button.${idx + 1}`}
+                  onClick={() => startEdit(grp)}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg bg-blue-100 hover:bg-blue-200 text-blue-700 transition-colors"
+                  title="Edit"
+                >
                   <svg
                     aria-hidden="true"
                     xmlns="http://www.w3.org/2000/svg"
-                    width="12"
-                    height="12"
+                    width="14"
+                    height="14"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
                     strokeWidth="2"
-                    className="animate-spin"
                   >
-                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                   </svg>
-                ) : (
-                  <svg
-                    aria-hidden="true"
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                  >
-                    <polyline points="3 6 5 6 21 6" />
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-                  </svg>
-                )}
-              </button>
-            </div>
-          ))}
+                </button>
+                <button
+                  type="button"
+                  data-ocid={`group_mgmt.delete_button.${idx + 1}`}
+                  onClick={() => handleDeleteGroup(grp.id, grp.name)}
+                  disabled={deletingGroupId === grp.id}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg bg-red-100 hover:bg-red-200 text-red-700 disabled:opacity-50 transition-colors"
+                  title="Delete"
+                >
+                  {deletingGroupId === grp.id ? (
+                    <svg
+                      aria-hidden="true"
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      className="animate-spin"
+                    >
+                      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                    </svg>
+                  ) : (
+                    <svg
+                      aria-hidden="true"
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -5229,6 +5573,7 @@ function ManageScreen({
             actor={actor}
             distributorId={distributorId ?? BigInt(0)}
             onGroupsChanged={() => {}}
+            allMedicines={medicines}
           />
         </div>
       )}
@@ -7235,11 +7580,28 @@ function mapRawOrdersToDetail(
 type DailySaleStatementProps = {
   allOrders: OfficeOrderDetail[];
   allMedicines: Medicine[];
+  allCustomers?: Customer[];
+  allPharmacies?: Array<{
+    id: bigint;
+    name: string;
+    location: string;
+    area?: string;
+  }>;
+  allMedicineGroups?: Array<{
+    id: bigint;
+    name: string;
+    distributorId: bigint;
+  }>;
+  distributorId?: bigint;
 };
 
 function DailySaleStatement({
   allOrders,
   allMedicines,
+  allCustomers = [],
+  allPharmacies = [],
+  allMedicineGroups = [],
+  distributorId,
 }: DailySaleStatementProps) {
   const today = new Date().toISOString().split("T")[0];
   const firstOfMonth = new Date(
@@ -7252,7 +7614,34 @@ function DailySaleStatement({
 
   const [dateFrom, setDateFrom] = useState(firstOfMonth);
   const [dateTo, setDateTo] = useState(today);
-  const [saleTab, setSaleTab] = useState<"all" | "deal" | "bonus">("all");
+  const [saleTab, setSaleTab] = useState<"all" | "deal" | "bonus" | "group">(
+    "all",
+  );
+
+  // DSS Filters
+  const [dssSelectedCustomers, setDssSelectedCustomers] = useState<string[]>(
+    [],
+  );
+  const [dssCustomerSearch, setDssCustomerSearch] = useState("");
+  const [dssCustomerDropdown, setDssCustomerDropdown] = useState(false);
+
+  const [dssSelectedCompanies, setDssSelectedCompanies] = useState<string[]>(
+    [],
+  );
+  const [dssCompanySearch, setDssCompanySearch] = useState("");
+  const [dssCompanyDropdown, setDssCompanyDropdown] = useState(false);
+
+  const [dssSelectedProducts, setDssSelectedProducts] = useState<string[]>([]);
+  const [dssProductSearch, setDssProductSearch] = useState("");
+  const [dssProductDropdown, setDssProductDropdown] = useState(false);
+
+  const [dssSelectedGroups, setDssSelectedGroups] = useState<string[]>([]);
+  const [dssGroupSearch, setDssGroupSearch] = useState("");
+  const [dssGroupDropdown, setDssGroupDropdown] = useState(false);
+
+  const [dssSelectedAreas, setDssSelectedAreas] = useState<string[]>([]);
+  const [dssAreaSearch, setDssAreaSearch] = useState("");
+  const [dssAreaDropdown, setDssAreaDropdown] = useState(false);
 
   // Email mock state
   type EmailModalState = { company: string; isSendAll: boolean } | null;
@@ -7298,6 +7687,39 @@ function DailySaleStatement({
     }, 1500);
   }
 
+  // Filter data sources
+  const dssCustomerNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const c of allCustomers) names.add(c.name);
+    for (const p of allPharmacies) names.add(p.name);
+    return Array.from(names).filter(Boolean).sort();
+  }, [allCustomers, allPharmacies]);
+
+  const dssCompanyNames = useMemo(
+    () =>
+      Array.from(
+        new Set(allMedicines.map((m) => m.company || "").filter(Boolean)),
+      ).sort(),
+    [allMedicines],
+  );
+
+  const dssProductNames = useMemo(
+    () =>
+      Array.from(
+        new Set(allMedicines.map((m) => m.name).filter(Boolean)),
+      ).sort(),
+    [allMedicines],
+  );
+
+  const dssGroupNames = useMemo(
+    () =>
+      allMedicineGroups
+        .map((g) => g.name)
+        .filter(Boolean)
+        .sort(),
+    [allMedicineGroups],
+  );
+
   // Get unique areas from orders
   const areas = useMemo(() => {
     const set = new Set<string>();
@@ -7307,12 +7729,33 @@ function DailySaleStatement({
     return Array.from(set).sort();
   }, [allOrders]);
 
-  // Filter orders by date range — only delivered orders, excluding returns
+  const dssAreaNames = areas;
+
+  const anyFilterActive =
+    dssSelectedCustomers.length > 0 ||
+    dssSelectedCompanies.length > 0 ||
+    dssSelectedProducts.length > 0 ||
+    dssSelectedGroups.length > 0 ||
+    dssSelectedAreas.length > 0;
+
+  // Filter orders by date range + customer + area
   const filteredOrders = useMemo(() => {
-    return allOrders.filter(
+    let filtered = allOrders.filter(
       (o) => o.date >= dateFrom && o.date <= dateTo && o.status === "delivered",
     );
-  }, [allOrders, dateFrom, dateTo]);
+    if (dssSelectedCustomers.length > 0) {
+      filtered = filtered.filter((o) =>
+        dssSelectedCustomers.includes(o.pharmacyName),
+      );
+    }
+    if (dssSelectedAreas.length > 0) {
+      filtered = filtered.filter((o) => {
+        const area = o.pharmacyArea?.trim() || "";
+        return dssSelectedAreas.includes(area);
+      });
+    }
+    return filtered;
+  }, [allOrders, dateFrom, dateTo, dssSelectedCustomers, dssSelectedAreas]);
 
   // Group medicines by company
   const companiesMap = useMemo(() => {
@@ -7325,9 +7768,24 @@ function DailySaleStatement({
     return map;
   }, [allMedicines]);
 
+  // Filtered companiesMap - filter by selected companies/products
+  const filteredCompaniesMap = useMemo(() => {
+    const map = new Map<string, Medicine[]>();
+    for (const [co, meds] of companiesMap) {
+      if (dssSelectedCompanies.length > 0 && !dssSelectedCompanies.includes(co))
+        continue;
+      const filteredMeds =
+        dssSelectedProducts.length > 0
+          ? meds.filter((m) => dssSelectedProducts.includes(m.name))
+          : meds;
+      if (filteredMeds.length > 0) map.set(co, filteredMeds);
+    }
+    return map;
+  }, [companiesMap, dssSelectedCompanies, dssSelectedProducts]);
+
   const companiesSorted = useMemo(
-    () => Array.from(companiesMap.keys()).sort(),
-    [companiesMap],
+    () => Array.from(filteredCompaniesMap.keys()).sort(),
+    [filteredCompaniesMap],
   );
 
   // Helper: get quarter for a date string
@@ -7377,6 +7835,22 @@ function DailySaleStatement({
 
   const lastMonthRange = getLastMonthRange();
 
+  // Group filter helper: get medicines in selected groups
+  const groupFilterMedicineNames = useMemo(() => {
+    if (dssSelectedGroups.length === 0) return null; // null means no filter
+    const distId = distributorId ?? allMedicineGroups[0]?.distributorId;
+    if (!distId) return new Set<string>();
+    const details = loadGroupDetails(distId);
+    const names = new Set<string>();
+    for (const grp of allMedicineGroups) {
+      if (dssSelectedGroups.includes(grp.name)) {
+        const d = details[grp.id.toString()];
+        if (d?.medicines) for (const m of d.medicines) names.add(m);
+      }
+    }
+    return names;
+  }, [dssSelectedGroups, allMedicineGroups, distributorId]);
+
   function computeStats(medicines: Medicine[]): MedicineStat[] {
     return medicines.map((med) => {
       const stat: MedicineStat = {
@@ -7402,6 +7876,14 @@ function DailySaleStatement({
         dealAreaUnits: {},
         bonusAreaUnits: {},
       };
+
+      // Skip if group filter active and medicine not in group
+      if (
+        groupFilterMedicineNames !== null &&
+        !groupFilterMedicineNames.has(med.name)
+      ) {
+        return stat;
+      }
 
       for (const order of filteredOrders) {
         const area = order.pharmacyArea?.trim() || "";
@@ -7598,6 +8080,30 @@ function DailySaleStatement({
     `;
   }
 
+  // Helper: build group-wise HTML for print
+  function buildGroupPrintHtml(
+    groupStats: Array<{
+      grpName: string;
+      company: string;
+      medicines: Array<{ name: string; qty: number; value: number }>;
+    }>,
+  ): string {
+    const rows = groupStats
+      .map((g) => {
+        const totalQty = g.medicines.reduce((s, m) => s + m.qty, 0);
+        const totalVal = g.medicines.reduce((s, m) => s + m.value, 0);
+        const medRows = g.medicines
+          .map(
+            (m) =>
+              `<tr><td style="padding-left:20px">${m.name}</td><td>${m.qty}</td><td>Rs. ${m.value.toFixed(0)}</td></tr>`,
+          )
+          .join("");
+        return `<tr style="background:#1e3a6e;color:white;font-weight:bold"><td>${g.grpName}</td><td>Company: ${g.company || "-"}</td><td>${totalQty} units</td><td>Rs. ${totalVal.toFixed(0)}</td></tr>${medRows}`;
+      })
+      .join("");
+    return `<table><thead><tr><th>Group</th><th>Company</th><th>Total Qty</th><th>Total Value</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
   // Helper: wrap HTML body with full print document
   function wrapPrintHtml(body: string, title: string): string {
     return `<!DOCTYPE html><html><head><title>${title}</title>
@@ -7634,6 +8140,220 @@ function DailySaleStatement({
     printWindow.print();
   }
 
+  // Download filtered PDF
+  function downloadFilteredPdf() {
+    const printWin = window.open("", "_blank");
+    if (!printWin) return;
+    let allBody = "";
+    if (saleTab === "group") {
+      const distId = distributorId ?? allMedicineGroups[0]?.distributorId;
+      const details = distId ? loadGroupDetails(distId) : {};
+      const groupStatsArr = allMedicineGroups.map((grp) => {
+        const d = details[grp.id.toString()] ?? { company: "", medicines: [] };
+        const medList = d.medicines.map((mName) => {
+          const med = allMedicines.find((m) => m.name === mName);
+          let qty = 0;
+          let value = 0;
+          if (med) {
+            for (const order of filteredOrders) {
+              for (const item of order.items) {
+                if (String(item.medicineId) !== String(med.backendId)) continue;
+                const retQty =
+                  (order.returnItems || []).find(
+                    (ri) => ri.medicineId === item.medicineId,
+                  )?.returnedQty ?? 0;
+                const eff = Math.max(0, item.qty - retQty);
+                qty += eff;
+                const discPct = item.discountPercent / 10;
+                value +=
+                  item.unitPrice * eff - (discPct / 100) * item.unitPrice * eff;
+              }
+            }
+          }
+          return { name: mName, qty, value };
+        });
+        return { grpName: grp.name, company: d.company, medicines: medList };
+      });
+      allBody = buildGroupPrintHtml(groupStatsArr);
+    } else {
+      for (const co of companiesSorted) {
+        const meds = filteredCompaniesMap.get(co) ?? [];
+        const coStats = computeStats(meds);
+        allBody += buildCompanyPrintHtml(co, coStats);
+      }
+    }
+    printWin.document.write(
+      wrapPrintHtml(allBody, "Daily Sale Statement — Filtered"),
+    );
+    printWin.document.close();
+    printWin.print();
+  }
+
+  // Group tab data
+  const groupTabData = useMemo(() => {
+    if (saleTab !== "group") return [];
+    const distId = distributorId ?? allMedicineGroups[0]?.distributorId;
+    const details = distId ? loadGroupDetails(distId) : {};
+    return allMedicineGroups.map((grp) => {
+      const d = details[grp.id.toString()] ?? { company: "", medicines: [] };
+      const medItems = d.medicines.map((mName) => {
+        const med = allMedicines.find((m) => m.name === mName);
+        let qty = 0;
+        let value = 0;
+        if (med) {
+          for (const order of filteredOrders) {
+            for (const item of order.items) {
+              if (String(item.medicineId) !== String(med.backendId)) continue;
+              const retQty =
+                (order.returnItems || []).find(
+                  (ri) => ri.medicineId === item.medicineId,
+                )?.returnedQty ?? 0;
+              const eff = Math.max(0, item.qty - retQty);
+              qty += eff;
+              const discPct = item.discountPercent / 10;
+              value +=
+                item.unitPrice * eff - (discPct / 100) * item.unitPrice * eff;
+            }
+          }
+        }
+        return { name: mName, qty, value };
+      });
+      const totalQty = medItems.reduce((s, m) => s + m.qty, 0);
+      const totalValue = medItems.reduce((s, m) => s + m.value, 0);
+      return {
+        grp,
+        company: d.company,
+        medicines: d.medicines,
+        medItems,
+        totalQty,
+        totalValue,
+      };
+    });
+  }, [saleTab, allMedicineGroups, filteredOrders, allMedicines, distributorId]);
+
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
+  // Reusable multi-select filter chip component (inline)
+  function DssFilterDropdown({
+    label,
+    selected,
+    setSelected,
+    search,
+    setSearch,
+    open,
+    setOpen,
+    options,
+    ocidScope,
+  }: {
+    label: string;
+    selected: string[];
+    setSelected: (v: string[]) => void;
+    search: string;
+    setSearch: (v: string) => void;
+    open: boolean;
+    setOpen: (v: boolean) => void;
+    options: string[];
+    ocidScope: string;
+  }) {
+    const filtered = options.filter(
+      (o) =>
+        o.toLowerCase().includes(search.toLowerCase()) && !selected.includes(o),
+    );
+    return (
+      <div className="relative">
+        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+          {label}
+        </div>
+        {selected.length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-1">
+            {selected.map((val) => (
+              <span
+                key={val}
+                className="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-medium"
+              >
+                {val}
+                <button
+                  type="button"
+                  onClick={() => setSelected(selected.filter((x) => x !== val))}
+                  className="text-blue-500 hover:text-blue-900 leading-none"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div
+          className="flex items-center gap-2 h-9 border border-gray-300 rounded-lg px-3 bg-white cursor-pointer text-sm text-gray-500 hover:border-blue-400 transition-colors"
+          onClick={() => setOpen(!open)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") setOpen(!open);
+          }}
+          data-ocid={`${ocidScope}.select`}
+        >
+          <span className="flex-1 truncate">
+            {selected.length > 0
+              ? `+${options.filter((o) => !selected.includes(o)).length} more`
+              : "All"}
+          </span>
+          <svg
+            aria-hidden="true"
+            xmlns="http://www.w3.org/2000/svg"
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </div>
+        {open && (
+          <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg min-w-[180px]">
+            <div className="p-2 border-b border-gray-100">
+              <input
+                type="text"
+                placeholder={`Search ${label.toLowerCase()}...`}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full h-7 text-xs border border-gray-200 rounded px-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+            </div>
+            <div className="max-h-44 overflow-y-auto">
+              {filtered.length === 0 ? (
+                <div className="text-xs text-gray-400 text-center py-3">
+                  No options
+                </div>
+              ) : (
+                filtered.map((val) => (
+                  <div
+                    key={val}
+                    className="px-3 py-2 text-xs hover:bg-blue-50 cursor-pointer"
+                    onClick={() => {
+                      setSelected([...selected, val]);
+                      setSearch("");
+                      setOpen(false);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        setSelected([...selected, val]);
+                        setSearch("");
+                        setOpen(false);
+                      }
+                    }}
+                  >
+                    {val}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -7656,6 +8376,96 @@ function DailySaleStatement({
             </div>
           </div>
         </div>
+
+        {/* Filter Bar */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-4 pb-4 border-b border-gray-100">
+          <DssFilterDropdown
+            label="Customer | کسٹمر"
+            selected={dssSelectedCustomers}
+            setSelected={setDssSelectedCustomers}
+            search={dssCustomerSearch}
+            setSearch={setDssCustomerSearch}
+            open={dssCustomerDropdown}
+            setOpen={setDssCustomerDropdown}
+            options={dssCustomerNames}
+            ocidScope="dss.customer_filter"
+          />
+          <DssFilterDropdown
+            label="Company | کمپنی"
+            selected={dssSelectedCompanies}
+            setSelected={setDssSelectedCompanies}
+            search={dssCompanySearch}
+            setSearch={setDssCompanySearch}
+            open={dssCompanyDropdown}
+            setOpen={setDssCompanyDropdown}
+            options={dssCompanyNames}
+            ocidScope="dss.company_filter"
+          />
+          <DssFilterDropdown
+            label="Product | پروڈکٹ"
+            selected={dssSelectedProducts}
+            setSelected={setDssSelectedProducts}
+            search={dssProductSearch}
+            setSearch={setDssProductSearch}
+            open={dssProductDropdown}
+            setOpen={setDssProductDropdown}
+            options={dssProductNames}
+            ocidScope="dss.product_filter"
+          />
+          <DssFilterDropdown
+            label="Group | گروپ"
+            selected={dssSelectedGroups}
+            setSelected={setDssSelectedGroups}
+            search={dssGroupSearch}
+            setSearch={setDssGroupSearch}
+            open={dssGroupDropdown}
+            setOpen={setDssGroupDropdown}
+            options={dssGroupNames}
+            ocidScope="dss.group_filter"
+          />
+          <DssFilterDropdown
+            label="Area | علاقہ"
+            selected={dssSelectedAreas}
+            setSelected={setDssSelectedAreas}
+            search={dssAreaSearch}
+            setSearch={setDssAreaSearch}
+            open={dssAreaDropdown}
+            setOpen={setDssAreaDropdown}
+            options={dssAreaNames}
+            ocidScope="dss.area_filter"
+          />
+        </div>
+        {anyFilterActive && (
+          <div className="mb-4">
+            <button
+              type="button"
+              data-ocid="dss.reset_filters_button"
+              onClick={() => {
+                setDssSelectedCustomers([]);
+                setDssSelectedCompanies([]);
+                setDssSelectedProducts([]);
+                setDssSelectedGroups([]);
+                setDssSelectedAreas([]);
+              }}
+              className="text-xs text-red-600 hover:text-red-800 font-medium flex items-center gap-1"
+            >
+              <svg
+                aria-hidden="true"
+                xmlns="http://www.w3.org/2000/svg"
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <polyline points="1 4 1 10 7 10" />
+                <path d="M3.51 15a9 9 0 1 0 .49-4.5" />
+              </svg>
+              Reset Filters | فلٹر صاف کریں
+            </button>
+          </div>
+        )}
 
         {/* Controls */}
         <div className="flex flex-wrap items-center gap-4">
@@ -7690,12 +8500,12 @@ function DailySaleStatement({
             />
           </div>
           <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
-            {(["all", "deal", "bonus"] as const).map((tab) => (
+            {(["all", "deal", "bonus", "group"] as const).map((tab) => (
               <button
                 key={tab}
                 type="button"
                 onClick={() => setSaleTab(tab)}
-                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors capitalize ${
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors capitalize ${
                   saleTab === tab
                     ? "bg-white text-blue-700 shadow-sm font-semibold"
                     : "text-gray-600 hover:text-gray-900"
@@ -7705,10 +8515,21 @@ function DailySaleStatement({
                   ? "All Sales"
                   : tab === "deal"
                     ? "Deal Sales"
-                    : "Bonus Sales"}
+                    : tab === "bonus"
+                      ? "Bonus Sales"
+                      : "Group | گروپ"}
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            data-ocid="dss.download_pdf_button"
+            onClick={downloadFilteredPdf}
+            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+          >
+            <Download size={14} />
+            Download PDF | پی ڈی ایف
+          </button>
           <button
             type="button"
             onClick={() => {
@@ -7716,7 +8537,7 @@ function DailySaleStatement({
               if (!printWin) return;
               let allBody = "";
               for (const co of companiesSorted) {
-                const meds = companiesMap.get(co) ?? [];
+                const meds = filteredCompaniesMap.get(co) ?? [];
                 const coStats = computeStats(meds);
                 allBody += buildCompanyPrintHtml(co, coStats);
               }
@@ -7726,7 +8547,7 @@ function DailySaleStatement({
               printWin.document.close();
               printWin.print();
             }}
-            disabled={companiesSorted.length === 0}
+            disabled={companiesSorted.length === 0 || saleTab === "group"}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
           >
             <Download size={14} />
@@ -7749,330 +8570,477 @@ function DailySaleStatement({
         </div>
       </div>
 
-      {/* Company sections */}
-      {companiesSorted.length === 0 ? (
-        <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-400">
-          <BarChart2 size={40} className="mx-auto mb-3 opacity-30" />
-          <p className="font-medium">
-            No medicines found. Add medicines via the Manage screen.
-          </p>
-        </div>
-      ) : (
-        companiesSorted.map((company) => {
-          const meds = companiesMap.get(company) ?? [];
-          const stats = computeStats(meds);
-
-          // Compute totals for this company
-          const totalNetUnits = stats.reduce((s, m) => s + m.netSaleUnits, 0);
-          const totalNetValue = stats.reduce((s, m) => s + m.netSaleValue, 0);
-          const totalBonus = stats.reduce((s, m) => s + m.saleBonus, 0);
-          const _totalToday = stats.reduce((s, m) => s + m.todaySale, 0);
-          const totalTodayValue = stats.reduce(
-            (s, m) => s + m.todaySaleValue,
-            0,
-          );
-          const _totalLastMonth = stats.reduce(
-            (s, m) => s + m.lastMonthSale,
-            0,
-          );
-          const totalLastMonthValue = stats.reduce(
-            (s, m) => s + m.lastMonthSaleValue,
-            0,
-          );
-          const _totalQ1 = stats.reduce((s, m) => s + m.q1Sale, 0);
-          const totalQ1Value = stats.reduce((s, m) => s + m.q1SaleValue, 0);
-          const _totalQ2 = stats.reduce((s, m) => s + m.q2Sale, 0);
-          const totalQ2Value = stats.reduce((s, m) => s + m.q2SaleValue, 0);
-          const _totalQ3 = stats.reduce((s, m) => s + m.q3Sale, 0);
-          const totalQ3Value = stats.reduce((s, m) => s + m.q3SaleValue, 0);
-          const _totalQ4 = stats.reduce((s, m) => s + m.q4Sale, 0);
-          const totalQ4Value = stats.reduce((s, m) => s + m.q4SaleValue, 0);
-
-          return (
-            <div
-              key={company}
-              className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden"
-            >
-              {/* Company header */}
-              <div className="bg-[#1e3a6e] text-white px-5 py-3 flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-blue-200 uppercase tracking-wider mb-0.5">
-                    Company
-                  </div>
-                  <h3 className="text-lg font-bold tracking-wide uppercase">
-                    {company}
-                  </h3>
-                </div>
-                <div className="flex items-center gap-3 text-right">
-                  <div className="text-xs text-blue-200">
-                    <div>{meds.length} products</div>
-                    <div>Net: {totalNetUnits} units</div>
-                    <div className="font-semibold text-white">
-                      {formatCurrency(totalNetValue)}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => printCompanySection(company, stats)}
-                    className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 text-white border border-white/30 px-3 py-2 rounded-lg text-xs font-semibold transition-colors"
+      {/* Group Tab */}
+      {saleTab === "group" && (
+        <div className="space-y-3">
+          {groupTabData.length === 0 ? (
+            <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-400">
+              <svg
+                aria-hidden="true"
+                xmlns="http://www.w3.org/2000/svg"
+                width="40"
+                height="40"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                className="mx-auto mb-3 opacity-30"
+              >
+                <path d="M20 7H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z" />
+                <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+              </svg>
+              <p className="font-medium">
+                No groups defined. Add groups in Manage &gt; Groups.
+              </p>
+            </div>
+          ) : (
+            groupTabData.map(
+              ({ grp, company, medicines, medItems, totalQty, totalValue }) => {
+                const isExpanded = expandedGroups.has(grp.id.toString());
+                return (
+                  <div
+                    key={grp.id.toString()}
+                    className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden"
                   >
-                    <Printer size={13} />
-                    Print Page
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => printCompanySection(company, stats)}
-                    className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-500 px-3 py-2 rounded-lg text-xs font-semibold transition-colors"
-                    title="Save as PDF via browser print dialog"
-                  >
-                    <Download size={13} />
-                    PDF ↓
-                  </button>
-                  <button
-                    type="button"
-                    data-ocid={`dss.company_email_button.${companiesSorted.indexOf(company) + 1}`}
-                    onClick={() => setEmailModal({ company, isSendAll: false })}
-                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors border ${
-                      emailSentCompanies.has(company)
-                        ? "bg-green-600 border-green-500 text-white"
-                        : "bg-white/20 hover:bg-white/30 text-white border-white/30"
-                    }`}
-                    title="Send sale statement by email"
-                  >
-                    <Mail size={13} />
-                    {emailSentCompanies.has(company) ? "Sent ✓" : "Email"}
-                  </button>
-                </div>
-              </div>
-
-              {/* Table */}
-              <div className="overflow-x-auto">
-                <table className="text-xs border-collapse w-full">
-                  <thead>
-                    <tr className="bg-gray-50 border-b-2 border-gray-300">
-                      <th className="text-left px-3 py-2 font-semibold text-gray-700 sticky left-0 bg-gray-50 z-10 border-r border-gray-200 min-w-[160px]">
-                        Name of Product
-                      </th>
-                      {areas.map((area) => (
-                        <th
-                          key={area}
-                          className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[50px] text-center"
-                        >
-                          {area}
-                        </th>
-                      ))}
-                      {areas.length === 0 && (
-                        <th className="px-2 py-2 text-gray-400 italic">
-                          No Areas
-                        </th>
-                      )}
-                      <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[65px] text-center">
-                        Trade Rate
-                      </th>
-                      <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center bg-gray-100">
-                        Open. Bal
-                      </th>
-                      <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center">
-                        Recv Qty
-                      </th>
-                      <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center">
-                        Bonus Recv
-                      </th>
-                      <th className="px-2 py-2 font-semibold text-blue-800 border-r border-gray-200 min-w-[55px] text-center bg-blue-50">
-                        Net Sale
-                      </th>
-                      <th className="px-2 py-2 font-semibold text-emerald-700 border-r border-gray-200 min-w-[55px] text-center bg-emerald-50">
-                        Sale Bonus
-                      </th>
-                      <th className="px-2 py-2 font-semibold text-amber-700 border-r border-gray-200 min-w-[50px] text-center bg-amber-50">
-                        Deal No.
-                      </th>
-                      <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center bg-gray-100">
-                        Stock Trans.
-                      </th>
-                      <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center bg-gray-100">
-                        Other Issues
-                      </th>
-                      <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center bg-gray-100">
-                        Claims
-                      </th>
-                      <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center bg-gray-100">
-                        Closing Tally
-                      </th>
-                      <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center bg-gray-100">
-                        Closing Bonus
-                      </th>
-                      <th className="px-2 py-2 font-semibold text-orange-700 border-r border-gray-200 min-w-[60px] text-center bg-orange-50">
-                        Today Sale
-                      </th>
-                      <th className="px-2 py-2 font-semibold text-purple-700 border-r border-gray-200 min-w-[65px] text-center bg-purple-50">
-                        Last Mon. Sale
-                      </th>
-                      <th className="px-2 py-2 font-semibold text-indigo-700 border-r border-gray-200 min-w-[50px] text-center bg-indigo-50">
-                        1st Qtr
-                      </th>
-                      <th className="px-2 py-2 font-semibold text-indigo-700 border-r border-gray-200 min-w-[50px] text-center bg-indigo-50">
-                        2nd Qtr
-                      </th>
-                      <th className="px-2 py-2 font-semibold text-indigo-700 border-r border-gray-200 min-w-[50px] text-center bg-indigo-50">
-                        3rd Qtr
-                      </th>
-                      <th className="px-2 py-2 font-semibold text-indigo-700 border-r border-gray-200 min-w-[50px] text-center bg-indigo-50">
-                        4th Qtr
-                      </th>
-                      <th className="px-2 py-2 font-semibold text-teal-700 border-r border-gray-200 min-w-[60px] text-center bg-teal-50">
-                        Inventory | اسٹاک
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stats.map((s, idx) => {
-                      const getAreaVal = (area: string) =>
-                        saleTab === "deal"
-                          ? s.dealAreaUnits[area] || 0
-                          : saleTab === "bonus"
-                            ? s.bonusAreaUnits[area] || 0
-                            : s.areaUnits[area] || 0;
-
-                      return (
-                        <tr
-                          key={s.medicine.id}
-                          className={`border-b border-gray-100 hover:bg-blue-50/30 transition-colors ${idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"}`}
-                        >
-                          <td className="px-3 py-1.5 sticky left-0 bg-inherit z-10 border-r border-gray-200">
-                            <div className="font-medium text-gray-900">
-                              {s.medicine.name}
+                    <div
+                      className="flex items-center justify-between px-5 py-3 cursor-pointer hover:bg-gray-50"
+                      onClick={() =>
+                        setExpandedGroups((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(grp.id.toString()))
+                            next.delete(grp.id.toString());
+                          else next.add(grp.id.toString());
+                          return next;
+                        })
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ")
+                          setExpandedGroups((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(grp.id.toString()))
+                              next.delete(grp.id.toString());
+                            else next.add(grp.id.toString());
+                            return next;
+                          });
+                      }}
+                    >
+                      <div className="flex items-center gap-4">
+                        <div>
+                          <div className="font-bold text-gray-900">
+                            {grp.name}
+                          </div>
+                          {company && (
+                            <div className="text-xs text-blue-600 font-medium">
+                              {company}
                             </div>
-                            {s.medicine.strength && (
-                              <div className="text-gray-400 text-[10px]">
-                                {s.medicine.strength}
+                          )}
+                          <div className="text-xs text-gray-500">
+                            {medicines.length} medicine
+                            {medicines.length !== 1 ? "s" : ""}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-6 text-right">
+                        <div>
+                          <div className="text-xs text-gray-500">Total Qty</div>
+                          <div className="font-bold text-blue-700 text-lg">
+                            {totalQty}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-500">
+                            Total Value
+                          </div>
+                          <div className="font-bold text-emerald-700 text-lg">
+                            {formatCurrency(totalValue)}
+                          </div>
+                        </div>
+                        <svg
+                          aria-hidden="true"
+                          xmlns="http://www.w3.org/2000/svg"
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          className={`transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                        >
+                          <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                      </div>
+                    </div>
+                    {isExpanded && (
+                      <div className="border-t border-gray-100">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="bg-gray-50">
+                              <th className="text-left px-5 py-2 font-semibold text-gray-600">
+                                Medicine
+                              </th>
+                              <th className="px-4 py-2 font-semibold text-gray-600 text-center">
+                                Qty Sold
+                              </th>
+                              <th className="px-4 py-2 font-semibold text-gray-600 text-right pr-5">
+                                Value
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {medItems.map((m) => (
+                              <tr
+                                key={m.name}
+                                className="border-t border-gray-50 hover:bg-blue-50/20"
+                              >
+                                <td className="px-5 py-2 text-gray-800">
+                                  {m.name}
+                                </td>
+                                <td className="px-4 py-2 text-center text-blue-700 font-medium">
+                                  {m.qty || (
+                                    <span className="text-gray-300">-</span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-2 text-right pr-5 text-emerald-700 font-medium">
+                                  {m.value > 0 ? (
+                                    formatCurrency(m.value)
+                                  ) : (
+                                    <span className="text-gray-300">-</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              },
+            )
+          )}
+        </div>
+      )}
+
+      {/* Company sections */}
+      {saleTab !== "group" &&
+        (companiesSorted.length === 0 ? (
+          <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-400">
+            <BarChart2 size={40} className="mx-auto mb-3 opacity-30" />
+            <p className="font-medium">
+              No medicines found. Add medicines via the Manage screen.
+            </p>
+          </div>
+        ) : (
+          companiesSorted.map((company) => {
+            const meds = filteredCompaniesMap.get(company) ?? [];
+            const stats = computeStats(meds);
+
+            // Compute totals for this company
+            const totalNetUnits = stats.reduce((s, m) => s + m.netSaleUnits, 0);
+            const totalNetValue = stats.reduce((s, m) => s + m.netSaleValue, 0);
+            const totalBonus = stats.reduce((s, m) => s + m.saleBonus, 0);
+            const _totalToday = stats.reduce((s, m) => s + m.todaySale, 0);
+            const totalTodayValue = stats.reduce(
+              (s, m) => s + m.todaySaleValue,
+              0,
+            );
+            const _totalLastMonth = stats.reduce(
+              (s, m) => s + m.lastMonthSale,
+              0,
+            );
+            const totalLastMonthValue = stats.reduce(
+              (s, m) => s + m.lastMonthSaleValue,
+              0,
+            );
+            const _totalQ1 = stats.reduce((s, m) => s + m.q1Sale, 0);
+            const totalQ1Value = stats.reduce((s, m) => s + m.q1SaleValue, 0);
+            const _totalQ2 = stats.reduce((s, m) => s + m.q2Sale, 0);
+            const totalQ2Value = stats.reduce((s, m) => s + m.q2SaleValue, 0);
+            const _totalQ3 = stats.reduce((s, m) => s + m.q3Sale, 0);
+            const totalQ3Value = stats.reduce((s, m) => s + m.q3SaleValue, 0);
+            const _totalQ4 = stats.reduce((s, m) => s + m.q4Sale, 0);
+            const totalQ4Value = stats.reduce((s, m) => s + m.q4SaleValue, 0);
+
+            return (
+              <div
+                key={company}
+                className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden"
+              >
+                {/* Company header */}
+                <div className="bg-[#1e3a6e] text-white px-5 py-3 flex items-center justify-between">
+                  <div>
+                    <div className="text-xs font-semibold text-blue-200 uppercase tracking-wider mb-0.5">
+                      Company
+                    </div>
+                    <h3 className="text-lg font-bold tracking-wide uppercase">
+                      {company}
+                    </h3>
+                  </div>
+                  <div className="flex items-center gap-3 text-right">
+                    <div className="text-xs text-blue-200">
+                      <div>{meds.length} products</div>
+                      <div>Net: {totalNetUnits} units</div>
+                      <div className="font-semibold text-white">
+                        {formatCurrency(totalNetValue)}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => printCompanySection(company, stats)}
+                      className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 text-white border border-white/30 px-3 py-2 rounded-lg text-xs font-semibold transition-colors"
+                    >
+                      <Printer size={13} />
+                      Print Page
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => printCompanySection(company, stats)}
+                      className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-500 px-3 py-2 rounded-lg text-xs font-semibold transition-colors"
+                      title="Save as PDF via browser print dialog"
+                    >
+                      <Download size={13} />
+                      PDF ↓
+                    </button>
+                    <button
+                      type="button"
+                      data-ocid={`dss.company_email_button.${companiesSorted.indexOf(company) + 1}`}
+                      onClick={() =>
+                        setEmailModal({ company, isSendAll: false })
+                      }
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors border ${
+                        emailSentCompanies.has(company)
+                          ? "bg-green-600 border-green-500 text-white"
+                          : "bg-white/20 hover:bg-white/30 text-white border-white/30"
+                      }`}
+                      title="Send sale statement by email"
+                    >
+                      <Mail size={13} />
+                      {emailSentCompanies.has(company) ? "Sent ✓" : "Email"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Table */}
+                <div className="overflow-x-auto">
+                  <table className="text-xs border-collapse w-full">
+                    <thead>
+                      <tr className="bg-gray-50 border-b-2 border-gray-300">
+                        <th className="text-left px-3 py-2 font-semibold text-gray-700 sticky left-0 bg-gray-50 z-10 border-r border-gray-200 min-w-[160px]">
+                          Name of Product
+                        </th>
+                        {areas.map((area) => (
+                          <th
+                            key={area}
+                            className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[50px] text-center"
+                          >
+                            {area}
+                          </th>
+                        ))}
+                        {areas.length === 0 && (
+                          <th className="px-2 py-2 text-gray-400 italic">
+                            No Areas
+                          </th>
+                        )}
+                        <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[65px] text-center">
+                          Trade Rate
+                        </th>
+                        <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center bg-gray-100">
+                          Open. Bal
+                        </th>
+                        <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center">
+                          Recv Qty
+                        </th>
+                        <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center">
+                          Bonus Recv
+                        </th>
+                        <th className="px-2 py-2 font-semibold text-blue-800 border-r border-gray-200 min-w-[55px] text-center bg-blue-50">
+                          Net Sale
+                        </th>
+                        <th className="px-2 py-2 font-semibold text-emerald-700 border-r border-gray-200 min-w-[55px] text-center bg-emerald-50">
+                          Sale Bonus
+                        </th>
+                        <th className="px-2 py-2 font-semibold text-amber-700 border-r border-gray-200 min-w-[50px] text-center bg-amber-50">
+                          Deal No.
+                        </th>
+                        <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center bg-gray-100">
+                          Stock Trans.
+                        </th>
+                        <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center bg-gray-100">
+                          Other Issues
+                        </th>
+                        <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center bg-gray-100">
+                          Claims
+                        </th>
+                        <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center bg-gray-100">
+                          Closing Tally
+                        </th>
+                        <th className="px-2 py-2 font-semibold text-gray-700 border-r border-gray-200 min-w-[55px] text-center bg-gray-100">
+                          Closing Bonus
+                        </th>
+                        <th className="px-2 py-2 font-semibold text-orange-700 border-r border-gray-200 min-w-[60px] text-center bg-orange-50">
+                          Today Sale
+                        </th>
+                        <th className="px-2 py-2 font-semibold text-purple-700 border-r border-gray-200 min-w-[65px] text-center bg-purple-50">
+                          Last Mon. Sale
+                        </th>
+                        <th className="px-2 py-2 font-semibold text-indigo-700 border-r border-gray-200 min-w-[50px] text-center bg-indigo-50">
+                          1st Qtr
+                        </th>
+                        <th className="px-2 py-2 font-semibold text-indigo-700 border-r border-gray-200 min-w-[50px] text-center bg-indigo-50">
+                          2nd Qtr
+                        </th>
+                        <th className="px-2 py-2 font-semibold text-indigo-700 border-r border-gray-200 min-w-[50px] text-center bg-indigo-50">
+                          3rd Qtr
+                        </th>
+                        <th className="px-2 py-2 font-semibold text-indigo-700 border-r border-gray-200 min-w-[50px] text-center bg-indigo-50">
+                          4th Qtr
+                        </th>
+                        <th className="px-2 py-2 font-semibold text-teal-700 border-r border-gray-200 min-w-[60px] text-center bg-teal-50">
+                          Inventory | اسٹاک
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stats.map((s, idx) => {
+                        const getAreaVal = (area: string) =>
+                          saleTab === "deal"
+                            ? s.dealAreaUnits[area] || 0
+                            : saleTab === "bonus"
+                              ? s.bonusAreaUnits[area] || 0
+                              : s.areaUnits[area] || 0;
+
+                        return (
+                          <tr
+                            key={s.medicine.id}
+                            className={`border-b border-gray-100 hover:bg-blue-50/30 transition-colors ${idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"}`}
+                          >
+                            <td className="px-3 py-1.5 sticky left-0 bg-inherit z-10 border-r border-gray-200">
+                              <div className="font-medium text-gray-900">
+                                {s.medicine.name}
                               </div>
+                              {s.medicine.strength && (
+                                <div className="text-gray-400 text-[10px]">
+                                  {s.medicine.strength}
+                                </div>
+                              )}
+                            </td>
+                            {areas.map((area) => (
+                              <td
+                                key={area}
+                                className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-700"
+                              >
+                                {getAreaVal(area) || (
+                                  <span className="text-gray-300">-</span>
+                                )}
+                              </td>
+                            ))}
+                            {areas.length === 0 && (
+                              <td className="px-2 py-1.5 text-center text-gray-300">
+                                -
+                              </td>
                             )}
-                          </td>
-                          {areas.map((area) => (
-                            <td
-                              key={area}
-                              className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-700"
-                            >
-                              {getAreaVal(area) || (
+                            <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-700">
+                              {s.tradeRate.toFixed(2)}
+                            </td>
+                            <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-gray-50">
+                              -
+                            </td>
+                            <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300">
+                              -
+                            </td>
+                            <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300">
+                              -
+                            </td>
+                            <td className="px-2 py-1.5 text-center border-r border-gray-100 font-semibold text-blue-700 bg-blue-50/50">
+                              {s.netSaleUnits || (
                                 <span className="text-gray-300">-</span>
                               )}
                             </td>
-                          ))}
-                          {areas.length === 0 && (
-                            <td className="px-2 py-1.5 text-center text-gray-300">
+                            <td className="px-2 py-1.5 text-center border-r border-gray-100 font-semibold text-emerald-700 bg-emerald-50/50">
+                              {s.saleBonus || (
+                                <span className="text-gray-300">-</span>
+                              )}
+                            </td>
+                            <td className="px-2 py-1.5 text-center border-r border-gray-100 font-semibold text-amber-700 bg-amber-50/50">
+                              {s.dealCount || (
+                                <span className="text-gray-300">-</span>
+                              )}
+                            </td>
+                            <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-gray-50">
                               -
                             </td>
-                          )}
-                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-700">
-                            {s.tradeRate.toFixed(2)}
-                          </td>
-                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-gray-50">
-                            -
-                          </td>
-                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300">
-                            -
-                          </td>
-                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300">
-                            -
-                          </td>
-                          <td className="px-2 py-1.5 text-center border-r border-gray-100 font-semibold text-blue-700 bg-blue-50/50">
-                            {s.netSaleUnits || (
-                              <span className="text-gray-300">-</span>
-                            )}
-                          </td>
-                          <td className="px-2 py-1.5 text-center border-r border-gray-100 font-semibold text-emerald-700 bg-emerald-50/50">
-                            {s.saleBonus || (
-                              <span className="text-gray-300">-</span>
-                            )}
-                          </td>
-                          <td className="px-2 py-1.5 text-center border-r border-gray-100 font-semibold text-amber-700 bg-amber-50/50">
-                            {s.dealCount || (
-                              <span className="text-gray-300">-</span>
-                            )}
-                          </td>
-                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-gray-50">
-                            -
-                          </td>
-                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-gray-50">
-                            -
-                          </td>
-                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-gray-50">
-                            -
-                          </td>
-                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-gray-50">
-                            -
-                          </td>
-                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-gray-50">
-                            -
-                          </td>
-                          <td className="px-2 py-1.5 text-center border-r border-gray-100 font-semibold text-orange-700 bg-orange-50/50">
-                            {s.todaySale || (
-                              <span className="text-gray-300">-</span>
-                            )}
-                          </td>
-                          <td className="px-2 py-1.5 text-center border-r border-gray-100 font-semibold text-purple-700 bg-purple-50/50">
-                            {s.lastMonthSale || (
-                              <span className="text-gray-300">-</span>
-                            )}
-                          </td>
-                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-indigo-700 bg-indigo-50/50">
-                            {s.q1Sale || (
-                              <span className="text-gray-300">-</span>
-                            )}
-                          </td>
-                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-indigo-700 bg-indigo-50/50">
-                            {s.q2Sale || (
-                              <span className="text-gray-300">-</span>
-                            )}
-                          </td>
-                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-indigo-700 bg-indigo-50/50">
-                            {s.q3Sale || (
-                              <span className="text-gray-300">-</span>
-                            )}
-                          </td>
-                          <td className="px-2 py-1.5 text-center border-r border-gray-100 text-indigo-700 bg-indigo-50/50">
-                            {s.q4Sale || (
-                              <span className="text-gray-300">-</span>
-                            )}
-                          </td>
-                          {(() => {
-                            const inv = getStock(s.medicine.backendId);
-                            if (inv === null)
+                            <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-gray-50">
+                              -
+                            </td>
+                            <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-gray-50">
+                              -
+                            </td>
+                            <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-gray-50">
+                              -
+                            </td>
+                            <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-gray-50">
+                              -
+                            </td>
+                            <td className="px-2 py-1.5 text-center border-r border-gray-100 font-semibold text-orange-700 bg-orange-50/50">
+                              {s.todaySale || (
+                                <span className="text-gray-300">-</span>
+                              )}
+                            </td>
+                            <td className="px-2 py-1.5 text-center border-r border-gray-100 font-semibold text-purple-700 bg-purple-50/50">
+                              {s.lastMonthSale || (
+                                <span className="text-gray-300">-</span>
+                              )}
+                            </td>
+                            <td className="px-2 py-1.5 text-center border-r border-gray-100 text-indigo-700 bg-indigo-50/50">
+                              {s.q1Sale || (
+                                <span className="text-gray-300">-</span>
+                              )}
+                            </td>
+                            <td className="px-2 py-1.5 text-center border-r border-gray-100 text-indigo-700 bg-indigo-50/50">
+                              {s.q2Sale || (
+                                <span className="text-gray-300">-</span>
+                              )}
+                            </td>
+                            <td className="px-2 py-1.5 text-center border-r border-gray-100 text-indigo-700 bg-indigo-50/50">
+                              {s.q3Sale || (
+                                <span className="text-gray-300">-</span>
+                              )}
+                            </td>
+                            <td className="px-2 py-1.5 text-center border-r border-gray-100 text-indigo-700 bg-indigo-50/50">
+                              {s.q4Sale || (
+                                <span className="text-gray-300">-</span>
+                              )}
+                            </td>
+                            {(() => {
+                              const inv = getStock(s.medicine.backendId);
                               return (
-                                <td className="px-2 py-1.5 text-center border-r border-gray-100 text-gray-300 bg-teal-50/30">
-                                  --
+                                <td
+                                  key="inv"
+                                  className={`px-2 py-1.5 text-center border-r border-gray-100 text-[10px] font-semibold ${
+                                    inv === null
+                                      ? "text-gray-300"
+                                      : inv <= 0
+                                        ? "text-red-600 bg-red-50"
+                                        : inv <= 10
+                                          ? "text-amber-700 bg-amber-50"
+                                          : "text-teal-700 bg-teal-50"
+                                  }`}
+                                >
+                                  {inv === null ? "-" : inv}
                                 </td>
                               );
-                            const cls =
-                              inv === 0
-                                ? "text-red-700 bg-red-50"
-                                : inv <= 10
-                                  ? "text-amber-700 bg-amber-50"
-                                  : "text-teal-700 bg-teal-50";
-                            return (
-                              <td
-                                className={`px-2 py-1.5 text-center border-r border-gray-100 font-semibold ${cls}`}
-                              >
-                                {inv}
-                              </td>
-                            );
-                          })()}
-                        </tr>
-                      );
-                    })}
+                            })()}
+                          </tr>
+                        );
+                      })}
 
-                    {/* Company Totals Row */}
-                    <tr className="border-t-2 border-[#1e3a6e] bg-[#1e3a6e]/5 font-bold">
-                      <td className="px-3 py-2 sticky left-0 bg-[#eef2f8] z-10 border-r border-gray-300 text-[#1e3a6e] uppercase tracking-wide">
-                        TOTAL
-                      </td>
-                      {areas.map((area) => (
-                        <td
-                          key={area}
-                          className="px-2 py-2 text-center border-r border-gray-200 text-[#1e3a6e]"
-                        >
-                          {stats.reduce(
+                      {/* Totals row */}
+                      <tr className="bg-[#d4e0f0] border-b-2 border-gray-300">
+                        <td className="px-3 py-2 sticky left-0 bg-[#d4e0f0] z-10 border-r border-gray-300 text-[#1e3a6e] font-bold text-[10px] uppercase">
+                          TOTAL
+                        </td>
+                        {areas.map((area) => {
+                          const areaTotal = stats.reduce(
                             (sum, s) =>
                               sum +
                               (saleTab === "deal"
@@ -8081,134 +9049,130 @@ function DailySaleStatement({
                                   ? s.bonusAreaUnits[area] || 0
                                   : s.areaUnits[area] || 0),
                             0,
-                          ) || (
-                            <span className="text-gray-300 font-normal">-</span>
-                          )}
-                        </td>
-                      ))}
-                      {areas.length === 0 && (
-                        <td className="px-2 py-2 text-center text-gray-300">
+                          );
+                          return (
+                            <td
+                              key={area}
+                              className="px-2 py-2 text-center border-r border-gray-200 font-bold text-[#1e3a6e] text-[10px]"
+                            >
+                              {areaTotal || "-"}
+                            </td>
+                          );
+                        })}
+                        {areas.length === 0 && (
+                          <td className="px-2 py-2 text-center text-gray-300">
+                            -
+                          </td>
+                        )}
+                        <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-400 text-[10px]">
                           -
                         </td>
-                      )}
-                      <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-500">
-                        -
-                      </td>
-                      <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-300 bg-gray-50">
-                        -
-                      </td>
-                      <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-300">
-                        -
-                      </td>
-                      <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-300">
-                        -
-                      </td>
-                      <td className="px-2 py-2 text-center border-r border-gray-200 text-blue-800 bg-blue-100">
-                        {totalNetUnits || "-"}
-                      </td>
-                      <td className="px-2 py-2 text-center border-r border-gray-200 text-emerald-800 bg-emerald-100">
-                        {totalBonus || "-"}
-                      </td>
-                      <td className="px-2 py-2 text-center border-r border-gray-200 text-amber-800 bg-amber-100">
-                        {stats.reduce((sum, s) => sum + s.dealCount, 0) || "-"}
-                      </td>
-                      <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-300 bg-gray-50">
-                        -
-                      </td>
-                      <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-300 bg-gray-50">
-                        -
-                      </td>
-                      <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-300 bg-gray-50">
-                        -
-                      </td>
-                      <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-300 bg-gray-50">
-                        -
-                      </td>
-                      <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-300 bg-gray-50">
-                        -
-                      </td>
-                      <td className="px-2 py-2 text-center border-r border-gray-200 text-orange-800 bg-orange-100 text-[10px]">
-                        {totalTodayValue > 0
-                          ? `Rs. ${totalTodayValue.toFixed(0)}`
-                          : "-"}
-                      </td>
-                      <td className="px-2 py-2 text-center border-r border-gray-200 text-purple-800 bg-purple-100 text-[10px]">
-                        {totalLastMonthValue > 0
-                          ? `Rs. ${totalLastMonthValue.toFixed(0)}`
-                          : "-"}
-                      </td>
-                      <td className="px-2 py-2 text-center border-r border-gray-200 text-indigo-800 bg-indigo-100 text-[10px]">
-                        {totalQ1Value > 0
-                          ? `Rs. ${totalQ1Value.toFixed(0)}`
-                          : "-"}
-                      </td>
-                      <td className="px-2 py-2 text-center border-r border-gray-200 text-indigo-800 bg-indigo-100 text-[10px]">
-                        {totalQ2Value > 0
-                          ? `Rs. ${totalQ2Value.toFixed(0)}`
-                          : "-"}
-                      </td>
-                      <td className="px-2 py-2 text-center border-r border-gray-200 text-indigo-800 bg-indigo-100 text-[10px]">
-                        {totalQ3Value > 0
-                          ? `Rs. ${totalQ3Value.toFixed(0)}`
-                          : "-"}
-                      </td>
-                      <td className="px-2 py-2 text-center border-r border-gray-200 text-indigo-800 bg-indigo-100 text-[10px]">
-                        {totalQ4Value > 0
-                          ? `Rs. ${totalQ4Value.toFixed(0)}`
-                          : "-"}
-                      </td>
-                      <td className="px-2 py-2 text-center border-r border-gray-200 text-teal-800 bg-teal-50 text-[10px]">
-                        {stats.reduce((sum, s) => {
-                          const inv = getStock(s.medicine.backendId);
-                          return sum + (inv ?? 0);
-                        }, 0) || "-"}
-                      </td>
-                    </tr>
-
-                    {/* Net Value row */}
-                    <tr className="bg-[#eef2f8] border-b border-gray-300">
-                      <td className="px-3 py-1.5 sticky left-0 bg-[#eef2f8] z-10 border-r border-gray-300 text-[#1e3a6e] font-semibold text-[10px] uppercase">
-                        Net Value
-                      </td>
-                      {areas.map((area) => (
+                        <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-400 text-[10px] bg-gray-100">
+                          -
+                        </td>
+                        <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-400 text-[10px]">
+                          -
+                        </td>
+                        <td className="px-2 py-2 text-center border-r border-gray-200 text-gray-400 text-[10px]">
+                          -
+                        </td>
+                        <td className="px-2 py-2 text-center border-r border-gray-200 font-bold text-blue-800 bg-blue-100 text-[10px]">
+                          {totalNetUnits || "-"}
+                        </td>
+                        <td className="px-2 py-2 text-center border-r border-gray-200 font-bold text-emerald-800 bg-emerald-100 text-[10px]">
+                          {totalBonus || "-"}
+                        </td>
+                        <td className="px-2 py-2 text-center border-r border-gray-200 font-bold text-amber-800 bg-amber-100 text-[10px]">
+                          {stats.reduce((s, m) => s + m.dealCount, 0) || "-"}
+                        </td>
                         <td
-                          key={area}
-                          className="px-2 py-1.5 text-center border-r border-gray-200 text-[10px] text-gray-400"
+                          className="px-2 py-2 text-center border-r border-gray-200 text-gray-400 text-[10px] bg-gray-100"
+                          colSpan={5}
                         >
                           -
                         </td>
-                      ))}
-                      {areas.length === 0 && (
-                        <td className="px-2 py-1.5 text-center text-gray-300">
+                        <td className="px-2 py-2 text-center border-r border-gray-200 text-orange-800 bg-orange-100 text-[10px]">
+                          {totalTodayValue > 0
+                            ? `Rs. ${totalTodayValue.toFixed(0)}`
+                            : "-"}
+                        </td>
+                        <td className="px-2 py-2 text-center border-r border-gray-200 text-purple-800 bg-purple-100 text-[10px]">
+                          {totalLastMonthValue > 0
+                            ? `Rs. ${totalLastMonthValue.toFixed(0)}`
+                            : "-"}
+                        </td>
+                        <td className="px-2 py-2 text-center border-r border-gray-200 text-indigo-800 bg-indigo-100 text-[10px]">
+                          {totalQ1Value > 0
+                            ? `Rs. ${totalQ1Value.toFixed(0)}`
+                            : "-"}
+                        </td>
+                        <td className="px-2 py-2 text-center border-r border-gray-200 text-indigo-800 bg-indigo-100 text-[10px]">
+                          {totalQ2Value > 0
+                            ? `Rs. ${totalQ2Value.toFixed(0)}`
+                            : "-"}
+                        </td>
+                        <td className="px-2 py-2 text-center border-r border-gray-200 text-indigo-800 bg-indigo-100 text-[10px]">
+                          {totalQ3Value > 0
+                            ? `Rs. ${totalQ3Value.toFixed(0)}`
+                            : "-"}
+                        </td>
+                        <td className="px-2 py-2 text-center border-r border-gray-200 text-indigo-800 bg-indigo-100 text-[10px]">
+                          {totalQ4Value > 0
+                            ? `Rs. ${totalQ4Value.toFixed(0)}`
+                            : "-"}
+                        </td>
+                        <td className="px-2 py-2 text-center border-r border-gray-200 text-teal-800 bg-teal-50 text-[10px]">
+                          {stats.reduce((sum, s) => {
+                            const inv = getStock(s.medicine.backendId);
+                            return sum + (inv ?? 0);
+                          }, 0) || "-"}
+                        </td>
+                      </tr>
+
+                      {/* Net Value row */}
+                      <tr className="bg-[#eef2f8] border-b border-gray-300">
+                        <td className="px-3 py-1.5 sticky left-0 bg-[#eef2f8] z-10 border-r border-gray-300 text-[#1e3a6e] font-semibold text-[10px] uppercase">
+                          Net Value
+                        </td>
+                        {areas.map((area) => (
+                          <td
+                            key={area}
+                            className="px-2 py-1.5 text-center border-r border-gray-200 text-[10px] text-gray-400"
+                          >
+                            -
+                          </td>
+                        ))}
+                        {areas.length === 0 && (
+                          <td className="px-2 py-1.5 text-center text-gray-300">
+                            -
+                          </td>
+                        )}
+                        <td
+                          className="px-2 py-1.5 text-center border-r border-gray-200 text-gray-400 text-[10px]"
+                          colSpan={3}
+                        >
                           -
                         </td>
-                      )}
-                      <td
-                        className="px-2 py-1.5 text-center border-r border-gray-200 text-gray-400 text-[10px]"
-                        colSpan={3}
-                      >
-                        -
-                      </td>
-                      <td
-                        className="px-2 py-1.5 text-center border-r border-gray-200 font-bold text-blue-800 bg-blue-50"
-                        colSpan={2}
-                      >
-                        {formatCurrency(totalNetValue)}
-                      </td>
-                      <td
-                        className="px-2 py-1.5 text-center border-r border-gray-200 text-gray-400 text-[10px]"
-                        colSpan={15}
-                      >
-                        -
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
+                        <td
+                          className="px-2 py-1.5 text-center border-r border-gray-200 font-bold text-blue-800 bg-blue-50"
+                          colSpan={2}
+                        >
+                          {formatCurrency(totalNetValue)}
+                        </td>
+                        <td
+                          className="px-2 py-1.5 text-center border-r border-gray-200 text-gray-400 text-[10px]"
+                          colSpan={15}
+                        >
+                          -
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
-          );
-        })
-      )}
+            );
+          })
+        ))}
 
       {/* Email Mock Modal */}
       {emailModal !== null && (
@@ -8357,7 +9321,7 @@ function DailySaleStatement({
       )}
 
       {/* Grand Total footer */}
-      {companiesSorted.length > 0 && (
+      {saleTab !== "group" && companiesSorted.length > 0 && (
         <div className="bg-[#1e3a6e] text-white rounded-xl px-5 py-4 flex items-center justify-between">
           <div>
             <div className="text-xs font-semibold text-blue-200 uppercase tracking-wider">
@@ -8369,7 +9333,7 @@ function DailySaleStatement({
                 : (() => {
                     let total = 0;
                     for (const co of companiesSorted) {
-                      const meds = companiesMap.get(co) ?? [];
+                      const meds = filteredCompaniesMap.get(co) ?? [];
                       for (const s of computeStats(meds)) {
                         total += s.netSaleUnits;
                       }
@@ -8386,7 +9350,7 @@ function DailySaleStatement({
               {(() => {
                 let totalVal = 0;
                 for (const co of companiesSorted) {
-                  const meds = companiesMap.get(co) ?? [];
+                  const meds = filteredCompaniesMap.get(co) ?? [];
                   for (const s of computeStats(meds)) {
                     totalVal += s.netSaleValue;
                   }
@@ -8420,26 +9384,8 @@ function PaymentsView({
   const [clearPayPassword, setClearPayPassword] = useState("");
   const [isClearingPayments, setIsClearingPayments] = useState(false);
 
-  // Auto midnight reset on mount and every 60 seconds
-  useEffect(() => {
-    function checkMidnightReset() {
-      const todayDateStr = new Date().toISOString().split("T")[0];
-      const lastPaymentDay = localStorage.getItem("medorder_last_payment_day");
-      if (lastPaymentDay !== todayDateStr) {
-        const midnight = new Date(`${todayDateStr}T00:00:00`).toISOString();
-        localStorage.setItem("medorder_payments_cleared_at", midnight);
-        localStorage.setItem("medorder_last_payment_day", todayDateStr);
-        setPaymentsClearedAt(midnight);
-      }
-    }
-    checkMidnightReset();
-    const interval = setInterval(checkMidnightReset, 60_000);
-    return () => clearInterval(interval);
-  }, [setPaymentsClearedAt]);
-
-  // Compute daily data from all orders and merge with persisted history
-  const paymentHistory = useMemo<Record<string, PaymentDayRecord>>(() => {
-    // Read existing stored data
+  const paymentHistory = useMemo(() => {
+    // Load stored payment history
     let stored: Record<string, PaymentDayRecord> = {};
     try {
       const raw = localStorage.getItem("medorder_payment_history");
@@ -12944,6 +13890,13 @@ function OfficeDashboard() {
               <DailySaleStatement
                 allOrders={[...ordersWithLines, ...historyOrders]}
                 allMedicines={allMedicines}
+                allCustomers={allCustomers}
+                allPharmacies={allPharmacies}
+                allMedicineGroups={allMedicineGroups}
+                distributorId={(() => {
+                  const s = getSession();
+                  return s?.distributorId ? BigInt(s.distributorId) : undefined;
+                })()}
               />
             )}
 
