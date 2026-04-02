@@ -1,75 +1,49 @@
-# MedFlow
+# MedFlow -- 9 Changes Build
 
 ## Current State
 
-- App is a multi-tenant Medicine Distributor Order Management App
-- Manage > Groups tab exists but only has a simple text field for group name -- no Company or Medicines fields
-- Group type in backend is `{ id: bigint; name: string; distributorId: bigint }` -- no company/medicines stored in group
-- DailySaleStatement component exists at ~line 7240 in App.tsx with date range filter and company/area/quarter/deal/bonus tabs -- but NO filter bar for Customer, Company, Product, Group, or Area
-- CustomerWiseSale section exists with multi-select filters for Customer, Company, Product, Group, Date Range -- AND logic, item-level filtering
-- PWA icons are in `/assets/generated/` nested paths -- ICP does not reliably serve nested paths for PWA manifest, causing grey "C" icon and no Install button
-- Service Worker cache name is `medflow-v5`
-- manifest.json icons point to `/assets/generated/medflow-icon-192.dim_192x192.png` etc.
-- Icon files have been physically copied to public root as `icon-192.png` and `icon-512.png`
+- `src/frontend/src/App.tsx` -- 17562 lines, contains all dashboards
+- `DeliveryDashboard` component (line 15356): has logout button directly in header, no hamburger menu, shows all orders (pending + delivered + returned) in one list, no history screen, no separate delivered/returned sections
+- `MobileApp` (staff dashboard, line 16558): offline orders show on main dashboard screen mixed with regular orders. `SideDrawer` component (line 855) has Pharmacies, Order History, Manage nav items + Logout at bottom -- no Offline Orders item
+- User add logic (line 9801): `addStaffForDistributor` backend call is wrapped in try/catch with `/* ignore if backend unavailable */` -- silently fails, user only saves to localStorage
 
 ## Requested Changes (Diff)
 
 ### Add
-
-1. **PWA Icon Fix**: Update manifest.json to point icons to root paths `/icon-192.png` and `/icon-512.png`. Bump SW cache to `medflow-v6` to force browser to fetch fresh files.
-
-2. **Manage > Groups -- Enhanced Form**: Add Company (searchable dropdown from allMedicines companies) and Medicines (searchable multi-select filtered by selected company) fields to the group form. Group save must store `company: string` and `medicines: string[]` alongside the name. Since backend Group type only has `{ id, name, distributorId }`, store company+medicines in localStorage key `medflow_group_details_{distributorId}` keyed by group id. On load, merge backend groups with localStorage details.
-
-3. **DSS Filter Bar**: Add filter bar to DailySaleStatement component above the existing date controls with these multi-select searchable filters: Customer, Company, Product, Group, Area -- same UI pattern as CWS filters. Filters use AND logic at item level. Default = no filters = show all.
-
-4. **DSS Area Wise Filter**: Area dropdown auto-populated from customers/pharmacies area fields in allOrders. When area(s) selected, only orders from customers in those areas show. Works in combination with other filters.
-
-5. **DSS Group Wise Tab**: Add "Group" tab alongside existing company/area/quarter/deal/bonus tabs. Shows each group's total sale: group name, medicines in group, total qty sold, total value. Expandable to show per-medicine breakdown.
-
-6. **DSS Filtered PDF Download**: "Download PDF" button generates PDF of currently filtered+tabbed data only (not all data). Reuses existing print HTML logic but applies active filters before building HTML.
+- Delivery Dashboard: hamburger menu (3 lines) button in header
+- Delivery Dashboard: menu drawer with options -- Delivered Orders, Return Orders, History, Logout
+- Delivery Dashboard: date-wise History screen inside delivery (delivered + returned orders grouped by date, like staff/office order history)
+- Delivery Dashboard: Delivered Orders screen (separate view showing all delivered orders)
+- Delivery Dashboard: Return Orders screen (separate view showing all returned orders)
+- Staff Dashboard SideDrawer: "Offline Orders" menu item (navigates to offline orders screen)
+- Staff Dashboard: Offline Orders screen (shows pendingOfflineOrders list)
 
 ### Modify
-
-- `src/frontend/public/manifest.json` -- update icon src paths to `/icon-192.png` and `/icon-512.png` (root)
-- `src/frontend/public/sw.js` -- bump CACHE_NAME from `medflow-v5` to `medflow-v6`
-- `GroupManagementPanel` in `App.tsx` -- add Company + Medicines fields, store extended data in localStorage, edit mode for existing groups
-- `DailySaleStatement` in `App.tsx` -- add filter bar (Customer, Company, Product, Group, Area) + Group tab + filtered PDF
-- `DailySaleStatementProps` -- add `allCustomers`, `allMedicineGroups`, `allPharmacies` props so DSS can build filter dropdowns
-- Where `DailySaleStatement` is rendered (~line 12944) -- pass the new props
+- Delivery Dashboard main screen: show ONLY pending/active orders (status not delivered and not returned). Remove delivered/returned from main list
+- Delivery Dashboard: move Logout out of header into hamburger menu
+- Staff Dashboard: remove offline orders banner/section from main dashboard screen -- they should only appear in the dedicated Offline Orders screen via menu
+- User Management (UserManagementPanel, line 9691): fix backend sync -- if `addStaffForDistributor` fails, show error toast and do NOT silently ignore. Also on app load, attempt to sync any local-only users (those without backendStaffId) to backend
 
 ### Remove
-
-- Nothing removed
+- Delivery Dashboard header: standalone Logout button (moves to hamburger menu)
+- Staff Dashboard main screen: offline orders display section (moves to dedicated screen)
 
 ## Implementation Plan
 
-1. **manifest.json**: Change all icon `src` values to `/icon-192.png` (192x192) and `/icon-512.png` (512x512) for both `any` and `maskable` purpose entries. Also update shortcuts icons.
+1. **Delivery Dashboard hamburger menu**: Add `deliveryMenuOpen` state. Add hamburger (Menu icon, 3 lines) button to delivery header (replace or alongside existing buttons). Build a slide-in drawer/sheet with items: Delivered Orders, Return Orders, History, Logout
 
-2. **sw.js**: Change `const CACHE_NAME = 'medflow-v5'` to `'medflow-v6'`.
+2. **Delivery Dashboard main screen filter**: Change the orders displayed on main screen to only show orders where status is NOT 'delivered' and NOT 'returned'. Use existing `allOrders` or `pendingOrders` state -- filter to active/pending only
 
-3. **GroupManagementPanel**:
-   - Add props: `allMedicines: Medicine[]`
-   - Add state: `newGroupCompany`, `newGroupMedicines[]`, company search, medicine search, dropdown open states
-   - Company dropdown: unique companies from allMedicines, searchable
-   - Medicines multi-select: filtered by selected company, searchable, chips display
-   - On save: call `actor.addMedicineGroup(name, distributorId)` then save `{ company, medicines }` to localStorage under `medflow_group_details_{distributorId}[groupId]`
-   - Edit mode: clicking edit on existing group loads all fields including company+medicines from localStorage
-   - On delete: also remove from localStorage details
-   - Display existing groups with company + medicines count info
-   - Pass `allMedicines` from parent where GroupManagementPanel is rendered
+3. **Delivery Dashboard -- Delivered Orders view**: New view state `deliveryView: 'main' | 'delivered' | 'returned' | 'history'`. When 'delivered' selected from menu, show all delivered orders list
 
-4. **DailySaleStatement**:
-   - Add props: `allCustomers: Customer[]`, `allMedicineGroups: Array<{id,name,distributorId}>`, `allPharmacies: Array<{id,name,location,area?}>`
-   - Add filter state: `dssSelectedCustomers[]`, `dssSelectedCompanies[]`, `dssSelectedProducts[]`, `dssSelectedGroups[]`, `dssSelectedAreas[]` -- all multi-select
-   - Add filter bar UI: same pattern as CWS filters (searchable multi-select chips)
-   - Customer filter: from allCustomers + allPharmacies merged
-   - Area filter: unique areas from allOrders pharmacyArea field
-   - Apply filters to `filteredOrders` useMemo -- AND logic at item level
-   - Add "group" tab to saleTab state: `"all" | "deal" | "bonus" | "group"`
-   - Group tab UI: list groups, for each group show medicines in that group, sum qty and value from filtered orders
-   - Group details from localStorage `medflow_group_details_{distributorId}` -- need distributorId prop OR read from localStorage session
-   - PDF button: uses existing `wrapPrintHtml`/`buildCompanyPrintHtml` but only with filtered data
+4. **Delivery Dashboard -- Return Orders view**: Same view state, when 'returned' show all returned orders
 
-5. **DailySaleStatement render site**: Pass `allCustomers`, `allMedicineGroups`, `allPharmacies` props.
+5. **Delivery Dashboard -- History view**: Date-wise grouped history (like `OfficeOrderHistoryHierarchy` pattern). Group allOrders by date, show months > dates > orders, include both delivered and returned orders
 
-6. **Testing**: Ensure no TypeScript errors, all existing tabs still work, filters default to "show all" when nothing selected.
+6. **Staff SideDrawer -- Offline Orders item**: Add new nav item to `SideDrawer` navItems array: `{ icon: <WifiOff>, label: 'Offline Orders', urdu: 'آف لائن آرڈر', screen: { name: 'offline-orders' } }`. Add badge showing count if >0
+
+7. **Staff -- Offline Orders screen**: Create `OfflineOrdersScreen` component that displays `pendingOfflineOrders` list. Pass `pendingOfflineOrders` to it. Show each order with customer name, medicines, amount, "Pending sync" badge. If empty, show "No offline orders" message
+
+8. **Staff main dashboard**: Remove the offline orders banner and inline offline orders list from `DashboardScreen` -- they move to the dedicated screen. Synced orders should appear normally in main orders list (this already works)
+
+9. **User backend sync fix**: In `UserManagementPanel.handleAddUser`, change catch block from `/* ignore */` to show `toast.error("User locally saved but backend sync failed -- cross-device login may not work")`. Also add a `useEffect` on component mount that loops through `customUsers` without `backendStaffId` and attempts to sync them to backend via `addStaffForDistributor`

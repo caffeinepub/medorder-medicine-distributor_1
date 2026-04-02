@@ -260,7 +260,8 @@ type Screen =
   | { name: "order-taking"; pharmacyId: string }
   | { name: "order-history" }
   | { name: "order-detail"; orderId: string }
-  | { name: "manage" };
+  | { name: "manage" }
+  | { name: "offline-orders" };
 
 type AppState = {
   currentStaff: Staff | null;
@@ -863,6 +864,15 @@ function SideDrawer({
   navigate: (s: Screen) => void;
   dispatch: React.Dispatch<Action>;
 }) {
+  const offlinePendingCount = (() => {
+    try {
+      const stored = localStorage.getItem("medorder_offline_orders");
+      return stored ? JSON.parse(stored).length : 0;
+    } catch {
+      return 0;
+    }
+  })();
+
   const navItems = [
     {
       icon: <Store size={18} />,
@@ -875,6 +885,13 @@ function SideDrawer({
       label: "Order History",
       urdu: "آرڈر تاریخ",
       screen: { name: "order-history" } as Screen,
+    },
+    {
+      icon: <WifiOff size={18} />,
+      label: "Offline Orders",
+      urdu: "آف لائن آرڈر",
+      screen: { name: "offline-orders" } as Screen,
+      badge: offlinePendingCount,
     },
     {
       icon: <Settings2 size={18} />,
@@ -945,8 +962,15 @@ function SideDrawer({
               className="w-full flex items-center gap-3 py-3 px-4 hover:bg-muted transition-colors text-foreground text-left"
             >
               <span className="text-muted-foreground">{item.icon}</span>
-              <div>
-                <div className="text-sm font-medium">{item.label}</div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">{item.label}</span>
+                  {"badge" in item && item.badge > 0 && (
+                    <span className="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                      {item.badge}
+                    </span>
+                  )}
+                </div>
                 <div className="text-[11px] text-muted-foreground">
                   {item.urdu}
                 </div>
@@ -1499,7 +1523,6 @@ function DashboardScreen({
     (o) => o.status === "pending",
   ).length;
   const recentOrders = state.orders.filter((o) => o.date === todayStr);
-  const offlineOrders = state.orders.filter((o) => o.id.startsWith("OFFLINE-"));
   const [isConfirmingAllToday, setIsConfirmingAllToday] = useState(false);
 
   const todayPendingOrders = todayOrders.filter((o) => o.status === "pending");
@@ -1749,11 +1772,6 @@ function DashboardScreen({
               <h2 className="font-bold text-foreground font-heading">
                 Today's Orders | آج کے آرڈر
               </h2>
-              {offlineOrders.length > 0 && (
-                <span className="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-                  {offlineOrders.length} offline
-                </span>
-              )}
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -1778,47 +1796,7 @@ function DashboardScreen({
               </button>
             </div>
           </div>
-          {/* Offline Orders warning */}
-          {offlineOrders.length > 0 && (
-            <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-xl">
-              <p className="text-xs font-semibold text-amber-700">
-                {offlineOrders.length} offline order(s) pending sync | آف لائن
-                آرڈر
-              </p>
-              <p className="text-[10px] text-amber-600 mt-0.5">
-                Internet aane par automatically sync ho jayenge
-              </p>
-              <div className="mt-2 space-y-2">
-                {offlineOrders.map((order) => (
-                  <button
-                    type="button"
-                    key={order.id}
-                    onClick={() =>
-                      dispatch({
-                        type: "NAVIGATE",
-                        screen: { name: "order-detail", orderId: order.id },
-                      })
-                    }
-                    className="w-full bg-white rounded-lg p-2.5 border border-amber-200 text-left"
-                    data-ocid="dashboard.offline_order.item"
-                  >
-                    <div className="flex items-center justify-between">
-                      <p className="font-semibold text-xs text-foreground">
-                        {order.pharmacyName}
-                      </p>
-                      <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-semibold">
-                        Offline
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
-                      {order.items.length} items ·{" "}
-                      {formatCurrency(order.totalAmount)}
-                    </p>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+
           <div className="space-y-3">
             {isLoadingData ? (
               <div className="flex items-center justify-center py-8">
@@ -9815,7 +9793,9 @@ function UserManagementPanel() {
         );
         saveCustomUsers(withId);
       } catch {
-        /* ignore if backend unavailable */
+        toast.error(
+          "User locally saved lekin backend sync fail hua -- cross-device login kaam nahi karega. Internet check karein.",
+        );
       }
     }
     setNewUsername("");
@@ -15358,6 +15338,13 @@ function DeliveryDashboard() {
     typeof window !== "undefined" &&
     new URLSearchParams(window.location.search).get("from") === "office";
   const { actor, isFetching: isActorFetching } = useActor();
+  const [deliveryMenuOpen, setDeliveryMenuOpen] = useState(false);
+  const [deliveryView, setDeliveryView] = useState<
+    "main" | "delivered" | "returned" | "history"
+  >("main");
+  const [historyExpandedDates, setHistoryExpandedDates] = useState<
+    Record<string, boolean>
+  >({});
   const [pendingOrders, setPendingOrders] = useState<DeliveryOrder[]>([]);
   const [allOrders, setAllOrders] = useState<DeliveryOrder[]>([]);
   const [deliveredThisSession, setDeliveredThisSession] = useState<
@@ -15767,200 +15754,639 @@ function DeliveryDashboard() {
     }
   }
 
+  // Derived: active orders (not delivered/returned) for main view
+  const _activeOrders = allOrders.filter(
+    (o) =>
+      o.status !== "delivered" && !(o.returnItems && o.returnItems.length > 0),
+  );
+
+  // Delivery history sub-view: group by date
+  const historyGrouped = (() => {
+    const groups: Record<string, typeof allOrders> = {};
+    for (const o of allOrders) {
+      if (!groups[o.date]) groups[o.date] = [];
+      groups[o.date].push(o);
+    }
+    return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
+  })();
+
   return (
     <div className="min-h-dvh bg-gray-50">
       <Toaster richColors position="top-center" />
 
-      {/* Backend error banner */}
-      {backendError && (
-        <div className="flex items-center justify-between gap-3 bg-red-600 text-white px-4 py-2.5 text-sm">
-          <span className="flex-1 min-w-0 truncate">
-            Backend error — tap Retry to reload
-          </span>
-          <div className="flex items-center gap-2 shrink-0">
+      {/* Delivery Side Menu Drawer */}
+      <>
+        {/* Backdrop */}
+        <div
+          className={`fixed inset-0 z-40 bg-black/50 transition-opacity duration-300 ${
+            deliveryMenuOpen
+              ? "opacity-100 pointer-events-auto"
+              : "opacity-0 pointer-events-none"
+          }`}
+          onClick={() => setDeliveryMenuOpen(false)}
+          onKeyDown={(e) => e.key === "Escape" && setDeliveryMenuOpen(false)}
+          role="button"
+          tabIndex={-1}
+          aria-label="Close menu"
+        />
+        {/* Drawer panel */}
+        <div
+          className={`fixed top-0 left-0 h-full z-50 bg-white shadow-2xl flex flex-col transition-transform duration-300 ease-in-out ${
+            deliveryMenuOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
+          style={{ width: "75%", maxWidth: "300px" }}
+        >
+          {/* Drawer header */}
+          <div
+            className="flex items-center justify-between px-4 pt-10 pb-4 text-white"
+            style={{
+              background:
+                "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+            }}
+          >
+            <div className="flex items-center gap-2.5">
+              <Truck size={20} />
+              <span className="font-bold text-lg font-heading">Delivery</span>
+            </div>
             <button
               type="button"
-              onClick={() => {
-                setBackendError(null);
-                loadData();
-              }}
-              className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 transition-colors px-3 py-1 rounded-lg text-xs font-semibold"
+              onClick={() => setDeliveryMenuOpen(false)}
+              className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center hover:bg-white/30 transition-colors"
+              aria-label="Close menu"
             >
-              <RefreshCw size={12} />
-              Retry
-            </button>
-            <button
-              type="button"
-              onClick={() => setBackendError(null)}
-              className="w-6 h-6 flex items-center justify-center bg-white/20 hover:bg-white/30 transition-colors rounded-full"
-              aria-label="Dismiss error"
-            >
-              <X size={12} />
+              <X size={16} />
             </button>
           </div>
-        </div>
-      )}
 
-      {/* Header */}
-      <header
-        className="text-white px-4 py-4 shadow-lg"
-        style={{
-          background:
-            "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
-        }}
-      >
-        <div className="max-w-sm mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            {fromOffice && (
-              <a
-                href="/office"
-                data-ocid="delivery.back_button"
-                className="w-8 h-8 flex items-center justify-center bg-white/20 hover:bg-white/30 transition-colors rounded-lg mr-0.5"
-                aria-label="Back to Office"
-                title="Back to Office Dashboard"
-              >
-                <ChevronLeft size={18} />
-              </a>
-            )}
-            <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center">
-              <Truck size={18} />
-            </div>
-            <div>
-              <h1 className="text-lg font-bold font-heading">
-                {(() => {
-                  const s = getSession();
-                  return s?.displayName ?? "Delivery | ڈیلیوری";
-                })()}
-              </h1>
-              <p className="text-white/70 text-xs">Delivery Dashboard</p>
-            </div>
+          {/* Nav items */}
+          <div className="flex-1 py-3 overflow-y-auto">
+            <p className="px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">
+              Navigation
+            </p>
+            <button
+              type="button"
+              data-ocid="delivery.menu.active_orders_link"
+              onClick={() => {
+                setDeliveryView("main");
+                setDeliveryMenuOpen(false);
+              }}
+              className={`w-full flex items-center gap-3 py-3 px-4 hover:bg-muted transition-colors text-left ${deliveryView === "main" ? "bg-blue-50 text-blue-700" : "text-foreground"}`}
+            >
+              <span className="text-muted-foreground">
+                <Clock size={18} />
+              </span>
+              <div>
+                <div className="text-sm font-medium">Active Orders</div>
+                <div className="text-[11px] text-muted-foreground">
+                  فعال آرڈر
+                </div>
+              </div>
+            </button>
+            <button
+              type="button"
+              data-ocid="delivery.menu.delivered_orders_link"
+              onClick={() => {
+                setDeliveryView("delivered");
+                setDeliveryMenuOpen(false);
+              }}
+              className={`w-full flex items-center gap-3 py-3 px-4 hover:bg-muted transition-colors text-left ${deliveryView === "delivered" ? "bg-blue-50 text-blue-700" : "text-foreground"}`}
+            >
+              <span className="text-muted-foreground">
+                <CheckCircle2 size={18} />
+              </span>
+              <div>
+                <div className="text-sm font-medium">Delivered Orders</div>
+                <div className="text-[11px] text-muted-foreground">
+                  ڈیلیوری شدہ آرڈر
+                </div>
+              </div>
+            </button>
+            <button
+              type="button"
+              data-ocid="delivery.menu.returned_orders_link"
+              onClick={() => {
+                setDeliveryView("returned");
+                setDeliveryMenuOpen(false);
+              }}
+              className={`w-full flex items-center gap-3 py-3 px-4 hover:bg-muted transition-colors text-left ${deliveryView === "returned" ? "bg-blue-50 text-blue-700" : "text-foreground"}`}
+            >
+              <span className="text-muted-foreground">
+                <Receipt size={18} />
+              </span>
+              <div>
+                <div className="text-sm font-medium">Return Orders</div>
+                <div className="text-[11px] text-muted-foreground">
+                  واپسی آرڈر
+                </div>
+              </div>
+            </button>
+            <button
+              type="button"
+              data-ocid="delivery.menu.history_link"
+              onClick={() => {
+                setDeliveryView("history");
+                setDeliveryMenuOpen(false);
+              }}
+              className={`w-full flex items-center gap-3 py-3 px-4 hover:bg-muted transition-colors text-left ${deliveryView === "history" ? "bg-blue-50 text-blue-700" : "text-foreground"}`}
+            >
+              <span className="text-muted-foreground">
+                <History size={18} />
+              </span>
+              <div>
+                <div className="text-sm font-medium">History</div>
+                <div className="text-[11px] text-muted-foreground">تاریخ</div>
+              </div>
+            </button>
           </div>
-          <div className="flex items-center gap-2">
+
+          {/* Logout at bottom */}
+          <div className="border-t border-border p-4 pb-8">
             <button
               type="button"
-              data-ocid="delivery.offline_toggle"
-              onClick={handleToggleDeliveryOffline}
-              title={isDeliveryOffline ? "Switch online" : "Go offline"}
-              className={`w-8 h-8 flex items-center justify-center transition-colors rounded-lg ${isDeliveryOffline ? "bg-amber-400 text-white" : "bg-white/15 hover:bg-white/25"}`}
-            >
-              {isDeliveryOffline ? <WifiOff size={14} /> : <Wifi size={14} />}
-            </button>
-            <button
-              type="button"
-              onClick={loadData}
-              disabled={isLoading}
-              className="w-8 h-8 flex items-center justify-center bg-white/15 hover:bg-white/25 transition-colors rounded-lg disabled:opacity-60"
-              aria-label="Refresh"
-            >
-              {isLoading ? (
-                <Loader2 size={14} className="animate-spin" />
-              ) : (
-                <RefreshCw size={14} />
-              )}
-            </button>
-            <button
-              type="button"
+              data-ocid="delivery.logout_button"
               onClick={() => {
                 clearSession();
                 window.location.href = "/delivery";
+                setDeliveryMenuOpen(false);
               }}
-              className="w-8 h-8 flex items-center justify-center bg-red-400/80 hover:bg-red-400 transition-colors rounded-lg"
-              aria-label="Logout"
-              title="Logout"
-              data-ocid="delivery.logout_button"
+              className="w-full flex items-center gap-3 py-3 px-4 hover:bg-red-50 transition-colors text-red-500 rounded-xl"
             >
-              <LogOut size={14} />
+              <LogOut size={18} />
+              <div>
+                <div className="text-sm font-medium">Logout</div>
+                <div className="text-[11px] text-red-400">لاگ آؤٹ</div>
+              </div>
             </button>
           </div>
         </div>
-      </header>
+      </>
 
-      {/* Location permission banner */}
-      {!locationAsked && (
-        <div
-          className="flex items-center gap-3 bg-blue-600 text-white px-4 py-2.5 text-sm"
-          data-ocid="delivery.location_banner"
-        >
-          <MapPin size={15} className="shrink-0 opacity-80" />
-          <span className="flex-1 text-xs">
-            Share your location for tracking | اپنی جگہ شیئر کریں
-          </span>
-          <button
-            type="button"
-            data-ocid="delivery.location_allow_button"
-            onClick={handleAllowDeliveryLocation}
-            className="bg-white text-blue-600 text-xs font-semibold px-2.5 py-1 rounded-lg shrink-0"
-          >
-            Allow | اجازت
-          </button>
-          <button
-            type="button"
-            data-ocid="delivery.location_later_button"
-            onClick={() => {
-              try {
-                localStorage.setItem(deliveryLocationKey, "later");
-              } catch {
-                /* ignore */
-              }
-              setLocationAsked("later");
+      {/* Sub-views: Delivered Orders */}
+      {deliveryView === "delivered" && (
+        <div className="min-h-dvh bg-gray-50">
+          <header
+            className="text-white px-4 py-4 shadow-lg"
+            style={{
+              background:
+                "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
             }}
-            className="bg-white/20 text-white text-xs font-semibold px-2.5 py-1 rounded-lg shrink-0"
           >
-            Later | بعد میں
-          </button>
+            <div className="max-w-sm mx-auto flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setDeliveryView("main")}
+                className="w-8 h-8 flex items-center justify-center bg-white/20 hover:bg-white/30 transition-colors rounded-lg"
+                data-ocid="delivery.delivered.back_button"
+              >
+                <ChevronLeft size={18} />
+              </button>
+              <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center">
+                <CheckCircle2 size={18} />
+              </div>
+              <div>
+                <h1 className="text-lg font-bold font-heading">
+                  Delivered Orders
+                </h1>
+                <p className="text-white/70 text-xs">ڈیلیوری شدہ آرڈر</p>
+              </div>
+            </div>
+          </header>
+          <div className="max-w-sm mx-auto px-4 py-5 space-y-3">
+            {allOrders.filter((o) => o.status === "delivered").length === 0 ? (
+              <div
+                className="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-400"
+                data-ocid="delivery.delivered.empty_state"
+              >
+                <CheckCircle2 size={32} className="mx-auto mb-3 opacity-40" />
+                <p className="text-sm font-medium">No delivered orders</p>
+                <p className="text-xs mt-1">کوئی ڈیلیوری شدہ آرڈر نہیں</p>
+              </div>
+            ) : (
+              allOrders
+                .filter((o) => o.status === "delivered")
+                .map((order, idx) => (
+                  <div
+                    key={String(order.backendId)}
+                    data-ocid={`delivery.delivered.item.${idx + 1}`}
+                    className="bg-white rounded-xl border border-green-200 shadow-sm p-4"
+                  >
+                    <div className="flex items-start justify-between mb-2">
+                      <div>
+                        <h3 className="font-bold text-gray-900 font-heading text-sm">
+                          {order.pharmacyName}
+                        </h3>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {order.date}
+                        </p>
+                      </div>
+                      <span className="bg-green-100 text-green-700 text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ml-2">
+                        Delivered
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-500">
+                        <span className="font-medium text-gray-700">
+                          {order.itemCount}
+                        </span>{" "}
+                        items
+                      </span>
+                      <span className="font-bold text-gray-900">
+                        {formatCurrency(order.totalAmount)}
+                      </span>
+                    </div>
+                  </div>
+                ))
+            )}
+          </div>
         </div>
       )}
 
-      <div className="max-w-sm mx-auto px-4 py-5 space-y-5">
-        {/* Summary Stats Bar — always shown, persists until office clears */}
-        {!isLoading && (
-          <div className="grid grid-cols-2 gap-3">
-            {(() => {
-              const clearedAt = paymentsClearedAt
-                ? new Date(paymentsClearedAt)
-                : null;
-              const ordersForSummary = allOrders.filter((o) => {
-                if (!clearedAt) return true;
-                return new Date(o.date) >= clearedAt;
-              });
-              const totalCollected = ordersForSummary.reduce((sum, order) => {
-                const received = Number(
-                  paymentAmount[order.orderId] ?? order.paymentReceived ?? 0,
-                );
-                return sum + received;
-              }, 0);
-              const totalReturnsValue = ordersForSummary.reduce(
-                (sum, order) => {
-                  if (!order.returnItems || order.returnItems.length === 0)
-                    return sum;
-                  const returnedValue = order.returnItems.reduce(
-                    (
-                      s: number,
-                      ri: { medicineId: string; returnedQty: number },
-                    ) => {
-                      const it = order.items.find(
-                        (i: {
-                          medicineId: string;
-                          qty: number;
-                          total: number;
-                        }) => i.medicineId === ri.medicineId,
+      {/* Sub-views: Return Orders */}
+      {deliveryView === "returned" && (
+        <div className="min-h-dvh bg-gray-50">
+          <header
+            className="text-white px-4 py-4 shadow-lg"
+            style={{
+              background:
+                "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+            }}
+          >
+            <div className="max-w-sm mx-auto flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setDeliveryView("main")}
+                className="w-8 h-8 flex items-center justify-center bg-white/20 hover:bg-white/30 transition-colors rounded-lg"
+                data-ocid="delivery.returned.back_button"
+              >
+                <ChevronLeft size={18} />
+              </button>
+              <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center">
+                <Receipt size={18} />
+              </div>
+              <div>
+                <h1 className="text-lg font-bold font-heading">
+                  Return Orders
+                </h1>
+                <p className="text-white/70 text-xs">واپسی آرڈر</p>
+              </div>
+            </div>
+          </header>
+          <div className="max-w-sm mx-auto px-4 py-5 space-y-3">
+            {allOrders.filter((o) => o.returnItems && o.returnItems.length > 0)
+              .length === 0 ? (
+              <div
+                className="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-400"
+                data-ocid="delivery.returned.empty_state"
+              >
+                <Receipt size={32} className="mx-auto mb-3 opacity-40" />
+                <p className="text-sm font-medium">No return orders</p>
+                <p className="text-xs mt-1">کوئی واپسی آرڈر نہیں</p>
+              </div>
+            ) : (
+              allOrders
+                .filter((o) => o.returnItems && o.returnItems.length > 0)
+                .map((order, idx) => (
+                  <div
+                    key={String(order.backendId)}
+                    data-ocid={`delivery.returned.item.${idx + 1}`}
+                    className="bg-white rounded-xl border border-red-200 shadow-sm p-4"
+                  >
+                    <div className="flex items-start justify-between mb-2">
+                      <div>
+                        <h3 className="font-bold text-gray-900 font-heading text-sm">
+                          {order.pharmacyName}
+                        </h3>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {order.date}
+                        </p>
+                      </div>
+                      <span className="bg-red-100 text-red-700 text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ml-2">
+                        Returned
+                      </span>
+                    </div>
+                    {order.returnItems && order.returnItems.length > 0 && (
+                      <div className="mt-2 text-xs text-gray-500">
+                        <span className="font-medium text-gray-700">
+                          {order.returnItems.length}
+                        </span>{" "}
+                        items returned
+                        {order.returnItems.reduce(
+                          (s, ri) => s + ri.returnedQty,
+                          0,
+                        ) > 0 && (
+                          <span className="ml-1">
+                            ·{" "}
+                            {order.returnItems.reduce(
+                              (s, ri) => s + ri.returnedQty,
+                              0,
+                            )}{" "}
+                            qty
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {order.returnReason && (
+                      <p className="mt-1.5 text-xs text-gray-400 italic">
+                        Reason: {order.returnReason}
+                      </p>
+                    )}
+                  </div>
+                ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Sub-views: History */}
+      {deliveryView === "history" && (
+        <div className="min-h-dvh bg-gray-50">
+          <header
+            className="text-white px-4 py-4 shadow-lg"
+            style={{
+              background:
+                "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+            }}
+          >
+            <div className="max-w-sm mx-auto flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setDeliveryView("main")}
+                className="w-8 h-8 flex items-center justify-center bg-white/20 hover:bg-white/30 transition-colors rounded-lg"
+                data-ocid="delivery.history.back_button"
+              >
+                <ChevronLeft size={18} />
+              </button>
+              <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center">
+                <History size={18} />
+              </div>
+              <div>
+                <h1 className="text-lg font-bold font-heading">
+                  Order History
+                </h1>
+                <p className="text-white/70 text-xs">آرڈر تاریخ</p>
+              </div>
+            </div>
+          </header>
+          <div className="max-w-sm mx-auto px-4 py-5 space-y-3">
+            {historyGrouped.length === 0 ? (
+              <div
+                className="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-400"
+                data-ocid="delivery.history.empty_state"
+              >
+                <History size={32} className="mx-auto mb-3 opacity-40" />
+                <p className="text-sm font-medium">No history</p>
+                <p className="text-xs mt-1">کوئی تاریخ نہیں</p>
+              </div>
+            ) : (
+              historyGrouped.map(([date, orders]) => (
+                <div
+                  key={date}
+                  className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm"
+                >
+                  <button
+                    type="button"
+                    data-ocid="delivery.history.row"
+                    onClick={() =>
+                      setHistoryExpandedDates((prev) => ({
+                        ...prev,
+                        [date]: !prev[date],
+                      }))
+                    }
+                    className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Calendar size={14} className="text-blue-500" />
+                      <span className="font-semibold text-sm text-gray-900">
+                        {date}
+                      </span>
+                      <span className="bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded-full">
+                        {orders.length} orders
+                      </span>
+                    </div>
+                    {historyExpandedDates[date] ? (
+                      <ChevronUp size={14} className="text-gray-400" />
+                    ) : (
+                      <ChevronDown size={14} className="text-gray-400" />
+                    )}
+                  </button>
+                  {historyExpandedDates[date] && (
+                    <div className="border-t border-gray-100 divide-y divide-gray-100">
+                      {orders.map((order) => (
+                        <div
+                          key={String(order.backendId)}
+                          className="px-4 py-3"
+                        >
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <p className="font-semibold text-sm text-gray-900">
+                                {order.pharmacyName}
+                              </p>
+                              <p className="text-xs text-gray-500 mt-0.5">
+                                {order.itemCount} items ·{" "}
+                                {formatCurrency(order.totalAmount)}
+                              </p>
+                            </div>
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ml-2 ${
+                                order.status === "delivered"
+                                  ? order.returnItems &&
+                                    order.returnItems.length > 0
+                                    ? "bg-red-100 text-red-700"
+                                    : "bg-green-100 text-green-700"
+                                  : "bg-amber-100 text-amber-700"
+                              }`}
+                            >
+                              {order.status === "delivered"
+                                ? order.returnItems &&
+                                  order.returnItems.length > 0
+                                  ? "Returned"
+                                  : "Delivered"
+                                : "Pending"}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Main view — only shown when deliveryView === "main" */}
+      {deliveryView === "main" && (
+        <div>
+          {/* Backend error banner */}
+          {backendError && (
+            <div className="flex items-center justify-between gap-3 bg-red-600 text-white px-4 py-2.5 text-sm">
+              <span className="flex-1 min-w-0 truncate">
+                Backend error — tap Retry to reload
+              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBackendError(null);
+                    loadData();
+                  }}
+                  className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 transition-colors px-3 py-1 rounded-lg text-xs font-semibold"
+                >
+                  <RefreshCw size={12} />
+                  Retry
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBackendError(null)}
+                  className="w-6 h-6 flex items-center justify-center bg-white/20 hover:bg-white/30 transition-colors rounded-full"
+                  aria-label="Dismiss error"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Header */}
+          <header
+            className="text-white px-4 py-4 shadow-lg"
+            style={{
+              background:
+                "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+            }}
+          >
+            <div className="max-w-sm mx-auto flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                {fromOffice && (
+                  <a
+                    href="/office"
+                    data-ocid="delivery.back_button"
+                    className="w-8 h-8 flex items-center justify-center bg-white/20 hover:bg-white/30 transition-colors rounded-lg mr-0.5"
+                    aria-label="Back to Office"
+                    title="Back to Office Dashboard"
+                  >
+                    <ChevronLeft size={18} />
+                  </a>
+                )}
+                <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center">
+                  <Truck size={18} />
+                </div>
+                <div>
+                  <h1 className="text-lg font-bold font-heading">
+                    {(() => {
+                      const s = getSession();
+                      return s?.displayName ?? "Delivery | ڈیلیوری";
+                    })()}
+                  </h1>
+                  <p className="text-white/70 text-xs">Delivery Dashboard</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  data-ocid="delivery.offline_toggle"
+                  onClick={handleToggleDeliveryOffline}
+                  title={isDeliveryOffline ? "Switch online" : "Go offline"}
+                  className={`w-8 h-8 flex items-center justify-center transition-colors rounded-lg ${isDeliveryOffline ? "bg-amber-400 text-white" : "bg-white/15 hover:bg-white/25"}`}
+                >
+                  {isDeliveryOffline ? (
+                    <WifiOff size={14} />
+                  ) : (
+                    <Wifi size={14} />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={loadData}
+                  disabled={isLoading}
+                  className="w-8 h-8 flex items-center justify-center bg-white/15 hover:bg-white/25 transition-colors rounded-lg disabled:opacity-60"
+                  aria-label="Refresh"
+                >
+                  {isLoading ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <RefreshCw size={14} />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDeliveryMenuOpen(true)}
+                  className="w-8 h-8 flex items-center justify-center bg-white/15 hover:bg-white/25 transition-colors rounded-lg"
+                  aria-label="Menu"
+                  title="Menu"
+                  data-ocid="delivery.menu_button"
+                >
+                  <Menu size={16} />
+                </button>
+              </div>
+            </div>
+          </header>
+
+          {/* Location permission banner */}
+          {!locationAsked && (
+            <div
+              className="flex items-center gap-3 bg-blue-600 text-white px-4 py-2.5 text-sm"
+              data-ocid="delivery.location_banner"
+            >
+              <MapPin size={15} className="shrink-0 opacity-80" />
+              <span className="flex-1 text-xs">
+                Share your location for tracking | اپنی جگہ شیئر کریں
+              </span>
+              <button
+                type="button"
+                data-ocid="delivery.location_allow_button"
+                onClick={handleAllowDeliveryLocation}
+                className="bg-white text-blue-600 text-xs font-semibold px-2.5 py-1 rounded-lg shrink-0"
+              >
+                Allow | اجازت
+              </button>
+              <button
+                type="button"
+                data-ocid="delivery.location_later_button"
+                onClick={() => {
+                  try {
+                    localStorage.setItem(deliveryLocationKey, "later");
+                  } catch {
+                    /* ignore */
+                  }
+                  setLocationAsked("later");
+                }}
+                className="bg-white/20 text-white text-xs font-semibold px-2.5 py-1 rounded-lg shrink-0"
+              >
+                Later | بعد میں
+              </button>
+            </div>
+          )}
+
+          <div className="max-w-sm mx-auto px-4 py-5 space-y-5">
+            {/* Summary Stats Bar — always shown, persists until office clears */}
+            {!isLoading && (
+              <div className="grid grid-cols-2 gap-3">
+                {(() => {
+                  const clearedAt = paymentsClearedAt
+                    ? new Date(paymentsClearedAt)
+                    : null;
+                  const ordersForSummary = allOrders.filter((o) => {
+                    if (!clearedAt) return true;
+                    return new Date(o.date) >= clearedAt;
+                  });
+                  const totalCollected = ordersForSummary.reduce(
+                    (sum, order) => {
+                      const received = Number(
+                        paymentAmount[order.orderId] ??
+                          order.paymentReceived ??
+                          0,
                       );
-                      if (!it || it.qty === 0) return s;
-                      return s + (it.total / it.qty) * ri.returnedQty;
+                      return sum + received;
                     },
                     0,
                   );
-                  return sum + returnedValue;
-                },
-                0,
-              );
-              const totalCredit = ordersForSummary.reduce((sum, order) => {
-                const received = Number(
-                  paymentAmount[order.orderId] ?? order.paymentReceived ?? 0,
-                );
-                const returnedValue =
-                  order.returnItems && order.returnItems.length > 0
-                    ? order.returnItems.reduce(
+                  const totalReturnsValue = ordersForSummary.reduce(
+                    (sum, order) => {
+                      if (!order.returnItems || order.returnItems.length === 0)
+                        return sum;
+                      const returnedValue = order.returnItems.reduce(
                         (
                           s: number,
                           ri: { medicineId: string; returnedQty: number },
@@ -15976,579 +16402,728 @@ function DeliveryDashboard() {
                           return s + (it.total / it.qty) * ri.returnedQty;
                         },
                         0,
-                      )
-                    : 0;
-                const netPayable = order.totalAmount - returnedValue;
-                const balance = netPayable - received;
-                return sum + (balance > 0 ? balance : 0);
-              }, 0);
-              return (
-                <>
-                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5">
-                    <p className="text-xs text-emerald-600 font-semibold uppercase tracking-wide mb-1">
-                      Total Collected | کل وصول
-                    </p>
-                    <p className="text-lg font-bold text-emerald-700 font-heading">
-                      {formatCurrency(totalCollected)}
-                    </p>
-                  </div>
-                  <div className="bg-red-50 border border-red-200 rounded-xl p-3.5">
-                    <p className="text-xs text-red-600 font-semibold uppercase tracking-wide mb-1">
-                      Total Credit | کل باقی
-                    </p>
-                    <p className="text-lg font-bold text-red-700 font-heading">
-                      {formatCurrency(totalCredit)}
-                    </p>
-                  </div>
-                  {totalReturnsValue > 0 && (
-                    <div className="bg-orange-50 border border-orange-200 rounded-xl p-3.5">
-                      <p className="text-xs text-orange-600 font-semibold uppercase tracking-wide mb-1">
-                        Total Returns | کل واپسی
-                      </p>
-                      <p className="text-lg font-bold text-orange-700 font-heading">
-                        {formatCurrency(totalReturnsValue)}
-                      </p>
-                    </div>
-                  )}
-                </>
-              );
-            })()}
-          </div>
-        )}
-
-        {/* Pharmacy Search */}
-        <div className="relative">
-          <Search
-            size={16}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
-          />
-          <input
-            type="text"
-            value={pharmacySearch}
-            onChange={(e) => setPharmacySearch(e.target.value)}
-            placeholder="Search pharmacy... | فارمیسی تلاش کریں"
-            className="w-full pl-9 pr-9 h-10 rounded-xl border border-gray-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 shadow-sm"
-            data-ocid="delivery.pharmacy_search_input"
-          />
-          {pharmacySearch && (
-            <button
-              type="button"
-              onClick={() => setPharmacySearch("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-              aria-label="Clear search"
-            >
-              <X size={14} />
-            </button>
-          )}
-        </div>
-
-        {/* Pending Deliveries */}
-        <div>
-          <h2 className="font-bold text-gray-800 font-heading mb-3 flex items-center gap-2">
-            <Clock size={16} className="text-amber-500" />
-            Pending Deliveries | زیر التواء ڈیلیوری
-            {!isLoading && (
-              <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-semibold">
-                {pharmacySearch.trim()
-                  ? `${pendingOrders.filter((o) => o.pharmacyName.toLowerCase().includes(pharmacySearch.toLowerCase())).length}/${pendingOrders.length}`
-                  : pendingOrders.length}
-              </span>
+                      );
+                      return sum + returnedValue;
+                    },
+                    0,
+                  );
+                  const totalCredit = ordersForSummary.reduce((sum, order) => {
+                    const received = Number(
+                      paymentAmount[order.orderId] ??
+                        order.paymentReceived ??
+                        0,
+                    );
+                    const returnedValue =
+                      order.returnItems && order.returnItems.length > 0
+                        ? order.returnItems.reduce(
+                            (
+                              s: number,
+                              ri: { medicineId: string; returnedQty: number },
+                            ) => {
+                              const it = order.items.find(
+                                (i: {
+                                  medicineId: string;
+                                  qty: number;
+                                  total: number;
+                                }) => i.medicineId === ri.medicineId,
+                              );
+                              if (!it || it.qty === 0) return s;
+                              return s + (it.total / it.qty) * ri.returnedQty;
+                            },
+                            0,
+                          )
+                        : 0;
+                    const netPayable = order.totalAmount - returnedValue;
+                    const balance = netPayable - received;
+                    return sum + (balance > 0 ? balance : 0);
+                  }, 0);
+                  return (
+                    <>
+                      <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5">
+                        <p className="text-xs text-emerald-600 font-semibold uppercase tracking-wide mb-1">
+                          Total Collected | کل وصول
+                        </p>
+                        <p className="text-lg font-bold text-emerald-700 font-heading">
+                          {formatCurrency(totalCollected)}
+                        </p>
+                      </div>
+                      <div className="bg-red-50 border border-red-200 rounded-xl p-3.5">
+                        <p className="text-xs text-red-600 font-semibold uppercase tracking-wide mb-1">
+                          Total Credit | کل باقی
+                        </p>
+                        <p className="text-lg font-bold text-red-700 font-heading">
+                          {formatCurrency(totalCredit)}
+                        </p>
+                      </div>
+                      {totalReturnsValue > 0 && (
+                        <div className="bg-orange-50 border border-orange-200 rounded-xl p-3.5">
+                          <p className="text-xs text-orange-600 font-semibold uppercase tracking-wide mb-1">
+                            Total Returns | کل واپسی
+                          </p>
+                          <p className="text-lg font-bold text-orange-700 font-heading">
+                            {formatCurrency(totalReturnsValue)}
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
             )}
-          </h2>
 
-          {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="animate-spin text-blue-500" size={28} />
+            {/* Pharmacy Search */}
+            <div className="relative">
+              <Search
+                size={16}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
+              />
+              <input
+                type="text"
+                value={pharmacySearch}
+                onChange={(e) => setPharmacySearch(e.target.value)}
+                placeholder="Search pharmacy... | فارمیسی تلاش کریں"
+                className="w-full pl-9 pr-9 h-10 rounded-xl border border-gray-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 shadow-sm"
+                data-ocid="delivery.pharmacy_search_input"
+              />
+              {pharmacySearch && (
+                <button
+                  type="button"
+                  onClick={() => setPharmacySearch("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  aria-label="Clear search"
+                >
+                  <X size={14} />
+                </button>
+              )}
             </div>
-          ) : (
-            (() => {
-              const filteredPendingOrders = pharmacySearch.trim()
-                ? pendingOrders.filter((o) =>
-                    o.pharmacyName
-                      .toLowerCase()
-                      .includes(pharmacySearch.toLowerCase()),
-                  )
-                : pendingOrders;
-              return filteredPendingOrders.length === 0 ? (
-                <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-400">
-                  <Truck size={32} className="mx-auto mb-3 opacity-40" />
-                  <p className="text-sm font-medium">
+
+            {/* Pending Deliveries */}
+            <div>
+              <h2 className="font-bold text-gray-800 font-heading mb-3 flex items-center gap-2">
+                <Clock size={16} className="text-amber-500" />
+                Pending Deliveries | زیر التواء ڈیلیوری
+                {!isLoading && (
+                  <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-semibold">
                     {pharmacySearch.trim()
-                      ? "No matching pharmacies"
-                      : "No pending deliveries"}
-                  </p>
-                  <p className="text-xs mt-1">
-                    {pharmacySearch.trim()
-                      ? "تلاش کا نتیجہ نہیں ملا"
-                      : "تمام ڈیلیوریاں مکمل ہو گئی ہیں"}
-                  </p>
+                      ? `${pendingOrders.filter((o) => o.pharmacyName.toLowerCase().includes(pharmacySearch.toLowerCase())).length}/${pendingOrders.length}`
+                      : pendingOrders.length}
+                  </span>
+                )}
+              </h2>
+
+              {isLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="animate-spin text-blue-500" size={28} />
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {filteredPendingOrders.map((order) => (
-                    <div
-                      key={String(order.backendId)}
-                      className="bg-white rounded-xl border border-gray-200 shadow-sm p-4"
-                    >
-                      <div className="flex items-start justify-between mb-2">
-                        <div>
-                          <h3 className="font-bold text-gray-900 font-heading">
-                            {order.pharmacyName}
-                          </h3>
-                          {order.pharmacyAddress && (
-                            <div className="flex items-center gap-1 mt-0.5 text-xs text-gray-500">
-                              <MapPin size={10} />
-                              <span>{order.pharmacyAddress}</span>
-                            </div>
-                          )}
-                          {order.pharmacyArea && (
-                            <span className="inline-block text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full mt-1">
-                              {order.pharmacyArea}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between text-sm mt-3">
-                        <div className="text-gray-500">
-                          <span className="font-medium text-gray-700">
-                            {order.itemCount}
-                          </span>{" "}
-                          items ·{" "}
-                          <span
-                            className={`font-bold ${order.returnItems && order.returnItems.length > 0 ? "line-through text-gray-400" : "text-gray-900"}`}
-                          >
-                            {formatCurrency(order.totalAmount)}
-                          </span>
-                          {order.returnItems &&
-                            order.returnItems.length > 0 &&
-                            (() => {
-                              const returnedValue = order.returnItems.reduce(
-                                (
-                                  s: number,
-                                  ri: {
-                                    medicineId: string;
-                                    returnedQty: number;
-                                  },
-                                ) => {
-                                  const it = order.items.find(
-                                    (i) => i.medicineId === ri.medicineId,
-                                  );
-                                  if (!it || it.qty === 0) return s;
-                                  return (
-                                    s + (it.total / it.qty) * ri.returnedQty
-                                  );
-                                },
-                                0,
-                              );
-                              const netAmount =
-                                order.totalAmount - returnedValue;
-                              return (
-                                <span className="ml-1.5 font-bold text-orange-700">
-                                  → {formatCurrency(netAmount)}{" "}
-                                  <span className="text-xs font-normal">
-                                    (returns minus)
-                                  </span>
+                (() => {
+                  const filteredPendingOrders = pharmacySearch.trim()
+                    ? pendingOrders.filter((o) =>
+                        o.pharmacyName
+                          .toLowerCase()
+                          .includes(pharmacySearch.toLowerCase()),
+                      )
+                    : pendingOrders;
+                  return filteredPendingOrders.length === 0 ? (
+                    <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-400">
+                      <Truck size={32} className="mx-auto mb-3 opacity-40" />
+                      <p className="text-sm font-medium">
+                        {pharmacySearch.trim()
+                          ? "No matching pharmacies"
+                          : "No pending deliveries"}
+                      </p>
+                      <p className="text-xs mt-1">
+                        {pharmacySearch.trim()
+                          ? "تلاش کا نتیجہ نہیں ملا"
+                          : "تمام ڈیلیوریاں مکمل ہو گئی ہیں"}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {filteredPendingOrders.map((order) => (
+                        <div
+                          key={String(order.backendId)}
+                          className="bg-white rounded-xl border border-gray-200 shadow-sm p-4"
+                        >
+                          <div className="flex items-start justify-between mb-2">
+                            <div>
+                              <h3 className="font-bold text-gray-900 font-heading">
+                                {order.pharmacyName}
+                              </h3>
+                              {order.pharmacyAddress && (
+                                <div className="flex items-center gap-1 mt-0.5 text-xs text-gray-500">
+                                  <MapPin size={10} />
+                                  <span>{order.pharmacyAddress}</span>
+                                </div>
+                              )}
+                              {order.pharmacyArea && (
+                                <span className="inline-block text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full mt-1">
+                                  {order.pharmacyArea}
                                 </span>
-                              );
-                            })()}
-                        </div>
-                      </div>
-
-                      {/* Payment & Return Section */}
-                      <div className="mt-3 space-y-2">
-                        <div>
-                          <label
-                            htmlFor={`payment-${order.orderId}`}
-                            className="text-xs text-gray-500 font-medium block mb-1"
-                          >
-                            Received | موصول (Rs)
-                          </label>
-                          <input
-                            id={`payment-${order.orderId}`}
-                            type="number"
-                            min="0"
-                            value={
-                              paymentAmount[order.orderId] ??
-                              (order.paymentReceived > 0
-                                ? String(order.paymentReceived)
-                                : "")
-                            }
-                            onChange={(e) =>
-                              setPaymentAmount((prev) => ({
-                                ...prev,
-                                [order.orderId]: e.target.value,
-                              }))
-                            }
-                            placeholder="0"
-                            className="w-full h-9 text-sm border border-gray-300 rounded-lg px-2 focus:outline-none focus:ring-1 focus:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                          />
-                        </div>
-                        {/* Balance display */}
-                        {(() => {
-                          const received = Number(
-                            paymentAmount[order.orderId] ??
-                              order.paymentReceived ??
-                              0,
-                          );
-                          const returnedValue =
-                            order.returnItems && order.returnItems.length > 0
-                              ? order.returnItems.reduce(
-                                  (
-                                    s: number,
-                                    ri: {
-                                      medicineId: string;
-                                      returnedQty: number;
-                                    },
-                                  ) => {
-                                    const it = order.items.find(
-                                      (i) => i.medicineId === ri.medicineId,
-                                    );
-                                    if (!it || it.qty === 0) return s;
-                                    return (
-                                      s + (it.total / it.qty) * ri.returnedQty
-                                    );
-                                  },
-                                  0,
-                                )
-                              : 0;
-                          const netPayable = order.totalAmount - returnedValue;
-                          const balance = netPayable - received;
-                          if (received === 0) return null;
-                          return (
-                            <div
-                              className={`flex items-center justify-between text-sm px-3 py-1.5 rounded-lg ${balance > 0 ? "bg-red-50 text-red-700" : balance < 0 ? "bg-emerald-50 text-emerald-700" : "bg-gray-50 text-gray-600"}`}
-                            >
-                              <span className="font-medium">
-                                Balance | باقی:
-                              </span>
-                              <span className="font-bold">
-                                {formatCurrency(Math.abs(balance))}{" "}
-                                {balance > 0
-                                  ? "(baqi)"
-                                  : balance < 0
-                                    ? "(extra)"
-                                    : "(full paid)"}
-                              </span>
+                              )}
                             </div>
-                          );
-                        })()}
-                        {/* Return items display if any */}
-                        {order.returnItems && order.returnItems.length > 0 && (
-                          <div className="bg-orange-50 border border-orange-200 rounded-lg p-2">
-                            <p className="text-xs font-semibold text-orange-700 mb-1">
-                              Returned Items | واپس کی گئی:
-                            </p>
-                            {order.items.map((item) => {
-                              const isReturned = order.returnItems.some(
-                                (r) => r.medicineId === item.medicineId,
+                          </div>
+                          <div className="flex items-center justify-between text-sm mt-3">
+                            <div className="text-gray-500">
+                              <span className="font-medium text-gray-700">
+                                {order.itemCount}
+                              </span>{" "}
+                              items ·{" "}
+                              <span
+                                className={`font-bold ${order.returnItems && order.returnItems.length > 0 ? "line-through text-gray-400" : "text-gray-900"}`}
+                              >
+                                {formatCurrency(order.totalAmount)}
+                              </span>
+                              {order.returnItems &&
+                                order.returnItems.length > 0 &&
+                                (() => {
+                                  const returnedValue =
+                                    order.returnItems.reduce(
+                                      (
+                                        s: number,
+                                        ri: {
+                                          medicineId: string;
+                                          returnedQty: number;
+                                        },
+                                      ) => {
+                                        const it = order.items.find(
+                                          (i) => i.medicineId === ri.medicineId,
+                                        );
+                                        if (!it || it.qty === 0) return s;
+                                        return (
+                                          s +
+                                          (it.total / it.qty) * ri.returnedQty
+                                        );
+                                      },
+                                      0,
+                                    );
+                                  const netAmount =
+                                    order.totalAmount - returnedValue;
+                                  return (
+                                    <span className="ml-1.5 font-bold text-orange-700">
+                                      → {formatCurrency(netAmount)}{" "}
+                                      <span className="text-xs font-normal">
+                                        (returns minus)
+                                      </span>
+                                    </span>
+                                  );
+                                })()}
+                            </div>
+                          </div>
+
+                          {/* Payment & Return Section */}
+                          <div className="mt-3 space-y-2">
+                            <div>
+                              <label
+                                htmlFor={`payment-${order.orderId}`}
+                                className="text-xs text-gray-500 font-medium block mb-1"
+                              >
+                                Received | موصول (Rs)
+                              </label>
+                              <input
+                                id={`payment-${order.orderId}`}
+                                type="number"
+                                min="0"
+                                value={
+                                  paymentAmount[order.orderId] ??
+                                  (order.paymentReceived > 0
+                                    ? String(order.paymentReceived)
+                                    : "")
+                                }
+                                onChange={(e) =>
+                                  setPaymentAmount((prev) => ({
+                                    ...prev,
+                                    [order.orderId]: e.target.value,
+                                  }))
+                                }
+                                placeholder="0"
+                                className="w-full h-9 text-sm border border-gray-300 rounded-lg px-2 focus:outline-none focus:ring-1 focus:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              />
+                            </div>
+                            {/* Balance display */}
+                            {(() => {
+                              const received = Number(
+                                paymentAmount[order.orderId] ??
+                                  order.paymentReceived ??
+                                  0,
                               );
+                              const returnedValue =
+                                order.returnItems &&
+                                order.returnItems.length > 0
+                                  ? order.returnItems.reduce(
+                                      (
+                                        s: number,
+                                        ri: {
+                                          medicineId: string;
+                                          returnedQty: number;
+                                        },
+                                      ) => {
+                                        const it = order.items.find(
+                                          (i) => i.medicineId === ri.medicineId,
+                                        );
+                                        if (!it || it.qty === 0) return s;
+                                        return (
+                                          s +
+                                          (it.total / it.qty) * ri.returnedQty
+                                        );
+                                      },
+                                      0,
+                                    )
+                                  : 0;
+                              const netPayable =
+                                order.totalAmount - returnedValue;
+                              const balance = netPayable - received;
+                              if (received === 0) return null;
                               return (
                                 <div
-                                  key={item.medicineId}
-                                  className={`text-xs py-0.5 font-medium ${isReturned ? "text-red-600" : "text-emerald-600"}`}
+                                  className={`flex items-center justify-between text-sm px-3 py-1.5 rounded-lg ${balance > 0 ? "bg-red-50 text-red-700" : balance < 0 ? "bg-emerald-50 text-emerald-700" : "bg-gray-50 text-gray-600"}`}
                                 >
-                                  {isReturned ? "↩ " : "✓ "}
-                                  {item.medicineName} x{(() => {
-                                    const ri = order.returnItems.find(
-                                      (r: {
-                                        medicineId: string;
-                                        returnedQty: number;
-                                      }) => r.medicineId === item.medicineId,
-                                    );
-                                    return ri ? ri.returnedQty : item.qty;
-                                  })()}
+                                  <span className="font-medium">
+                                    Balance | باقی:
+                                  </span>
+                                  <span className="font-bold">
+                                    {formatCurrency(Math.abs(balance))}{" "}
+                                    {balance > 0
+                                      ? "(baqi)"
+                                      : balance < 0
+                                        ? "(extra)"
+                                        : "(full paid)"}
+                                  </span>
                                 </div>
                               );
-                            })}
-                            {order.returnReason && (
-                              <p className="text-xs text-orange-600 mt-1 italic">
-                                Reason: {order.returnReason}
-                              </p>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Return button */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setReturnModalOrder(order);
-                          const toggles: Record<string, boolean> = {};
-                          for (const item of order.items) {
-                            const isReturned = order.returnItems?.some(
-                              (r) => r.medicineId === item.medicineId,
-                            );
-                            if (isReturned) toggles[item.medicineId] = true;
-                          }
-                          setReturnToggles(toggles);
-                          setReturnReason(order.returnReason ?? "");
-                        }}
-                        className="mt-2 w-full flex items-center justify-center gap-2 border-2 border-orange-400 text-orange-600 hover:bg-orange-50 font-semibold py-2.5 rounded-xl transition-colors text-sm"
-                      >
-                        <X size={15} />
-                        Return Items | واپسی
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setReturnModalOrder(order);
-                          const qtys: Record<string, number> = {};
-                          for (const item of order.items) {
-                            qtys[item.medicineId] = item.qty;
-                          }
-                          setReturnQtys(qtys);
-                          setReturnReason("");
-                        }}
-                        className="mt-1 w-full flex items-center justify-center gap-2 border-2 border-red-400 text-red-600 hover:bg-red-50 font-semibold py-2.5 rounded-xl transition-colors text-sm"
-                      >
-                        <X size={15} />
-                        Return All Items | سب واپس کریں
-                      </button>
-
-                      {(() => {
-                        const paymentEntered =
-                          Number(
-                            paymentAmount[order.orderId] ??
-                              order.paymentReceived ??
-                              0,
-                          ) > 0;
-                        return (
-                          <div className="mt-2">
-                            <button
-                              type="button"
-                              onClick={() => handleMarkDelivered(order)}
-                              disabled={
-                                markingId === order.backendId || !paymentEntered
-                              }
-                              className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-                            >
-                              {markingId === order.backendId ? (
-                                <Loader2 size={16} className="animate-spin" />
-                              ) : (
-                                <CheckCircle2 size={16} />
+                            })()}
+                            {/* Return items display if any */}
+                            {order.returnItems &&
+                              order.returnItems.length > 0 && (
+                                <div className="bg-orange-50 border border-orange-200 rounded-lg p-2">
+                                  <p className="text-xs font-semibold text-orange-700 mb-1">
+                                    Returned Items | واپس کی گئی:
+                                  </p>
+                                  {order.items.map((item) => {
+                                    const isReturned = order.returnItems.some(
+                                      (r) => r.medicineId === item.medicineId,
+                                    );
+                                    return (
+                                      <div
+                                        key={item.medicineId}
+                                        className={`text-xs py-0.5 font-medium ${isReturned ? "text-red-600" : "text-emerald-600"}`}
+                                      >
+                                        {isReturned ? "↩ " : "✓ "}
+                                        {item.medicineName} x{(() => {
+                                          const ri = order.returnItems.find(
+                                            (r: {
+                                              medicineId: string;
+                                              returnedQty: number;
+                                            }) =>
+                                              r.medicineId === item.medicineId,
+                                          );
+                                          return ri ? ri.returnedQty : item.qty;
+                                        })()}
+                                      </div>
+                                    );
+                                  })}
+                                  {order.returnReason && (
+                                    <p className="text-xs text-orange-600 mt-1 italic">
+                                      Reason: {order.returnReason}
+                                    </p>
+                                  )}
+                                </div>
                               )}
-                              Mark Delivered | تحویل کریں
-                            </button>
-                            {!paymentEntered && (
-                              <p className="text-xs text-amber-600 text-center mt-1 font-medium">
-                                ⚠ Pehle payment enter karein | Please enter
-                                payment first
-                              </p>
-                            )}
                           </div>
-                        );
-                      })()}
+
+                          {/* Return button */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setReturnModalOrder(order);
+                              const toggles: Record<string, boolean> = {};
+                              for (const item of order.items) {
+                                const isReturned = order.returnItems?.some(
+                                  (r) => r.medicineId === item.medicineId,
+                                );
+                                if (isReturned) toggles[item.medicineId] = true;
+                              }
+                              setReturnToggles(toggles);
+                              setReturnReason(order.returnReason ?? "");
+                            }}
+                            className="mt-2 w-full flex items-center justify-center gap-2 border-2 border-orange-400 text-orange-600 hover:bg-orange-50 font-semibold py-2.5 rounded-xl transition-colors text-sm"
+                          >
+                            <X size={15} />
+                            Return Items | واپسی
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setReturnModalOrder(order);
+                              const qtys: Record<string, number> = {};
+                              for (const item of order.items) {
+                                qtys[item.medicineId] = item.qty;
+                              }
+                              setReturnQtys(qtys);
+                              setReturnReason("");
+                            }}
+                            className="mt-1 w-full flex items-center justify-center gap-2 border-2 border-red-400 text-red-600 hover:bg-red-50 font-semibold py-2.5 rounded-xl transition-colors text-sm"
+                          >
+                            <X size={15} />
+                            Return All Items | سب واپس کریں
+                          </button>
+
+                          {(() => {
+                            const paymentEntered =
+                              Number(
+                                paymentAmount[order.orderId] ??
+                                  order.paymentReceived ??
+                                  0,
+                              ) > 0;
+                            return (
+                              <div className="mt-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleMarkDelivered(order)}
+                                  disabled={
+                                    markingId === order.backendId ||
+                                    !paymentEntered
+                                  }
+                                  className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                                >
+                                  {markingId === order.backendId ? (
+                                    <Loader2
+                                      size={16}
+                                      className="animate-spin"
+                                    />
+                                  ) : (
+                                    <CheckCircle2 size={16} />
+                                  )}
+                                  Mark Delivered | تحویل کریں
+                                </button>
+                                {!paymentEntered && (
+                                  <p className="text-xs text-amber-600 text-center mt-1 font-medium">
+                                    ⚠ Pehle payment enter karein | Please enter
+                                    payment first
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()
+              )}
+            </div>
+
+            {/* Delivered This Session */}
+            {deliveredThisSession.length > 0 && (
+              <div>
+                <h2 className="font-bold text-gray-800 font-heading mb-3 flex items-center gap-2">
+                  <CheckCircle2 size={16} className="text-emerald-500" />
+                  Delivered Today | آج کی ڈیلیوری
+                  <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-semibold">
+                    {deliveredThisSession.length}
+                  </span>
+                </h2>
+                <div className="space-y-2.5">
+                  {deliveredThisSession.map((order) => (
+                    <div
+                      key={String(order.backendId)}
+                      className="bg-emerald-50 border border-emerald-200 rounded-xl p-4"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="font-semibold text-emerald-900 text-sm">
+                            {order.pharmacyName}
+                          </h3>
+                          {order.pharmacyArea && (
+                            <p className="text-xs text-emerald-600 mt-0.5">
+                              {order.pharmacyArea}
+                            </p>
+                          )}
+                        </div>
+                        <div className="text-right">
+                          <span className="inline-flex items-center gap-1 text-xs text-emerald-700 bg-emerald-100 px-2 py-1 rounded-full font-semibold">
+                            <CheckCircle2 size={11} />
+                            Delivered
+                          </span>
+                          <p className="text-xs text-emerald-600 mt-1 font-mono">
+                            {order.orderId}
+                          </p>
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
-              );
-            })()
-          )}
-        </div>
+              </div>
+            )}
 
-        {/* Delivered This Session */}
-        {deliveredThisSession.length > 0 && (
-          <div>
-            <h2 className="font-bold text-gray-800 font-heading mb-3 flex items-center gap-2">
-              <CheckCircle2 size={16} className="text-emerald-500" />
-              Delivered Today | آج کی ڈیلیوری
-              <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-semibold">
-                {deliveredThisSession.length}
-              </span>
-            </h2>
-            <div className="space-y-2.5">
-              {deliveredThisSession.map((order) => (
-                <div
-                  key={String(order.backendId)}
-                  className="bg-emerald-50 border border-emerald-200 rounded-xl p-4"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="font-semibold text-emerald-900 text-sm">
-                        {order.pharmacyName}
-                      </h3>
-                      {order.pharmacyArea && (
-                        <p className="text-xs text-emerald-600 mt-0.5">
-                          {order.pharmacyArea}
-                        </p>
-                      )}
-                    </div>
-                    <div className="text-right">
-                      <span className="inline-flex items-center gap-1 text-xs text-emerald-700 bg-emerald-100 px-2 py-1 rounded-full font-semibold">
-                        <CheckCircle2 size={11} />
-                        Delivered
-                      </span>
-                      <p className="text-xs text-emerald-600 mt-1 font-mono">
-                        {order.orderId}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ))}
+            {/* Footer */}
+            <div className="text-center py-3 text-xs text-gray-400">
+              © {new Date().getFullYear()}. Built with ♥ using{" "}
+              <a
+                href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(window.location.hostname)}`}
+                className="text-blue-500 underline"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                caffeine.ai
+              </a>
             </div>
           </div>
-        )}
 
-        {/* Footer */}
-        <div className="text-center py-3 text-xs text-gray-400">
-          © {new Date().getFullYear()}. Built with ♥ using{" "}
-          <a
-            href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(window.location.hostname)}`}
-            className="text-blue-500 underline"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            caffeine.ai
-          </a>
-        </div>
-      </div>
-
-      {/* Return Modal */}
-      {returnModalOrder && (
-        <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
-          onClick={() => setReturnModalOrder(null)}
-          onKeyDown={(e) => e.key === "Escape" && setReturnModalOrder(null)}
-          aria-label="Close modal backdrop"
-        >
-          <div
-            className="bg-white w-full max-w-sm rounded-t-2xl shadow-2xl max-h-[85vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.stopPropagation()}
-          >
-            <div className="px-4 py-4 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white">
-              <div>
-                <h3 className="font-bold text-gray-900">
-                  Return Items | واپسی
-                </h3>
-                <p className="text-xs text-gray-500">
-                  {returnModalOrder.pharmacyName}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setReturnModalOrder(null)}
-                className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center"
+          {/* Return Modal */}
+          {returnModalOrder && (
+            <div
+              className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
+              onClick={() => setReturnModalOrder(null)}
+              onKeyDown={(e) => e.key === "Escape" && setReturnModalOrder(null)}
+              aria-label="Close modal backdrop"
+            >
+              <div
+                className="bg-white w-full max-w-sm rounded-t-2xl shadow-2xl max-h-[85vh] overflow-y-auto"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
               >
-                <X size={16} />
-              </button>
-            </div>
-            <div className="px-4 py-4 space-y-3">
-              <p className="text-xs text-gray-500">
-                Har item ke liye return quantity likhein | Enter return qty for
-                each item:
-              </p>
-              {returnModalOrder.items.map((item) => {
-                const returnQty = returnQtys[item.medicineId] ?? 0;
-                const keptQty = item.qty - returnQty;
-                const hasReturn = returnQty > 0;
-                return (
-                  <div
-                    key={item.medicineId}
-                    className={`p-3 rounded-xl border-2 transition-colors ${hasReturn ? "border-red-300 bg-red-50" : "border-gray-200 bg-gray-50"}`}
+                <div className="px-4 py-4 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white">
+                  <div>
+                    <h3 className="font-bold text-gray-900">
+                      Return Items | واپسی
+                    </h3>
+                    <p className="text-xs text-gray-500">
+                      {returnModalOrder.pharmacyName}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setReturnModalOrder(null)}
+                    className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center"
                   >
-                    <div className="flex items-center justify-between mb-2">
-                      <p
-                        className={`font-semibold text-sm ${hasReturn ? "text-red-700" : "text-gray-700"}`}
+                    <X size={16} />
+                  </button>
+                </div>
+                <div className="px-4 py-4 space-y-3">
+                  <p className="text-xs text-gray-500">
+                    Har item ke liye return quantity likhein | Enter return qty
+                    for each item:
+                  </p>
+                  {returnModalOrder.items.map((item) => {
+                    const returnQty = returnQtys[item.medicineId] ?? 0;
+                    const keptQty = item.qty - returnQty;
+                    const hasReturn = returnQty > 0;
+                    return (
+                      <div
+                        key={item.medicineId}
+                        className={`p-3 rounded-xl border-2 transition-colors ${hasReturn ? "border-red-300 bg-red-50" : "border-gray-200 bg-gray-50"}`}
                       >
-                        {item.medicineName}
-                      </p>
-                      <span className="text-xs text-gray-500 bg-white px-2 py-0.5 rounded-full border">
-                        Order Qty: {item.qty}
-                      </span>
-                    </div>
-                    {item.strength && (
-                      <p className="text-xs text-gray-400 mb-2">
-                        {item.strength}
-                      </p>
-                    )}
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1">
-                        <label
-                          htmlFor={`return-qty-${item.medicineId}`}
-                          className="text-xs text-gray-500 mb-1 block"
-                        >
-                          Return Qty | واپسی
-                        </label>
-                        <input
-                          id={`return-qty-${item.medicineId}`}
-                          type="number"
-                          min={0}
-                          max={item.qty}
-                          value={returnQty}
-                          onChange={(e) => {
-                            const val = Math.min(
-                              Math.max(0, Number(e.target.value) || 0),
-                              item.qty,
-                            );
-                            setReturnQtys((prev) => ({
-                              ...prev,
-                              [item.medicineId]: val,
-                            }));
-                          }}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
-                        />
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setReturnQtys((prev) => ({
-                              ...prev,
-                              [item.medicineId]: item.qty,
-                            }))
-                          }
-                          className="mt-1 w-full text-xs font-semibold text-white bg-red-500 hover:bg-red-600 rounded-lg px-2 py-1.5 transition-colors"
-                        >
-                          Return All | سب واپس
-                        </button>
-                      </div>
-                      <div className="flex-1">
-                        <span className="text-xs text-gray-500 mb-1 block">
-                          Kept Qty | رکھی گئی
-                        </span>
-                        <div
-                          className={`w-full rounded-lg px-3 py-2 text-sm font-semibold ${keptQty > 0 ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}
-                        >
-                          {keptQty}
+                        <div className="flex items-center justify-between mb-2">
+                          <p
+                            className={`font-semibold text-sm ${hasReturn ? "text-red-700" : "text-gray-700"}`}
+                          >
+                            {item.medicineName}
+                          </p>
+                          <span className="text-xs text-gray-500 bg-white px-2 py-0.5 rounded-full border">
+                            Order Qty: {item.qty}
+                          </span>
+                        </div>
+                        {item.strength && (
+                          <p className="text-xs text-gray-400 mb-2">
+                            {item.strength}
+                          </p>
+                        )}
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1">
+                            <label
+                              htmlFor={`return-qty-${item.medicineId}`}
+                              className="text-xs text-gray-500 mb-1 block"
+                            >
+                              Return Qty | واپسی
+                            </label>
+                            <input
+                              id={`return-qty-${item.medicineId}`}
+                              type="number"
+                              min={0}
+                              max={item.qty}
+                              value={returnQty}
+                              onChange={(e) => {
+                                const val = Math.min(
+                                  Math.max(0, Number(e.target.value) || 0),
+                                  item.qty,
+                                );
+                                setReturnQtys((prev) => ({
+                                  ...prev,
+                                  [item.medicineId]: val,
+                                }));
+                              }}
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setReturnQtys((prev) => ({
+                                  ...prev,
+                                  [item.medicineId]: item.qty,
+                                }))
+                              }
+                              className="mt-1 w-full text-xs font-semibold text-white bg-red-500 hover:bg-red-600 rounded-lg px-2 py-1.5 transition-colors"
+                            >
+                              Return All | سب واپس
+                            </button>
+                          </div>
+                          <div className="flex-1">
+                            <span className="text-xs text-gray-500 mb-1 block">
+                              Kept Qty | رکھی گئی
+                            </span>
+                            <div
+                              className={`w-full rounded-lg px-3 py-2 text-sm font-semibold ${keptQty > 0 ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}
+                            >
+                              {keptQty}
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    );
+                  })}
+                  <div>
+                    <label
+                      htmlFor="return-reason-textarea"
+                      className="text-xs font-medium text-gray-600 block mb-1"
+                    >
+                      Return Reason | واپسی کی وجہ
+                    </label>
+                    <textarea
+                      id="return-reason-textarea"
+                      value={returnReason}
+                      onChange={(e) => setReturnReason(e.target.value)}
+                      placeholder="Wajah likhein... (e.g. Expiry, Damaged, Wrong item)"
+                      className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm resize-none h-20 focus:outline-none focus:ring-2 focus:ring-orange-400"
+                    />
                   </div>
-                );
-              })}
-              <div>
-                <label
-                  htmlFor="return-reason-textarea"
-                  className="text-xs font-medium text-gray-600 block mb-1"
-                >
-                  Return Reason | واپسی کی وجہ
-                </label>
-                <textarea
-                  id="return-reason-textarea"
-                  value={returnReason}
-                  onChange={(e) => setReturnReason(e.target.value)}
-                  placeholder="Wajah likhein... (e.g. Expiry, Damaged, Wrong item)"
-                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm resize-none h-20 focus:outline-none focus:ring-2 focus:ring-orange-400"
-                />
+                  <button
+                    type="button"
+                    onClick={handleSaveReturn}
+                    disabled={isSavingReturn}
+                    className="w-full flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-60"
+                  >
+                    {isSavingReturn ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <CheckCircle2 size={16} />
+                    )}
+                    Save Return | محفوظ کریں
+                  </button>
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={handleSaveReturn}
-                disabled={isSavingReturn}
-                className="w-full flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-60"
-              >
-                {isSavingReturn ? (
-                  <Loader2 size={16} className="animate-spin" />
-                ) : (
-                  <CheckCircle2 size={16} />
-                )}
-                Save Return | محفوظ کریں
-              </button>
             </div>
-          </div>
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Offline Orders Screen ────────────────────────────────────────────────────
+
+function OfflineOrdersScreen({
+  pendingOfflineOrders,
+  dispatch,
+}: {
+  pendingOfflineOrders: Order[];
+  dispatch: React.Dispatch<Action>;
+}) {
+  return (
+    <div className="min-h-dvh bg-gray-50">
+      {/* Header */}
+      <header
+        className="text-white px-4 py-4 shadow-lg"
+        style={{
+          background:
+            "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+        }}
+      >
+        <div className="max-w-sm mx-auto flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() =>
+              dispatch({ type: "NAVIGATE", screen: { name: "dashboard" } })
+            }
+            className="w-8 h-8 flex items-center justify-center bg-white/20 hover:bg-white/30 transition-colors rounded-lg"
+            aria-label="Back"
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center">
+            <WifiOff size={18} />
+          </div>
+          <div>
+            <h1 className="text-lg font-bold font-heading">Offline Orders</h1>
+            <p className="text-white/70 text-xs">آف لائن آرڈر</p>
+          </div>
+        </div>
+      </header>
+
+      <div className="max-w-sm mx-auto px-4 py-5">
+        {pendingOfflineOrders.length === 0 ? (
+          <div
+            className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400"
+            data-ocid="offline_orders.empty_state"
+          >
+            <WifiOff size={32} className="mx-auto mb-3 opacity-40" />
+            <p className="text-sm font-medium">No offline orders</p>
+            <p className="text-xs mt-1">کوئی آف لائن آرڈر نہیں</p>
+            <p className="text-xs mt-2 text-gray-300">
+              Online hone par orders automatically sync ho jayenge
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3" data-ocid="offline_orders.list">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="bg-amber-100 text-amber-700 text-xs font-semibold px-2.5 py-1 rounded-full">
+                {pendingOfflineOrders.length} pending sync
+              </span>
+              <span className="text-xs text-gray-500">
+                Online hone par auto-sync hoga
+              </span>
+            </div>
+            {pendingOfflineOrders.map((order, idx) => (
+              <button
+                type="button"
+                key={order.id}
+                data-ocid={`offline_orders.item.${idx + 1}`}
+                onClick={() =>
+                  dispatch({
+                    type: "NAVIGATE",
+                    screen: { name: "order-detail", orderId: order.id },
+                  })
+                }
+                className="w-full bg-white rounded-xl border border-amber-200 shadow-sm p-4 text-left hover:border-amber-300 transition-colors"
+              >
+                <div className="flex items-start justify-between mb-2">
+                  <div>
+                    <h3 className="font-bold text-gray-900 font-heading text-sm">
+                      {order.pharmacyName}
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-0.5">{order.date}</p>
+                  </div>
+                  <span className="bg-amber-100 text-amber-700 text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ml-2">
+                    Pending Sync
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-500">
+                    <span className="font-medium text-gray-700">
+                      {order.items.length}
+                    </span>{" "}
+                    items
+                  </span>
+                  <span className="font-bold text-gray-900">
+                    {formatCurrency(order.totalAmount)}
+                  </span>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -17253,6 +17828,13 @@ function MobileApp() {
             showPharmacies={false}
             readOnly={true}
             onDataReloaded={handleManageDataReloaded}
+            dispatch={dispatch}
+          />
+        );
+      case "offline-orders":
+        return (
+          <OfflineOrdersScreen
+            pendingOfflineOrders={pendingOfflineOrders}
             dispatch={dispatch}
           />
         );
