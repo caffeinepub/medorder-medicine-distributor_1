@@ -2308,20 +2308,22 @@ function OrderTakingScreen({
         totalAmount: cartTotal,
       };
 
-      // Deduct stock for ordered items (localStorage)
+      // Deduct stock for ordered items (localStorage) -- include bonus qty
       deductStock(
-        state.cart.map((ci) => ({
+        state.cart.map((ci, idx) => ({
           backendId: ci.medicine.backendId,
-          qty: Math.round(ci.qty),
+          qty: Math.round(ci.qty) + Math.round(items[idx]?.bonusQty ?? 0),
         })),
       );
       // Sync inventory deduction to backend (fire-and-forget, don't block)
       Promise.all(
-        state.cart.map((ci) =>
+        state.cart.map((ci, idx) =>
           actor
             .adjustInventoryStock(
               ci.medicine.backendId,
-              BigInt(-Math.round(ci.qty)),
+              BigInt(
+                -(Math.round(ci.qty) + Math.round(items[idx]?.bonusQty ?? 0)),
+              ),
             )
             .catch(() => {}),
         ),
@@ -9673,6 +9675,8 @@ function UserManagementPanel() {
     getCustomUsers(),
   );
   const [showAddForm, setShowAddForm] = useState(false);
+  const [isAddingUser, setIsAddingUser] = useState(false);
+  const [isSyncingUsers, setIsSyncingUsers] = useState(false);
   const [newUsername, setNewUsername] = useState("");
   const [newDisplayName, setNewDisplayName] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -9698,8 +9702,7 @@ function UserManagementPanel() {
     if (!actor || !sess?.distributorId) return;
     (actor as any)
       .getStaffByDistributor(BigInt(sess.distributorId))
-      .then((staffList: any[]) => {
-        if (!staffList || staffList.length === 0) return;
+      .then(async (staffList: any[]) => {
         const current = getCustomUsers();
         const currentUsernames = new Set(
           current.map((u) => u.username.toLowerCase()),
@@ -9735,6 +9738,33 @@ function UserManagementPanel() {
             /* ignore */
           }
         }
+        // Sync localStorage-only users to backend for cross-device login
+        const localOnlyUsers = current.filter((u) => !u.backendStaffId);
+        for (const u of localOnlyUsers) {
+          try {
+            const staffId = await (actor as any).addStaffForDistributor(
+              BigInt(sess.distributorId ?? 0),
+              u.username,
+              u.password,
+              u.role,
+              u.displayName ?? u.username,
+            );
+            const idx2 = current.findIndex((x) => x.username === u.username);
+            if (idx2 >= 0)
+              current[idx2] = {
+                ...current[idx2],
+                backendStaffId: Number(staffId),
+              };
+          } catch {
+            // ignore per-user failures
+          }
+        }
+        // Save updated list with backendStaffIds
+        try {
+          localStorage.setItem(CUSTOM_USERS_KEY, JSON.stringify(current));
+        } catch {
+          /* ignore */
+        }
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -9768,43 +9798,83 @@ function UserManagementPanel() {
       setAddError("Username already exists | یوزر نیم پہلے سے موجود ہے");
       return;
     }
-    const newUser: AppUser = {
-      username: newUsername.trim(),
-      password: newPassword.trim(),
-      role: newRole,
-      displayName: newDisplayName.trim(),
-    };
-    const updated = [...customUsers, newUser];
-    saveCustomUsers(updated);
-    // Save to backend so any device can login
-    if (actor && sess?.distributorId) {
+    if (!actor || !sess?.distributorId) {
+      toast.error("Backend se connect nahi -- internet check karein");
+      return;
+    }
+    setIsAddingUser(true);
+    try {
+      // Backend FIRST -- only save locally after backend confirms
+      const staffId = await (actor as any).addStaffForDistributor(
+        BigInt(sess.distributorId),
+        newUsername.trim(),
+        newPassword.trim(),
+        newRole,
+        newDisplayName.trim(),
+      );
+      const newUserWithId: AppUser = {
+        username: newUsername.trim(),
+        password: newPassword.trim(),
+        role: newRole,
+        displayName: newDisplayName.trim(),
+        backendStaffId: Number(staffId),
+      };
+      saveCustomUsers([...customUsers, newUserWithId]);
+      setNewUsername("");
+      setNewDisplayName("");
+      setNewPassword("");
+      setNewRole("staff");
+      setAddError("");
+      setShowAddForm(false);
+      toast.success(
+        `User "${newDisplayName.trim()}" add ho gaya -- ab kisi bhi device par login karega`,
+      );
+    } catch {
+      toast.error(
+        "Backend sync fail hua -- internet check karein aur dobara try karein",
+      );
+      // DO NOT save to localStorage -- backend failed
+    } finally {
+      setIsAddingUser(false);
+    }
+  }
+
+  async function handleSyncUsersToBackend() {
+    if (!actor || !sess?.distributorId) {
+      toast.error("Backend se connect nahi -- internet check karein");
+      return;
+    }
+    const localOnly = customUsers.filter((u) => !u.backendStaffId);
+    if (localOnly.length === 0) {
+      toast.success("Sab users already backend mein sync hain");
+      return;
+    }
+    setIsSyncingUsers(true);
+    let synced = 0;
+    const updated = [...customUsers];
+    for (const u of localOnly) {
       try {
         const staffId = await (actor as any).addStaffForDistributor(
-          BigInt(sess.distributorId),
-          newUsername.trim(),
-          newPassword.trim(),
-          newRole,
-          newDisplayName.trim(),
+          BigInt(sess.distributorId ?? 0),
+          u.username,
+          u.password,
+          u.role,
+          u.displayName ?? u.username,
         );
-        const withId = updated.map((u) =>
-          u.username === newUsername.trim()
-            ? { ...u, backendStaffId: Number(staffId) }
-            : u,
-        );
-        saveCustomUsers(withId);
+        const idx = updated.findIndex((x) => x.username === u.username);
+        if (idx >= 0) {
+          updated[idx] = { ...updated[idx], backendStaffId: Number(staffId) };
+          synced++;
+        }
       } catch {
-        toast.error(
-          "User locally saved lekin backend sync fail hua -- cross-device login kaam nahi karega. Internet check karein.",
-        );
+        // ignore per-user failures, continue with others
       }
     }
-    setNewUsername("");
-    setNewDisplayName("");
-    setNewPassword("");
-    setNewRole("staff");
-    setAddError("");
-    setShowAddForm(false);
-    toast.success(`User "${newDisplayName.trim()}" add ho gaya`);
+    saveCustomUsers(updated);
+    setIsSyncingUsers(false);
+    toast.success(
+      `${synced} user${synced !== 1 ? "s" : ""} backend mein sync ho gaye`,
+    );
   }
 
   async function handleChangePassword(username: string) {
@@ -9907,19 +9977,36 @@ function UserManagementPanel() {
             Users ke liye login credentials aur roles manage karein
           </p>
         </div>
-        <Button
-          onClick={() => setShowAddForm((v) => !v)}
-          data-ocid="user_management.open_modal_button"
-          size="sm"
-          style={{
-            background:
-              "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
-          }}
-          className="text-white"
-        >
-          <Plus size={14} className="mr-1.5" />
-          Add User
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            onClick={handleSyncUsersToBackend}
+            disabled={isSyncingUsers}
+            data-ocid="user_management.secondary_button"
+            size="sm"
+            variant="outline"
+            className="text-blue-700 border-blue-300 hover:bg-blue-50 text-xs"
+          >
+            {isSyncingUsers ? (
+              <span className="animate-spin mr-1">↻</span>
+            ) : (
+              <span className="mr-1">⟳</span>
+            )}
+            {isSyncingUsers ? "Syncing..." : "Sync Users"}
+          </Button>
+          <Button
+            onClick={() => setShowAddForm((v) => !v)}
+            data-ocid="user_management.open_modal_button"
+            size="sm"
+            style={{
+              background:
+                "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
+            }}
+            className="text-white"
+          >
+            <Plus size={14} className="mr-1.5" />
+            Add User
+          </Button>
+        </div>
       </div>
 
       {/* Add User Form */}
@@ -10013,11 +10100,12 @@ function UserManagementPanel() {
           <div className="flex gap-2">
             <Button
               onClick={handleAddUser}
+              disabled={isAddingUser}
               size="sm"
               className="bg-blue-600 hover:bg-blue-700 text-white"
               data-ocid="user_management.submit_button"
             >
-              Save User | محفوظ کریں
+              {isAddingUser ? "Adding..." : "Save User | محفوظ کریں"}
             </Button>
             <Button
               onClick={() => {
@@ -11358,7 +11446,9 @@ function OfficeDashboard() {
       deductStock(
         newOrderLines.map((line) => ({
           backendId: line.medicineId,
-          qty: Math.round(Number.parseFloat(line.qty) || 1),
+          qty:
+            Math.round(Number.parseFloat(line.qty) || 1) +
+            Math.round(Number.parseFloat(line.bonus) || 0),
         })),
       );
       // Sync inventory deduction to backend (fire-and-forget)
@@ -11367,7 +11457,12 @@ function OfficeDashboard() {
           actor
             .adjustInventoryStock(
               line.medicineId,
-              BigInt(-Math.round(Number.parseFloat(line.qty) || 1)),
+              BigInt(
+                -(
+                  Math.round(Number.parseFloat(line.qty) || 1) +
+                  Math.round(Number.parseFloat(line.bonus) || 0)
+                ),
+              ),
             )
             .catch(() => {}),
         ),
@@ -15369,6 +15464,16 @@ function DeliveryDashboard() {
     {},
   );
   const [isSavingReturn, setIsSavingReturn] = useState(false);
+  const [selectedDeliveredOrder, setSelectedDeliveredOrder] =
+    useState<DeliveryOrder | null>(null);
+  const [selectedReturnedOrder, setSelectedReturnedOrder] =
+    useState<DeliveryOrder | null>(null);
+  const [showClearModal, setShowClearModal] = useState(false);
+  const [clearTarget, setClearTarget] = useState<
+    "delivered" | "returned" | "history" | null
+  >(null);
+  const [clearPassword, setClearPassword] = useState("");
+  const [clearPasswordError, setClearPasswordError] = useState("");
   // Offline mode for delivery
   const [isDeliveryOffline, setIsDeliveryOffline] = useState(() => {
     try {
@@ -15943,12 +16048,25 @@ function DeliveryDashboard() {
               <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center">
                 <CheckCircle2 size={18} />
               </div>
-              <div>
+              <div className="flex-1">
                 <h1 className="text-lg font-bold font-heading">
                   Delivered Orders
                 </h1>
                 <p className="text-white/70 text-xs">ڈیلیوری شدہ آرڈر</p>
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setClearTarget("delivered");
+                  setShowClearModal(true);
+                  setClearPassword("");
+                  setClearPasswordError("");
+                }}
+                className="text-xs bg-white/20 hover:bg-white/30 text-white px-2 py-1 rounded-lg transition-colors"
+                data-ocid="delivery.delivered.clear_button"
+              >
+                Clear
+              </button>
             </div>
           </header>
           <div className="max-w-sm mx-auto px-4 py-5 space-y-3">
@@ -15968,7 +16086,11 @@ function DeliveryDashboard() {
                   <div
                     key={String(order.backendId)}
                     data-ocid={`delivery.delivered.item.${idx + 1}`}
-                    className="bg-white rounded-xl border border-green-200 shadow-sm p-4"
+                    className="bg-white rounded-xl border border-green-200 shadow-sm p-4 cursor-pointer hover:bg-green-50/50 transition-colors"
+                    onClick={() => setSelectedDeliveredOrder(order)}
+                    onKeyDown={(e) =>
+                      e.key === "Enter" && setSelectedDeliveredOrder(order)
+                    }
                   >
                     <div className="flex items-start justify-between mb-2">
                       <div>
@@ -15998,6 +16120,59 @@ function DeliveryDashboard() {
                 ))
             )}
           </div>
+          {selectedDeliveredOrder && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center p-4">
+              <div className="bg-white rounded-2xl w-full max-w-sm max-h-[80vh] overflow-y-auto">
+                <div className="flex items-center justify-between p-4 border-b">
+                  <h2 className="font-bold text-gray-900">
+                    {selectedDeliveredOrder.pharmacyName}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDeliveredOrder(null)}
+                    className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                <div className="p-4 space-y-3">
+                  <p className="text-xs text-gray-500">
+                    {selectedDeliveredOrder.date}
+                  </p>
+                  <div className="space-y-2">
+                    {selectedDeliveredOrder.items.map((item) => (
+                      <div
+                        key={`${item.medicineId}-${item.medicineName}`}
+                        className="flex justify-between text-sm"
+                      >
+                        <span className="text-gray-700">
+                          {item.medicineName}{" "}
+                          <span className="text-gray-400">×{item.qty}</span>
+                        </span>
+                        <span className="font-medium">
+                          {formatCurrency(item.total)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="border-t pt-2 flex justify-between font-bold">
+                    <span>Total</span>
+                    <span>
+                      {formatCurrency(selectedDeliveredOrder.totalAmount)}
+                    </span>
+                  </div>
+                  {selectedDeliveredOrder.paymentReceived > 0 && (
+                    <div className="flex justify-between text-sm text-green-700">
+                      <span>Payment Received</span>
+                      <span>
+                        {formatCurrency(selectedDeliveredOrder.paymentReceived)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -16023,12 +16198,25 @@ function DeliveryDashboard() {
               <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center">
                 <Receipt size={18} />
               </div>
-              <div>
+              <div className="flex-1">
                 <h1 className="text-lg font-bold font-heading">
                   Return Orders
                 </h1>
                 <p className="text-white/70 text-xs">واپسی آرڈر</p>
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setClearTarget("returned");
+                  setShowClearModal(true);
+                  setClearPassword("");
+                  setClearPasswordError("");
+                }}
+                className="text-xs bg-white/20 hover:bg-white/30 text-white px-2 py-1 rounded-lg transition-colors"
+                data-ocid="delivery.returned.clear_button"
+              >
+                Clear
+              </button>
             </div>
           </header>
           <div className="max-w-sm mx-auto px-4 py-5 space-y-3">
@@ -16049,7 +16237,11 @@ function DeliveryDashboard() {
                   <div
                     key={String(order.backendId)}
                     data-ocid={`delivery.returned.item.${idx + 1}`}
-                    className="bg-white rounded-xl border border-red-200 shadow-sm p-4"
+                    className="bg-white rounded-xl border border-red-200 shadow-sm p-4 cursor-pointer hover:bg-red-50/50 transition-colors"
+                    onClick={() => setSelectedReturnedOrder(order)}
+                    onKeyDown={(e) =>
+                      e.key === "Enter" && setSelectedReturnedOrder(order)
+                    }
                   >
                     <div className="flex items-start justify-between mb-2">
                       <div>
@@ -16094,6 +16286,62 @@ function DeliveryDashboard() {
                 ))
             )}
           </div>
+          {selectedReturnedOrder && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center p-4">
+              <div className="bg-white rounded-2xl w-full max-w-sm max-h-[80vh] overflow-y-auto">
+                <div className="flex items-center justify-between p-4 border-b">
+                  <h2 className="font-bold text-gray-900">
+                    {selectedReturnedOrder.pharmacyName}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedReturnedOrder(null)}
+                    className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                <div className="p-4 space-y-3">
+                  <p className="text-xs text-gray-500">
+                    {selectedReturnedOrder.date}
+                  </p>
+                  {selectedReturnedOrder.returnReason && (
+                    <p className="text-sm text-orange-700 bg-orange-50 rounded-lg px-3 py-2">
+                      Return Reason: {selectedReturnedOrder.returnReason}
+                    </p>
+                  )}
+                  <div className="space-y-2">
+                    {selectedReturnedOrder.returnItems.map((item) => (
+                      <div
+                        key={`${item.medicineId}-${item.returnedQty}`}
+                        className="flex justify-between text-sm"
+                      >
+                        <span className="text-gray-700">
+                          Item #{item.medicineId}{" "}
+                          <span className="text-gray-400">
+                            ×{item.returnedQty}
+                          </span>
+                        </span>
+                        <span className="font-medium text-orange-700">
+                          {item.returnedQty} pcs
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="border-t pt-2 flex justify-between font-bold text-orange-700">
+                    <span>Total Returned</span>
+                    <span>
+                      {selectedReturnedOrder.returnItems.reduce(
+                        (sum, ri) => sum + (ri.returnedQty ?? 0),
+                        0,
+                      )}{" "}
+                      pcs
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -16119,12 +16367,25 @@ function DeliveryDashboard() {
               <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center">
                 <History size={18} />
               </div>
-              <div>
+              <div className="flex-1">
                 <h1 className="text-lg font-bold font-heading">
                   Order History
                 </h1>
                 <p className="text-white/70 text-xs">آرڈر تاریخ</p>
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setClearTarget("history");
+                  setShowClearModal(true);
+                  setClearPassword("");
+                  setClearPasswordError("");
+                }}
+                className="text-xs bg-white/20 hover:bg-white/30 text-white px-2 py-1 rounded-lg transition-colors"
+                data-ocid="delivery.history.clear_button"
+              >
+                Clear
+              </button>
             </div>
           </header>
           <div className="max-w-sm mx-auto px-4 py-5 space-y-3">
@@ -16258,6 +16519,16 @@ function DeliveryDashboard() {
           >
             <div className="max-w-sm mx-auto flex items-center justify-between">
               <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setDeliveryMenuOpen(true)}
+                  className="w-8 h-8 flex items-center justify-center bg-white/15 hover:bg-white/25 transition-colors rounded-lg"
+                  aria-label="Menu"
+                  title="Menu"
+                  data-ocid="delivery.menu_button"
+                >
+                  <Menu size={16} />
+                </button>
                 {fromOffice && (
                   <a
                     href="/office"
@@ -16308,16 +16579,6 @@ function DeliveryDashboard() {
                   ) : (
                     <RefreshCw size={14} />
                   )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDeliveryMenuOpen(true)}
-                  className="w-8 h-8 flex items-center justify-center bg-white/15 hover:bg-white/25 transition-colors rounded-lg"
-                  aria-label="Menu"
-                  title="Menu"
-                  data-ocid="delivery.menu_button"
-                >
-                  <Menu size={16} />
                 </button>
               </div>
             </div>
@@ -17015,6 +17276,88 @@ function DeliveryDashboard() {
               </div>
             </div>
           )}
+        </div>
+      )}
+      {showClearModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-xs p-5 space-y-4">
+            <h2 className="font-bold text-gray-900">Clear Records</h2>
+            <p className="text-sm text-gray-600">
+              Enter your password to clear {clearTarget} records.
+            </p>
+            <input
+              type="password"
+              value={clearPassword}
+              onChange={(e) => setClearPassword(e.target.value)}
+              placeholder="Your password"
+              className="w-full h-10 border border-gray-300 rounded-lg px-3 text-sm"
+              data-ocid="delivery.clear.input"
+            />
+            {clearPasswordError && (
+              <p
+                className="text-xs text-red-500"
+                data-ocid="delivery.clear.error_state"
+              >
+                {clearPasswordError}
+              </p>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setShowClearModal(false)}
+                className="flex-1 h-10 text-sm border border-gray-300 rounded-lg"
+                data-ocid="delivery.clear.cancel_button"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                data-ocid="delivery.clear.confirm_button"
+                onClick={() => {
+                  const sess2 = getSession();
+                  const allUsersLocal: AppUser[] = JSON.parse(
+                    localStorage.getItem(CUSTOM_USERS_KEY) || "[]",
+                  );
+                  const allUsersCombined = [...USER_DB, ...allUsersLocal];
+                  const currentUser = allUsersCombined.find(
+                    (u) => u.username === sess2?.username,
+                  );
+                  if (!currentUser || currentUser.password !== clearPassword) {
+                    setClearPasswordError(
+                      "Password galat hai | Wrong password",
+                    );
+                    return;
+                  }
+                  if (clearTarget === "history") {
+                    setAllOrders((prev) =>
+                      prev.filter(
+                        (o) =>
+                          o.status !== "delivered" &&
+                          !(o.returnItems && o.returnItems.length > 0),
+                      ),
+                    );
+                  } else if (clearTarget === "delivered") {
+                    setAllOrders((prev) =>
+                      prev.filter((o) => o.status !== "delivered"),
+                    );
+                  } else if (clearTarget === "returned") {
+                    setAllOrders((prev) =>
+                      prev.filter(
+                        (o) => !(o.returnItems && o.returnItems.length > 0),
+                      ),
+                    );
+                  }
+                  setShowClearModal(false);
+                  setClearPassword("");
+                  setClearPasswordError("");
+                  toast.success("Records cleared");
+                }}
+                className="flex-1 h-10 text-sm bg-red-600 text-white rounded-lg font-medium"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
