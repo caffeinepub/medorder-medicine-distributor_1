@@ -9669,7 +9669,7 @@ function PaymentsView({
 // ─── User Management Panel ────────────────────────────────────────────────────
 
 function UserManagementPanel() {
-  const { actor } = useActor();
+  const { actor, isFetching: isActorLoading } = useActor();
   const sess = getSession();
   const [customUsers, setCustomUsers] = useState<AppUser[]>(() =>
     getCustomUsers(),
@@ -9798,8 +9798,16 @@ function UserManagementPanel() {
       setAddError("Username already exists | یوزر نیم پہلے سے موجود ہے");
       return;
     }
-    if (!actor || !sess?.distributorId) {
-      toast.error("Backend se connect nahi -- internet check karein");
+    if (isActorLoading) {
+      toast.error("App load ho rahi hai -- thori der baad try karein");
+      return;
+    }
+    if (!actor) {
+      toast.error("Backend connect nahi hua -- page refresh karein");
+      return;
+    }
+    if (!sess?.distributorId) {
+      toast.error("Session expire ho gayi -- dobara login karein");
       return;
     }
     setIsAddingUser(true);
@@ -9840,8 +9848,16 @@ function UserManagementPanel() {
   }
 
   async function handleSyncUsersToBackend() {
-    if (!actor || !sess?.distributorId) {
-      toast.error("Backend se connect nahi -- internet check karein");
+    if (isActorLoading) {
+      toast.error("App load ho rahi hai -- thori der baad try karein");
+      return;
+    }
+    if (!actor) {
+      toast.error("Backend connect nahi hua -- page refresh karein");
+      return;
+    }
+    if (!sess?.distributorId) {
+      toast.error("Session expire ho gayi -- dobara login karein");
       return;
     }
     const localOnly = customUsers.filter((u) => !u.backendStaffId);
@@ -9980,18 +9996,24 @@ function UserManagementPanel() {
         <div className="flex gap-2">
           <Button
             onClick={handleSyncUsersToBackend}
-            disabled={isSyncingUsers}
+            disabled={isSyncingUsers || isActorLoading || !actor}
             data-ocid="user_management.secondary_button"
             size="sm"
             variant="outline"
             className="text-blue-700 border-blue-300 hover:bg-blue-50 text-xs"
           >
-            {isSyncingUsers ? (
+            {isActorLoading ? (
+              <span className="animate-spin mr-1">↻</span>
+            ) : isSyncingUsers ? (
               <span className="animate-spin mr-1">↻</span>
             ) : (
               <span className="mr-1">⟳</span>
             )}
-            {isSyncingUsers ? "Syncing..." : "Sync Users"}
+            {isActorLoading
+              ? "Connecting..."
+              : isSyncingUsers
+                ? "Syncing..."
+                : "Sync Users"}
           </Button>
           <Button
             onClick={() => setShowAddForm((v) => !v)}
@@ -10003,8 +10025,12 @@ function UserManagementPanel() {
             }}
             className="text-white"
           >
-            <Plus size={14} className="mr-1.5" />
-            Add User
+            {isActorLoading ? (
+              <span className="animate-spin mr-1.5 inline-block">↻</span>
+            ) : (
+              <Plus size={14} className="mr-1.5" />
+            )}
+            {isActorLoading ? "Connecting..." : "Add User"}
           </Button>
         </div>
       </div>
@@ -10100,12 +10126,16 @@ function UserManagementPanel() {
           <div className="flex gap-2">
             <Button
               onClick={handleAddUser}
-              disabled={isAddingUser}
+              disabled={isAddingUser || isActorLoading || !actor}
               size="sm"
               className="bg-blue-600 hover:bg-blue-700 text-white"
               data-ocid="user_management.submit_button"
             >
-              {isAddingUser ? "Adding..." : "Save User | محفوظ کریں"}
+              {isActorLoading
+                ? "Backend connect ho raha hai..."
+                : isAddingUser
+                  ? "Adding..."
+                  : "Save User | محفوظ کریں"}
             </Button>
             <Button
               onClick={() => {

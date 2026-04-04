@@ -1,4 +1,4 @@
-const CACHE_NAME = 'medflow-v6';
+const CACHE_NAME = 'medflow-v10';
 const SHELL = ['/', '/index.html'];
 
 self.addEventListener('install', (e) => {
@@ -22,12 +22,25 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (url.origin !== self.location.origin) return;
 
+  // Never intercept backend/API calls or env.json -- pass through directly
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/call') ||
+    url.pathname.startsWith('/query') ||
+    url.pathname.startsWith('/read_state') ||
+    url.pathname === '/env.json'
+  ) {
+    return;
+  }
+
   if (e.request.mode === 'navigate') {
     e.respondWith(
       caches.open(CACHE_NAME).then(async (cache) => {
         try {
           const resp = await fetch(e.request);
-          cache.put(e.request, resp.clone());
+          if (resp.ok) {
+            cache.put(e.request, resp.clone());
+          }
           return resp;
         } catch (_) {
           const cached = await cache.match('/index.html') || await cache.match('/');
@@ -46,24 +59,30 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(
       caches.match(e.request).then((cached) => {
         const networkFetch = fetch(e.request).then((resp) => {
-          if (resp.ok) caches.open(CACHE_NAME).then((c) => c.put(e.request, resp.clone()));
+          if (resp.ok) {
+            const cloned = resp.clone();
+            caches.open(CACHE_NAME).then((c) => c.put(e.request, cloned));
+          }
           return resp;
-        });
+        }).catch(() => cached || new Response('', { status: 503 }));
         return cached || networkFetch;
       })
     );
     return;
   }
 
+  // All other GET requests -- network first, cache fallback
   e.respondWith(
     fetch(e.request).then((resp) => {
-      if (resp.ok) caches.open(CACHE_NAME).then((c) => c.put(e.request, resp.clone()));
+      if (resp.ok) {
+        const cloned = resp.clone();
+        caches.open(CACHE_NAME).then((c) => c.put(e.request, cloned));
+      }
       return resp;
     }).catch(() => caches.match(e.request))
   );
 });
 
-// Push Notifications
 self.addEventListener('push', (e) => {
   const data = e.data ? e.data.json() : {};
   e.waitUntil(self.registration.showNotification(data.title || 'MedFlow', {
@@ -79,7 +98,6 @@ self.addEventListener('notificationclick', (e) => {
   e.waitUntil(clients.openWindow(e.notification.data || '/'));
 });
 
-// Background Sync -- sync offline orders when internet returns
 self.addEventListener('sync', (e) => {
   if (e.tag === 'sync-orders') {
     e.waitUntil(
@@ -90,7 +108,6 @@ self.addEventListener('sync', (e) => {
   }
 });
 
-// Periodic Background Sync -- refresh data periodically
 self.addEventListener('periodicsync', (e) => {
   if (e.tag === 'periodic-sync') {
     e.waitUntil(
@@ -102,7 +119,6 @@ self.addEventListener('periodicsync', (e) => {
   }
 });
 
-// Background Fetch -- handle large background data transfers
 self.addEventListener('backgroundfetchsuccess', (e) => {
   e.waitUntil(
     (async () => {
@@ -111,7 +127,7 @@ self.addEventListener('backgroundfetchsuccess', (e) => {
         const records = await e.registration.matchAll();
         await Promise.all(records.map(async (record) => {
           const response = await record.responseReady;
-          await cache.put(record.request, response);
+          await cache.put(record.request, response.clone());
         }));
         await e.updateUI({ title: 'MedFlow -- Download complete' });
       } catch (err) { console.warn('[SW] bgfetch success error:', err); }
