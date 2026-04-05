@@ -9670,110 +9670,34 @@ function PaymentsView({
 
 function UserManagementPanel() {
   const { actor, isFetching: isActorLoading } = useActor();
-  const sess = getSession();
-  const [customUsers, setCustomUsers] = useState<AppUser[]>(() =>
+  const [customUsers, setCustomUsers] = React.useState<AppUser[]>(() =>
     getCustomUsers(),
   );
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [isAddingUser, setIsAddingUser] = useState(false);
-  const [isSyncingUsers, setIsSyncingUsers] = useState(false);
-  const [newUsername, setNewUsername] = useState("");
-  const [newDisplayName, setNewDisplayName] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [newRole, setNewRole] = useState<UserRole>("staff");
-  const [addError, setAddError] = useState("");
-  const [changePwdFor, setChangePwdFor] = useState<string | null>(null);
-  const [newPwd, setNewPwd] = useState("");
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
-  const [editUserFor, setEditUserFor] = useState<string | null>(null);
-  const [editUsername, setEditUsername] = useState("");
-  const [editDisplayName, setEditDisplayName] = useState("");
-  const [editUserError, setEditUserError] = useState("");
-
-  const [hiddenBuiltins, setHiddenBuiltins] = useState<string[]>(() => {
+  const [showAddForm, setShowAddForm] = React.useState(false);
+  const [isAddingUser, setIsAddingUser] = React.useState(false);
+  const [isSyncingUsers, setIsSyncingUsers] = React.useState(false);
+  const [newUsername, setNewUsername] = React.useState("");
+  const [newDisplayName, setNewDisplayName] = React.useState("");
+  const [newPassword, setNewPassword] = React.useState("");
+  const [showNewPassword, setShowNewPassword] = React.useState(false);
+  const [newRole, setNewRole] = React.useState<UserRole>("staff");
+  const [addError, setAddError] = React.useState("");
+  const [changePwdFor, setChangePwdFor] = React.useState<string | null>(null);
+  const [newPwd, setNewPwd] = React.useState("");
+  const [showNewPwd, setShowNewPwd] = React.useState(false);
+  const [deleteConfirm, setDeleteConfirm] = React.useState<string | null>(null);
+  const [editUserFor, setEditUserFor] = React.useState<string | null>(null);
+  const [editUsername, setEditUsername] = React.useState("");
+  const [editDisplayName, setEditDisplayName] = React.useState("");
+  const [editUserError, setEditUserError] = React.useState("");
+  const [backendLoaded, setBackendLoaded] = React.useState(false);
+  const [hiddenBuiltins, setHiddenBuiltins] = React.useState<string[]>(() => {
     try {
       return JSON.parse(localStorage.getItem(HIDDEN_BUILTIN_USERS_KEY) || "[]");
     } catch {
       return [];
     }
   });
-  // Load staff from backend on mount and merge into customUsers
-  useEffect(() => {
-    if (!actor || !sess?.distributorId) return;
-    (actor as any)
-      .getStaffByDistributor(BigInt(sess.distributorId))
-      .then(async (staffList: any[]) => {
-        const current = getCustomUsers();
-        const currentUsernames = new Set(
-          current.map((u) => u.username.toLowerCase()),
-        );
-        const toAdd: AppUser[] = [];
-        for (const s of staffList) {
-          const uname = String(s.username ?? "");
-          if (!uname) continue;
-          if (!currentUsernames.has(uname.toLowerCase())) {
-            toAdd.push({
-              username: uname,
-              password: String(s.password ?? ""),
-              role: String(s.role ?? "staff") as UserRole,
-              displayName: String(s.displayName ?? uname),
-              backendStaffId: Number(s.id),
-            });
-          } else {
-            // Update backendStaffId for existing user
-            const idx = current.findIndex(
-              (u) => u.username.toLowerCase() === uname.toLowerCase(),
-            );
-            if (idx >= 0 && !current[idx].backendStaffId) {
-              current[idx] = { ...current[idx], backendStaffId: Number(s.id) };
-            }
-          }
-        }
-        if (toAdd.length > 0 || current.some((u) => !u.backendStaffId)) {
-          const merged = [...current, ...toAdd];
-          setCustomUsers(merged);
-          try {
-            localStorage.setItem(CUSTOM_USERS_KEY, JSON.stringify(merged));
-          } catch {
-            /* ignore */
-          }
-        }
-        // Sync localStorage-only users to backend for cross-device login
-        const localOnlyUsers = current.filter((u) => !u.backendStaffId);
-        for (const u of localOnlyUsers) {
-          try {
-            const staffId = await (actor as any).addStaffForDistributor(
-              BigInt(sess.distributorId ?? 0),
-              u.username,
-              u.password,
-              u.role,
-              u.displayName ?? u.username,
-            );
-            const idx2 = current.findIndex((x) => x.username === u.username);
-            if (idx2 >= 0)
-              current[idx2] = {
-                ...current[idx2],
-                backendStaffId: Number(staffId),
-              };
-          } catch {
-            // ignore per-user failures
-          }
-        }
-        // Save updated list with backendStaffIds
-        try {
-          localStorage.setItem(CUSTOM_USERS_KEY, JSON.stringify(current));
-        } catch {
-          /* ignore */
-        }
-      })
-      .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actor, sess?.distributorId]);
-
-  const allUsers = [...USER_DB, ...customUsers];
-  const visibleUsers = allUsers.filter(
-    (u) => !hiddenBuiltins.includes(u.username),
-  );
 
   function saveCustomUsers(users: AppUser[]) {
     setCustomUsers(users);
@@ -9784,12 +9708,104 @@ function UserManagementPanel() {
     }
   }
 
+  // Load staff from backend on mount — always read session fresh inside
+  React.useEffect(() => {
+    if (!actor) return;
+    const freshSess = getSession();
+    if (!freshSess?.distributorId) return;
+
+    const distId = BigInt(freshSess.distributorId);
+
+    (actor as any)
+      .getStaffByDistributor(distId)
+      .then(async (staffList: any[]) => {
+        const current = getCustomUsers();
+        const currentByUsername = new Map(
+          current.map((u) => [u.username.toLowerCase(), u]),
+        );
+
+        // Build updated array with backendStaffIds filled in
+        const updatedCurrent = current.map((u) => {
+          if (u.backendStaffId) return u;
+          const match = staffList.find(
+            (s) =>
+              String(s.username ?? "").toLowerCase() ===
+              u.username.toLowerCase(),
+          );
+          return match ? { ...u, backendStaffId: Number(match.id) } : u;
+        });
+
+        // Add backend-only users to local
+        const toAdd: AppUser[] = [];
+        for (const s of staffList) {
+          const uname = String(s.username ?? "").trim();
+          if (!uname) continue;
+          if (!currentByUsername.has(uname.toLowerCase())) {
+            toAdd.push({
+              username: uname,
+              password: String(s.password ?? ""),
+              role: String(s.role ?? "staff") as UserRole,
+              displayName: String(s.displayName ?? uname),
+              backendStaffId: Number(s.id),
+            });
+          }
+        }
+
+        const merged = [...updatedCurrent, ...toAdd];
+        setCustomUsers(merged);
+        try {
+          localStorage.setItem(CUSTOM_USERS_KEY, JSON.stringify(merged));
+        } catch {
+          /* ignore */
+        }
+
+        // Push local-only users to backend
+        const localOnly = merged.filter((u) => !u.backendStaffId);
+        const finalList = [...merged];
+        for (const u of localOnly) {
+          try {
+            const staffId = await (actor as any).addStaffForDistributor(
+              distId,
+              u.username,
+              u.password,
+              u.role,
+              u.displayName ?? u.username,
+            );
+            const idx = finalList.findIndex((x) => x.username === u.username);
+            if (idx >= 0) {
+              finalList[idx] = {
+                ...finalList[idx],
+                backendStaffId: Number(staffId),
+              };
+            }
+          } catch {
+            // ignore per-user failures
+          }
+        }
+
+        setCustomUsers(finalList);
+        try {
+          localStorage.setItem(CUSTOM_USERS_KEY, JSON.stringify(finalList));
+        } catch {
+          /* ignore */
+        }
+        setBackendLoaded(true);
+      })
+      .catch(() => {
+        setBackendLoaded(true);
+      });
+  }, [actor]);
+
+  const allUsers = [...USER_DB, ...customUsers];
+  const visibleUsers = allUsers.filter(
+    (u) => !hiddenBuiltins.includes(u.username),
+  );
+
   async function handleAddUser() {
     if (!newUsername.trim() || !newDisplayName.trim() || !newPassword.trim()) {
       setAddError("Sab fields zaruri hain | All fields required");
       return;
     }
-    // Check for duplicate
     if (
       allUsers.some(
         (u) => u.username.toLowerCase() === newUsername.trim().toLowerCase(),
@@ -9798,23 +9814,26 @@ function UserManagementPanel() {
       setAddError("Username already exists | یوزر نیم پہلے سے موجود ہے");
       return;
     }
-    if (isActorLoading) {
-      toast.error("App load ho rahi hai -- thori der baad try karein");
-      return;
-    }
     if (!actor) {
-      toast.error("Backend connect nahi hua -- page refresh karein");
+      toast.error(
+        "Backend connect nahi -- page refresh karein aur dobara try karein",
+      );
       return;
     }
-    if (!sess?.distributorId) {
-      toast.error("Session expire ho gayi -- dobara login karein");
+    // Always read session fresh — never use stale component-level sess
+    const freshSess = getSession();
+    if (!freshSess?.distributorId) {
+      toast.error(
+        "Distributor session missing -- logout karein aur dobara login karein",
+      );
       return;
     }
+
     setIsAddingUser(true);
+    setAddError("");
     try {
-      // Backend FIRST -- only save locally after backend confirms
       const staffId = await (actor as any).addStaffForDistributor(
-        BigInt(sess.distributorId),
+        BigInt(freshSess.distributorId),
         newUsername.trim(),
         newPassword.trim(),
         newRole,
@@ -9835,62 +9854,118 @@ function UserManagementPanel() {
       setAddError("");
       setShowAddForm(false);
       toast.success(
-        `User "${newDisplayName.trim()}" add ho gaya -- ab kisi bhi device par login karega`,
+        `"${newDisplayName.trim()}" add ho gaya -- ab kisi bhi device par login karega`,
       );
     } catch {
       toast.error(
-        "Backend sync fail hua -- internet check karein aur dobara try karein",
+        "Backend save fail hua -- internet check karein aur dobara try karein",
       );
-      // DO NOT save to localStorage -- backend failed
+      // DO NOT save to localStorage -- backend must confirm first
     } finally {
       setIsAddingUser(false);
     }
   }
 
-  async function handleSyncUsersToBackend() {
-    if (isActorLoading) {
-      toast.error("App load ho rahi hai -- thori der baad try karein");
-      return;
-    }
+  async function handleSyncUsers() {
     if (!actor) {
-      toast.error("Backend connect nahi hua -- page refresh karein");
+      toast.error("Backend connect nahi -- page refresh karein");
       return;
     }
-    if (!sess?.distributorId) {
-      toast.error("Session expire ho gayi -- dobara login karein");
+    const freshSess = getSession();
+    if (!freshSess?.distributorId) {
+      toast.error(
+        "Distributor session missing -- logout karein aur dobara login karein",
+      );
       return;
     }
-    const localOnly = customUsers.filter((u) => !u.backendStaffId);
-    if (localOnly.length === 0) {
-      toast.success("Sab users already backend mein sync hain");
-      return;
-    }
+
     setIsSyncingUsers(true);
     let synced = 0;
-    const updated = [...customUsers];
-    for (const u of localOnly) {
-      try {
-        const staffId = await (actor as any).addStaffForDistributor(
-          BigInt(sess.distributorId ?? 0),
-          u.username,
-          u.password,
-          u.role,
-          u.displayName ?? u.username,
-        );
-        const idx = updated.findIndex((x) => x.username === u.username);
-        if (idx >= 0) {
-          updated[idx] = { ...updated[idx], backendStaffId: Number(staffId) };
+    let failed = 0;
+
+    try {
+      // First fetch latest from backend
+      const staffList = await (actor as any).getStaffByDistributor(
+        BigInt(freshSess.distributorId),
+      );
+      const current = getCustomUsers();
+      const currentByUsername = new Map(
+        current.map((u: AppUser) => [u.username.toLowerCase(), u]),
+      );
+
+      // Add backend-only users locally
+      const toAdd: AppUser[] = [];
+      for (const s of staffList) {
+        const uname = String(s.username ?? "").trim();
+        if (!uname) continue;
+        if (!currentByUsername.has(uname.toLowerCase())) {
+          toAdd.push({
+            username: uname,
+            password: String(s.password ?? ""),
+            role: String(s.role ?? "staff") as UserRole,
+            displayName: String(s.displayName ?? uname),
+            backendStaffId: Number(s.id),
+          });
           synced++;
         }
-      } catch {
-        // ignore per-user failures, continue with others
       }
+
+      // Update backendStaffIds for existing users
+      const updatedCurrent = current.map((u: AppUser) => {
+        if (u.backendStaffId) return u;
+        const match = staffList.find(
+          (s: any) =>
+            String(s.username ?? "").toLowerCase() === u.username.toLowerCase(),
+        );
+        return match ? { ...u, backendStaffId: Number(match.id) } : u;
+      });
+
+      const merged = [...updatedCurrent, ...toAdd];
+
+      // Push local-only users to backend
+      const localOnly = merged.filter((u: AppUser) => !u.backendStaffId);
+      const finalList = [...merged];
+      for (const u of localOnly) {
+        try {
+          const staffId = await (actor as any).addStaffForDistributor(
+            BigInt(freshSess.distributorId),
+            u.username,
+            u.password,
+            u.role,
+            u.displayName ?? u.username,
+          );
+          const idx = finalList.findIndex(
+            (x: AppUser) => x.username === u.username,
+          );
+          if (idx >= 0) {
+            finalList[idx] = {
+              ...finalList[idx],
+              backendStaffId: Number(staffId),
+            };
+            synced++;
+          }
+        } catch {
+          failed++;
+        }
+      }
+
+      saveCustomUsers(finalList);
+      setBackendLoaded(true);
+
+      if (failed > 0) {
+        toast.error(
+          `${synced} synced, ${failed} failed -- internet check karein`,
+        );
+      } else if (synced > 0) {
+        toast.success(`${synced} user${synced !== 1 ? "s" : ""} sync ho gaye`);
+      } else {
+        toast.success("Sab users already sync hain");
+      }
+    } catch {
+      toast.error("Sync fail hua -- internet check karein");
+    } finally {
+      setIsSyncingUsers(false);
     }
-    saveCustomUsers(updated);
-    setIsSyncingUsers(false);
-    toast.success(
-      `${synced} user${synced !== 1 ? "s" : ""} backend mein sync ho gaye`,
-    );
   }
 
   async function handleChangePassword(username: string) {
@@ -9898,24 +9973,25 @@ function UserManagementPanel() {
       toast.error("New password enter karein");
       return;
     }
+
     let updatedUser: AppUser | undefined;
-    const idx = customUsers.findIndex((u) => u.username === username);
-    if (idx >= 0) {
+    const customIdx = customUsers.findIndex((u) => u.username === username);
+    if (customIdx >= 0) {
       const updated = customUsers.map((u) =>
         u.username === username ? { ...u, password: newPwd.trim() } : u,
       );
       saveCustomUsers(updated);
-      updatedUser = updated[idx];
+      updatedUser = updated[customIdx];
     } else {
-      // It's a built-in user — store override in customUsers
       const builtIn = USER_DB.find((u) => u.username === username);
       if (builtIn) {
-        const newEntry = { ...builtIn, password: newPwd.trim() };
+        const newEntry: AppUser = { ...builtIn, password: newPwd.trim() };
         const updated = [...customUsers, newEntry];
         saveCustomUsers(updated);
         updatedUser = newEntry;
       }
     }
+
     if (actor && updatedUser?.backendStaffId) {
       try {
         await (actor as any).updateStaffRecordPassword(
@@ -9923,18 +9999,19 @@ function UserManagementPanel() {
           newPwd.trim(),
         );
       } catch {
-        /* ignore */
+        /* ignore backend error -- local already updated */
       }
     }
+
     setChangePwdFor(null);
     setNewPwd("");
-    toast.success("Password update ho gaya");
+    setShowNewPwd(false);
+    toast.success("Password update ho gaya | پاس ورڈ تبدیل ہو گیا");
   }
 
   async function handleDeleteUser(username: string) {
     const builtIn = USER_DB.find((u) => u.username === username);
     if (builtIn) {
-      // Hide built-in user (only staff/delivery, not admin)
       const updated = [...hiddenBuiltins, username];
       setHiddenBuiltins(updated);
       try {
@@ -9957,34 +10034,37 @@ function UserManagementPanel() {
       }
     }
     setDeleteConfirm(null);
-    toast.success("User delete ho gaya");
+    toast.success("User delete ho gaya | صارف حذف ہو گیا");
   }
 
-  const roleBadge: Record<UserRole, { label: string; class: string }> = {
+  const roleBadge: Record<UserRole, { label: string; cls: string }> = {
     admin: {
       label: "Admin",
-      class: "bg-purple-100 text-purple-700 border-purple-200",
+      cls: "bg-purple-100 text-purple-700 border-purple-200",
     },
     staff: {
       label: "Staff / Booker",
-      class: "bg-blue-100 text-blue-700 border-blue-200",
+      cls: "bg-blue-100 text-blue-700 border-blue-200",
     },
     delivery: {
       label: "Delivery",
-      class: "bg-emerald-100 text-emerald-700 border-emerald-200",
+      cls: "bg-emerald-100 text-emerald-700 border-emerald-200",
     },
     superadmin: {
       label: "Super Admin",
-      class: "bg-orange-100 text-orange-700 border-orange-200",
+      cls: "bg-orange-100 text-orange-700 border-orange-200",
     },
   };
 
   const isBuiltIn = (username: string) =>
     USER_DB.some((u) => u.username === username);
 
+  const isBackendReady = !isActorLoading && !!actor;
+
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold text-gray-900 font-heading">
             User Management | صارف انتظام
@@ -9993,47 +10073,61 @@ function UserManagementPanel() {
             Users ke liye login credentials aur roles manage karein
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-shrink-0">
           <Button
-            onClick={handleSyncUsersToBackend}
-            disabled={isSyncingUsers || isActorLoading || !actor}
+            onClick={handleSyncUsers}
+            disabled={isSyncingUsers || !isBackendReady}
             data-ocid="user_management.secondary_button"
             size="sm"
             variant="outline"
-            className="text-blue-700 border-blue-300 hover:bg-blue-50 text-xs"
+            className="text-blue-700 border-blue-300 hover:bg-blue-50 text-xs gap-1.5"
           >
-            {isActorLoading ? (
-              <span className="animate-spin mr-1">↻</span>
-            ) : isSyncingUsers ? (
-              <span className="animate-spin mr-1">↻</span>
+            {isSyncingUsers ? (
+              <Loader2 size={13} className="animate-spin" />
             ) : (
-              <span className="mr-1">⟳</span>
+              <RefreshCw size={13} />
             )}
-            {isActorLoading
-              ? "Connecting..."
-              : isSyncingUsers
-                ? "Syncing..."
-                : "Sync Users"}
+            {isSyncingUsers ? "Syncing..." : "Sync Users"}
           </Button>
           <Button
             onClick={() => setShowAddForm((v) => !v)}
+            disabled={!isBackendReady}
             data-ocid="user_management.open_modal_button"
             size="sm"
-            style={{
-              background:
-                "linear-gradient(135deg, oklch(0.42 0.18 255), oklch(0.32 0.22 270))",
-            }}
-            className="text-white"
+            className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
           >
-            {isActorLoading ? (
-              <span className="animate-spin mr-1.5 inline-block">↻</span>
+            {!isBackendReady ? (
+              <Loader2 size={13} className="animate-spin" />
             ) : (
-              <Plus size={14} className="mr-1.5" />
+              <Plus size={13} />
             )}
-            {isActorLoading ? "Connecting..." : "Add User"}
+            {!isBackendReady ? "Connecting..." : "Add User"}
           </Button>
         </div>
       </div>
+
+      {/* Backend loading banner */}
+      {!isBackendReady && (
+        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5">
+          <Loader2
+            size={15}
+            className="animate-spin text-amber-600 flex-shrink-0"
+          />
+          <p className="text-sm text-amber-700">
+            Backend se connect ho raha hai -- please wait...
+          </p>
+        </div>
+      )}
+
+      {/* Backend loaded indicator */}
+      {isBackendReady && backendLoaded && (
+        <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-4 py-2.5">
+          <CheckCircle2 size={15} className="text-green-600 flex-shrink-0" />
+          <p className="text-sm text-green-700">
+            Backend connected -- users cross-device login kar sakte hain
+          </p>
+        </div>
+      )}
 
       {/* Add User Form */}
       {showAddForm && (
@@ -10041,16 +10135,17 @@ function UserManagementPanel() {
           className="bg-blue-50 border border-blue-200 rounded-xl p-5 space-y-4"
           data-ocid="user_management.dialog"
         >
-          <h3 className="font-bold text-blue-900 text-sm">
+          <h3 className="font-bold text-blue-900 text-sm flex items-center gap-2">
+            <User size={15} />
             New User | نیا صارف
           </h3>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label
                 htmlFor="um-username"
                 className="text-xs font-semibold text-gray-600 block mb-1"
               >
-                Username | یوزر نیم
+                Username <span className="text-red-500">*</span>
               </label>
               <Input
                 id="um-username"
@@ -10059,9 +10154,10 @@ function UserManagementPanel() {
                   setNewUsername(e.target.value);
                   setAddError("");
                 }}
-                placeholder="e.g. booker6"
+                placeholder="e.g. booker1"
                 className="h-9 text-sm"
                 data-ocid="user_management.input"
+                autoComplete="off"
               />
             </div>
             <div>
@@ -10069,7 +10165,7 @@ function UserManagementPanel() {
                 htmlFor="um-displayname"
                 className="text-xs font-semibold text-gray-600 block mb-1"
               >
-                Display Name | نام
+                Display Name <span className="text-red-500">*</span>
               </label>
               <Input
                 id="um-displayname"
@@ -10078,8 +10174,9 @@ function UserManagementPanel() {
                   setNewDisplayName(e.target.value);
                   setAddError("");
                 }}
-                placeholder="e.g. Booker Six"
+                placeholder="e.g. Ahmad Ali"
                 className="h-9 text-sm"
+                autoComplete="off"
               />
             </div>
             <div>
@@ -10087,20 +10184,31 @@ function UserManagementPanel() {
                 htmlFor="um-password"
                 className="text-xs font-semibold text-gray-600 block mb-1"
               >
-                Password | پاس ورڈ
+                Password <span className="text-red-500">*</span>
               </label>
-              <Input
-                id="um-password"
-                type="password"
-                value={newPassword}
-                onChange={(e) => {
-                  setNewPassword(e.target.value);
-                  setAddError("");
-                }}
-                placeholder="Set a password"
-                className="h-9 text-sm"
-                data-ocid="user_management.password.input"
-              />
+              <div className="relative">
+                <Input
+                  id="um-password"
+                  type={showNewPassword ? "text" : "password"}
+                  value={newPassword}
+                  onChange={(e) => {
+                    setNewPassword(e.target.value);
+                    setAddError("");
+                  }}
+                  placeholder="Set a password"
+                  className="h-9 text-sm pr-9"
+                  data-ocid="user_management.password.input"
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPassword((v) => !v)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  tabIndex={-1}
+                >
+                  {showNewPassword ? <X size={14} /> : <Search size={14} />}
+                </button>
+              </div>
             </div>
             <div>
               <label
@@ -10113,34 +10221,39 @@ function UserManagementPanel() {
                 id="um-role"
                 value={newRole}
                 onChange={(e) => setNewRole(e.target.value as UserRole)}
-                className="w-full h-9 px-2 border border-input rounded-md text-sm bg-background"
+                className="w-full h-9 px-2 border border-input rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
                 data-ocid="user_management.select"
               >
-                <option value="admin">Admin</option>
                 <option value="staff">Staff / Booker</option>
-                <option value="delivery">Delivery</option>
+                <option value="delivery">Delivery Boy</option>
+                <option value="admin">Admin</option>
               </select>
             </div>
           </div>
-          {addError && <p className="text-red-600 text-xs">{addError}</p>}
+          {addError && (
+            <p className="text-red-600 text-xs flex items-center gap-1">
+              <X size={12} />
+              {addError}
+            </p>
+          )}
           <div className="flex gap-2">
             <Button
               onClick={handleAddUser}
-              disabled={isAddingUser || isActorLoading || !actor}
+              disabled={isAddingUser || !isBackendReady}
               size="sm"
-              className="bg-blue-600 hover:bg-blue-700 text-white"
+              className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
               data-ocid="user_management.submit_button"
             >
-              {isActorLoading
-                ? "Backend connect ho raha hai..."
-                : isAddingUser
-                  ? "Adding..."
-                  : "Save User | محفوظ کریں"}
+              {isAddingUser && <Loader2 size={13} className="animate-spin" />}
+              {isAddingUser ? "Saving..." : "Save User | محفوظ کریں"}
             </Button>
             <Button
               onClick={() => {
                 setShowAddForm(false);
                 setAddError("");
+                setNewUsername("");
+                setNewDisplayName("");
+                setNewPassword("");
               }}
               variant="outline"
               size="sm"
@@ -10153,215 +10266,216 @@ function UserManagementPanel() {
       )}
 
       {/* Users Table */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <table className="w-full text-sm" data-ocid="user_management.table">
-          <thead>
-            <tr className="bg-gray-50 border-b border-gray-200">
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                Username
-              </th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                Display Name
-              </th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                Role
-              </th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                Type
-              </th>
-              <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                Actions
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {visibleUsers.map((user, idx) => (
-              <tr
-                key={user.username}
-                className="border-b border-gray-100 last:border-0 hover:bg-gray-50/50"
-                data-ocid={`user_management.row.${idx + 1}`}
-              >
-                <td className="px-4 py-3 font-mono text-xs font-semibold text-gray-800">
-                  {user.username}
-                </td>
-                <td className="px-4 py-3 font-medium text-gray-700">
-                  {user.displayName}
-                </td>
-                <td className="px-4 py-3">
-                  <span
-                    className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border ${roleBadge[user.role].class}`}
+      <div
+        className="bg-white rounded-xl border border-gray-200 overflow-hidden"
+        data-ocid="user_management.table"
+      >
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[600px]">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-200">
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  Display Name
+                </th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  Username
+                </th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  Role
+                </th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  Backend
+                </th>
+                <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleUsers.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="px-4 py-8 text-center text-gray-400 text-sm"
+                    data-ocid="user_management.empty_state"
                   >
-                    {roleBadge[user.role].label}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-xs text-gray-400">
-                  {isBuiltIn(user.username) ? "Built-in" : "Custom"}
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center justify-end gap-1.5">
-                    {changePwdFor === user.username ? (
-                      <div className="flex items-center gap-1.5">
-                        <Input
-                          type="password"
-                          placeholder="New password"
-                          value={newPwd}
-                          onChange={(e) => setNewPwd(e.target.value)}
-                          className="h-7 w-28 text-xs"
-                          onKeyDown={(e) =>
-                            e.key === "Enter" &&
-                            handleChangePassword(user.username)
-                          }
-                        />
-                        <button
-                          type="button"
-                          onClick={() => handleChangePassword(user.username)}
-                          className="text-xs text-green-600 font-semibold hover:text-green-700 px-1.5 py-0.5 rounded bg-green-50 border border-green-200"
-                          data-ocid={`user_management.save_button.${idx + 1}`}
-                        >
-                          Save
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setChangePwdFor(null);
-                            setNewPwd("");
-                          }}
-                          className="text-xs text-gray-500 hover:text-gray-700 px-1 py-0.5 rounded bg-gray-100 border border-gray-200"
-                          data-ocid={`user_management.cancel_button.${idx + 1}`}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setChangePwdFor(user.username);
-                          setNewPwd("");
-                        }}
-                        className="text-xs text-blue-600 font-medium hover:text-blue-700 px-2 py-1 rounded bg-blue-50 border border-blue-100 transition-colors"
-                        data-ocid={`user_management.edit_button.${idx + 1}`}
-                      >
-                        Change Pwd
-                      </button>
-                    )}
+                    Koi user nahi -- upar "Add User" se naya user add karein
+                  </td>
+                </tr>
+              )}
+              {visibleUsers.map((user, idx) => (
+                <tr
+                  key={user.username}
+                  className="border-b border-gray-100 last:border-0 hover:bg-gray-50/50"
+                  data-ocid={`user_management.row.${idx + 1}`}
+                >
+                  <td className="px-4 py-3 font-medium text-gray-800">
                     {editUserFor === user.username ? (
-                      <div className="flex items-center gap-1.5 flex-wrap">
+                      <input
+                        type="text"
+                        value={editDisplayName}
+                        onChange={(e) => {
+                          setEditDisplayName(e.target.value);
+                          setEditUserError("");
+                        }}
+                        className="h-7 w-28 text-xs px-2 border border-blue-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        placeholder="Display Name"
+                      />
+                    ) : (
+                      user.displayName
+                    )}
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs font-semibold text-gray-700">
+                    {editUserFor === user.username ? (
+                      <div className="space-y-1">
                         <input
                           type="text"
-                          placeholder="Username"
                           value={editUsername}
                           onChange={(e) => {
                             setEditUsername(e.target.value);
                             setEditUserError("");
                           }}
-                          className="h-7 w-24 text-xs px-2 border border-gray-300 rounded-md"
+                          className="h-7 w-28 text-xs px-2 border border-blue-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 font-mono"
+                          placeholder="Username"
                         />
-                        <input
-                          type="text"
-                          placeholder="Display Name"
-                          value={editDisplayName}
-                          onChange={(e) => {
-                            setEditDisplayName(e.target.value);
-                            setEditUserError("");
-                          }}
-                          className="h-7 w-28 text-xs px-2 border border-gray-300 rounded-md"
-                        />
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            if (!editUsername.trim()) {
-                              setEditUserError("Username required");
-                              return;
-                            }
-                            try {
-                              if (actor && user.backendStaffId) {
-                                const ok = await (actor as any).updateUserInfo(
-                                  BigInt(user.backendStaffId),
-                                  editUsername.trim(),
-                                  editDisplayName.trim() || editUsername.trim(),
-                                );
-                                if (!ok) {
-                                  setEditUserError("Username already taken");
-                                  return;
-                                }
-                              }
-                              const updated = getCustomUsers().map((u) =>
-                                u.username === user.username
-                                  ? {
-                                      ...u,
-                                      username: editUsername.trim(),
-                                      displayName:
-                                        editDisplayName.trim() ||
-                                        editUsername.trim(),
-                                    }
-                                  : u,
-                              );
-                              localStorage.setItem(
-                                CUSTOM_USERS_KEY,
-                                JSON.stringify(updated),
-                              );
-                              setCustomUsers(updated);
-                              setEditUserFor(null);
-                              toast.success(
-                                "User updated | صارف اپ ڈیٹ ہو گیا",
-                              );
-                            } catch {
-                              setEditUserError("Update failed");
-                            }
-                          }}
-                          className="text-xs text-green-600 font-semibold hover:text-green-700 px-1.5 py-0.5 rounded bg-green-50 border border-green-200"
-                          data-ocid={`user_management.save_button.${idx + 1}`}
-                        >
-                          Save
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditUserFor(null);
-                            setEditUserError("");
-                          }}
-                          className="text-xs text-gray-500 px-1 py-0.5 rounded bg-gray-100 border border-gray-200"
-                        >
-                          ✕
-                        </button>
                         {editUserError && (
-                          <span className="text-xs text-red-500">
+                          <p className="text-red-500 text-[10px]">
                             {editUserError}
-                          </span>
+                          </p>
                         )}
                       </div>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditUserFor(user.username);
-                          setEditUsername(user.username);
-                          setEditDisplayName(user.displayName);
-                          setEditUserError("");
-                        }}
-                        className="text-xs text-purple-600 font-medium hover:text-purple-700 px-2 py-1 rounded bg-purple-50 border border-purple-100 transition-colors"
-                        data-ocid={`user_management.edit_button.${idx + 1}`}
-                      >
-                        ✏️ Edit
-                      </button>
+                      user.username
                     )}
-                    {(!isBuiltIn(user.username) ||
-                      (user.role !== "admin" && user.role !== "superadmin")) &&
-                      (deleteConfirm === user.username ? (
-                        <div className="flex items-center gap-1">
+                  </td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border ${roleBadge[user.role]?.cls ?? "bg-gray-100 text-gray-600 border-gray-200"}`}
+                    >
+                      {roleBadge[user.role]?.label ?? user.role}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {isBuiltIn(user.username) ? (
+                      <span className="text-[11px] text-gray-400">
+                        Built-in
+                      </span>
+                    ) : user.backendStaffId ? (
+                      <span className="text-[11px] text-green-600 flex items-center gap-1">
+                        <CheckCircle2 size={11} />
+                        Synced
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-amber-500 flex items-center gap-1">
+                        <WifiOff size={11} />
+                        Local only
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                      {/* Edit row */}
+                      {editUserFor === user.username ? (
+                        <>
                           <button
                             type="button"
-                            onClick={() => handleDeleteUser(user.username)}
-                            className="text-xs text-white font-semibold px-2 py-1 rounded bg-red-500 hover:bg-red-600 transition-colors"
-                            data-ocid={`user_management.confirm_button.${idx + 1}`}
+                            onClick={async () => {
+                              if (!editUsername.trim()) {
+                                setEditUserError("Username required");
+                                return;
+                              }
+                              if (!isBuiltIn(user.username)) {
+                                const updated = customUsers.map((u) =>
+                                  u.username === user.username
+                                    ? {
+                                        ...u,
+                                        username: editUsername.trim(),
+                                        displayName:
+                                          editDisplayName.trim() ||
+                                          editUsername.trim(),
+                                      }
+                                    : u,
+                                );
+                                saveCustomUsers(updated);
+                              }
+                              setEditUserFor(null);
+                              setEditUserError("");
+                              toast.success("User updated");
+                            }}
+                            className="text-xs text-white font-semibold px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 transition-colors"
+                            data-ocid={`user_management.save_button.${idx + 1}`}
                           >
-                            Confirm
+                            Save
                           </button>
                           <button
                             type="button"
-                            onClick={() => setDeleteConfirm(null)}
-                            className="text-xs text-gray-500 px-1.5 py-1 rounded bg-gray-100 hover:bg-gray-200 transition-colors"
+                            onClick={() => {
+                              setEditUserFor(null);
+                              setEditUserError("");
+                            }}
+                            className="text-xs text-gray-500 px-2 py-1 rounded bg-gray-100 border border-gray-200 hover:bg-gray-200 transition-colors"
+                          >
+                            ✕
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditUserFor(user.username);
+                            setEditUsername(user.username);
+                            setEditDisplayName(user.displayName);
+                            setEditUserError("");
+                            setChangePwdFor(null);
+                          }}
+                          className="text-xs text-purple-600 font-medium hover:text-purple-700 px-2 py-1 rounded bg-purple-50 border border-purple-100 transition-colors"
+                          data-ocid={`user_management.edit_button.${idx + 1}`}
+                        >
+                          Edit
+                        </button>
+                      )}
+
+                      {/* Change password row */}
+                      {changePwdFor === user.username ? (
+                        <div className="flex items-center gap-1.5">
+                          <div className="relative">
+                            <input
+                              type={showNewPwd ? "text" : "password"}
+                              placeholder="New password"
+                              value={newPwd}
+                              onChange={(e) => setNewPwd(e.target.value)}
+                              className="h-7 w-28 text-xs px-2 pr-6 border border-blue-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                              onKeyDown={(e) =>
+                                e.key === "Enter" &&
+                                handleChangePassword(user.username)
+                              }
+                              autoComplete="new-password"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowNewPwd((v) => !v)}
+                              className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                              tabIndex={-1}
+                            >
+                              <Search size={11} />
+                            </button>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleChangePassword(user.username)}
+                            className="text-xs text-green-600 font-semibold hover:text-green-700 px-1.5 py-1 rounded bg-green-50 border border-green-200"
+                            data-ocid={`user_management.save_button.${idx + 1}`}
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setChangePwdFor(null);
+                              setNewPwd("");
+                              setShowNewPwd(false);
+                            }}
+                            className="text-xs text-gray-500 px-1.5 py-1 rounded bg-gray-100 border border-gray-200"
                             data-ocid={`user_management.cancel_button.${idx + 1}`}
                           >
                             ✕
@@ -10370,49 +10484,86 @@ function UserManagementPanel() {
                       ) : (
                         <button
                           type="button"
-                          onClick={() => setDeleteConfirm(user.username)}
-                          className="text-xs text-red-500 font-medium hover:text-red-600 px-2 py-1 rounded bg-red-50 border border-red-100 transition-colors"
-                          data-ocid={`user_management.delete_button.${idx + 1}`}
+                          onClick={() => {
+                            setChangePwdFor(user.username);
+                            setNewPwd("");
+                            setShowNewPwd(false);
+                            setEditUserFor(null);
+                          }}
+                          className="text-xs text-blue-600 font-medium hover:text-blue-700 px-2 py-1 rounded bg-blue-50 border border-blue-100 transition-colors"
+                          data-ocid={`user_management.edit_button.${idx + 1}`}
                         >
-                          Delete
+                          Change Pwd
                         </button>
-                      ))}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                      )}
+
+                      {/* Delete */}
+                      {(!isBuiltIn(user.username) ||
+                        (user.role !== "admin" &&
+                          user.role !== "superadmin")) &&
+                        (deleteConfirm === user.username ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteUser(user.username)}
+                              className="text-xs text-white font-semibold px-2 py-1 rounded bg-red-500 hover:bg-red-600 transition-colors"
+                              data-ocid={`user_management.confirm_button.${idx + 1}`}
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeleteConfirm(null)}
+                              className="text-xs text-gray-500 px-1.5 py-1 rounded bg-gray-100 hover:bg-gray-200 transition-colors"
+                              data-ocid={`user_management.cancel_button.${idx + 1}`}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setDeleteConfirm(user.username)}
+                            className="text-xs text-red-500 font-medium hover:text-red-600 px-2 py-1 rounded bg-red-50 border border-red-100 transition-colors"
+                            data-ocid={`user_management.delete_button.${idx + 1}`}
+                          >
+                            Delete
+                          </button>
+                        ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Login credentials info */}
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-        <p className="text-xs font-semibold text-amber-800 mb-2">
-          Login Credentials | لاگ ان تفصیلات
+        <p className="text-xs font-semibold text-amber-800 mb-2 flex items-center gap-1.5">
+          <MapPin size={13} />
+          Login URLs | لاگ ان پتے
         </p>
-        <div className="grid grid-cols-3 gap-4">
-          <div>
-            <p className="text-xs font-bold text-amber-700 mb-1">Admin</p>
-            <p className="text-[11px] text-amber-600 font-mono">URL: /office</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="bg-white rounded-lg p-3 border border-purple-100">
+            <p className="text-xs font-bold text-purple-700 mb-1">Admin</p>
+            <p className="text-[11px] text-gray-500 font-mono">/office</p>
           </div>
-          <div>
+          <div className="bg-white rounded-lg p-3 border border-blue-100">
             <p className="text-xs font-bold text-blue-700 mb-1">
               Staff / Bookers
             </p>
-            <p className="text-[11px] text-blue-600 font-mono">
-              URL: / (Main App)
-            </p>
+            <p className="text-[11px] text-gray-500 font-mono">/ (Main App)</p>
           </div>
-          <div>
+          <div className="bg-white rounded-lg p-3 border border-emerald-100">
             <p className="text-xs font-bold text-emerald-700 mb-1">Delivery</p>
-            <p className="text-[11px] text-emerald-600 font-mono">
-              URL: /delivery
-            </p>
+            <p className="text-[11px] text-gray-500 font-mono">/delivery</p>
           </div>
         </div>
         <p className="text-[11px] text-amber-600 mt-2">
-          Session stored on device — staff aur delivery boys ko baar baar login
-          nahi karna parta | Session persists until manual logout
+          Users ab backend mein save hote hain -- kisi bhi device par login kar
+          sakte hain | Users are saved to backend for cross-device login
         </p>
       </div>
     </div>
@@ -18400,12 +18551,17 @@ function OfficeAuthGuard() {
     return s?.role === "admin";
   });
 
-  // Re-check localStorage on mount to handle browser navigation/refresh
+  // Re-check localStorage on mount and focus to handle browser navigation/refresh
   useEffect(() => {
-    const s = getSession();
-    if (s?.role === "admin") {
-      setAuthed(true);
-    }
+    const check = () => {
+      const s = getSession();
+      if (s?.role === "admin") {
+        setAuthed(true);
+      }
+    };
+    check();
+    window.addEventListener("focus", check);
+    return () => window.removeEventListener("focus", check);
   }, []);
 
   if (!authed) {

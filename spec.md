@@ -1,27 +1,62 @@
-# MedFlow -- User Backend Sync Fix
+# MedFlow -- User Management Rebuild
 
 ## Current State
-User Management mein `handleAddUser` function pehle user ko localStorage mein save karta hai, phir backend call karta hai. Agar backend call succeed bhi kare, `toast.success` hamesha chal jaata hai chahe backend save hua ya nahi. Backend sync on-mount logic bhi hai lekin `getStaffByDistributor` return empty ho to early return kar leta hai -- agar koi bhi staff nahi to local-only users backend mein sync nahi hote.
 
-Login flow: Mobile par `verifyStaffLoginForDistributor` call hota hai -- agar user backend mein nahi hai to "invalid username or password" aata hai.
+The existing `UserManagementPanel` component (lines ~9671-10437 in App.tsx) has a critical session bug:
+- `const sess = getSession()` is called at component mount and stored in a plain variable (not React state), so it can be stale
+- `distributorId` is sometimes missing from the session (when local `lookupUser()` matches before the backend distributor login call sets it)
+- This causes "Session expire ho gayi" toast on every Add User / Sync Users click
+- Backend sync silently fails in some cases
+- Actor loading race condition: button can be clicked before actor is ready
 
 ## Requested Changes (Diff)
 
 ### Add
-- `isAddingUser` loading state jab user add ho raha ho
-- Manual "Sync Users to Backend" button in User Management -- jo sab local-only users ko backend mein push kare
-- Backend sync on-mount ko fix karo: agar `staffList` empty bhi ho tab bhi local-only users backend mein sync hon
+- Brand new `UserManagementPanel` component replacing the old one entirely
+- Backend-first user add: call `addStaffForDistributor` first, only save to localStorage after backend confirms with a staffId
+- Backend-first user delete: call `deleteStaffRecord(BigInt(backendStaffId))` first, then remove from localStorage
+- Password change: call `updateStaffRecordPassword(BigInt(backendStaffId), newPassword)` + update localStorage
+- Edit display name / username: re-add user with new details (delete old, add new) since backend has no updateStaff name API
+- Sync button: load all staff from backend via `getStaffByDistributor`, merge into localStorage, push any local-only users to backend
+- `distributorId` is always read fresh via `getSession()` inside every async action (never from component-level variable)
+- Actor readiness guard: all action buttons disabled + show spinner until `actor` is non-null AND `!isActorLoading`
+- Clear loading states for each action (adding, deleting, syncing, changing password)
+- Show each user's role badge, display name, username
 
 ### Modify
-- `handleAddUser`: user pehle **backend mein save karo**, tab localStorage mein -- agar backend fail ho to user add hi mat karo aur clear error dikhao
-- Backend sync useEffect: `if (!staffList || staffList.length === 0) return;` line hataao -- local-only users hamesha sync hon chahe backend list empty ho
-- Add button: loading state show karo jab backend save ho raha ho
+- Replace existing `UserManagementPanel` function entirely (same component name, same usage at line 15390)
+- Keep all existing types: `AppUser`, `UserRole`, `getCustomUsers()`, `saveCustomUsers()`, `CUSTOM_USERS_KEY`
+- Keep backend APIs used: `addStaffForDistributor`, `deleteStaffRecord`, `updateStaffRecordPassword`, `getStaffByDistributor`
 
 ### Remove
-- Pehle wali logic jo user localStorage mein save karta tha before backend confirmation
+- Old `UserManagementPanel` implementation with stale `sess` variable and race conditions
+- `handleSyncUsersToBackend` old logic that checked stale sess
+- Old auto-sync useEffect that ran on mount with stale sess
 
 ## Implementation Plan
-1. `handleAddUser` mein flow reverse karo: pehle `addStaffForDistributor` call karo, agar succeed ho tab user localStorage mein save karo with `backendStaffId`. Agar fail ho to error dikhao aur return karo.
-2. `isAddingUser` state add karo -- button disabled + loading text show karo jab backend call chal rahi ho.
-3. Backend sync useEffect mein early return hataao -- `staffList` empty ho tab bhi localOnlyUsers sync karo.
-4. Manual sync button add karo User Management mein -- click par sab `backendStaffId`-less users ko backend mein push karo.
+
+1. In `UserManagementPanel`, remove the component-level `const sess = getSession()` -- always call `getSession()` fresh inside each async handler
+2. Add a `isReady` computed: `!isActorLoading && actor !== null` -- disable all action buttons when not ready, show "Connecting..." text
+3. Rewrite `handleAddUser`:
+   - Read `getSession()` fresh
+   - If `!actor || !freshSess?.distributorId` -- show appropriate error and return
+   - Call `addStaffForDistributor` -- await result
+   - On success: save to localStorage with `backendStaffId` set
+   - On failure: show error, do NOT save to localStorage
+4. Rewrite `handleDeleteUser(username)`:
+   - Find user in customUsers to get `backendStaffId`
+   - If has backendStaffId: call `deleteStaffRecord(BigInt(backendStaffId))`
+   - Remove from localStorage regardless (local cleanup)
+   - Password-protected confirmation
+5. Rewrite `handleChangePassword(username, newPwd)`:
+   - Find user backendStaffId
+   - If has backendStaffId: call `updateStaffRecordPassword`
+   - Update localStorage copy
+6. Rewrite `handleSyncUsers`:
+   - Read fresh session
+   - Call `getStaffByDistributor(BigInt(distId))`
+   - Merge backend list into localStorage (add missing, update backendStaffIds)
+   - Push any localStorage-only users (no backendStaffId) to backend
+   - Show count: "X users synced"
+7. On component mount useEffect: load staff from backend (using actor + fresh session read inside the effect), merge into state -- only runs once when actor is ready
+8. UI: show spinner/disabled state on all buttons when actor not ready; show per-row loading indicators during delete/password change

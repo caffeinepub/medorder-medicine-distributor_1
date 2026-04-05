@@ -2,21 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Outfit – clean modern sans for body */
-@font-face {
-  font-family: "Outfit";
-  src: url("/assets/fonts/Outfit-Variable.woff2") format("woff2");
-  font-weight: 100 900;
-  font-display: swap;
-}
-
-/* Plus Jakarta Sans – polished UI headings */
-@font-face {
-  font-family: "Plus Jakarta Sans";
-  src: url("/assets/fonts/PlusJakartaSans-Variable.woff2") format("woff2");
-  font-weight: 200 800;
-  font-display: swap;
-}
+/* Fonts loaded via Google Fonts CDN in index.html */
 
 @layer base {
   :root {

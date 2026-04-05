@@ -1,4 +1,4 @@
-const CACHE_NAME = 'medflow-v10';
+const CACHE_NAME = 'medflow-v11';
 const SHELL = ['/', '/index.html'];
 
 self.addEventListener('install', (e) => {
@@ -20,7 +20,7 @@ self.addEventListener('message', (e) => {
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
-  if (url.origin !== self.location.origin) return;
+  if (url.origin !== self.location.origin) return; // Let external requests (Google Fonts etc) pass through
 
   // Never intercept backend/API calls or env.json -- pass through directly
   if (
