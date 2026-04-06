@@ -1,62 +1,37 @@
-# MedFlow -- User Management Rebuild
+# MedFlow App
 
 ## Current State
-
-The existing `UserManagementPanel` component (lines ~9671-10437 in App.tsx) has a critical session bug:
-- `const sess = getSession()` is called at component mount and stored in a plain variable (not React state), so it can be stale
-- `distributorId` is sometimes missing from the session (when local `lookupUser()` matches before the backend distributor login call sets it)
-- This causes "Session expire ho gayi" toast on every Add User / Sync Users click
-- Backend sync silently fails in some cases
-- Actor loading race condition: button can be clicked before actor is ready
+- Login flow has a critical bug: `lookupUser()` checks localStorage first, and if a match is found, session is saved WITHOUT `distributorId`. This causes "Distributor session missing" error in User Management.
+- UserManagementPanel allows adding custom users but no builtin slots exist for staff/delivery.
+- Admin must manually type all user details from scratch -- no pre-existing slots.
+- `distributorId` is only set in session when backend `verifyDistributorLogin` completes, but if localStorage match fires first (faster), backend is skipped and `distributorId` is never set.
 
 ## Requested Changes (Diff)
 
 ### Add
-- Brand new `UserManagementPanel` component replacing the old one entirely
-- Backend-first user add: call `addStaffForDistributor` first, only save to localStorage after backend confirms with a staffId
-- Backend-first user delete: call `deleteStaffRecord(BigInt(backendStaffId))` first, then remove from localStorage
-- Password change: call `updateStaffRecordPassword(BigInt(backendStaffId), newPassword)` + update localStorage
-- Edit display name / username: re-add user with new details (delete old, add new) since backend has no updateStaff name API
-- Sync button: load all staff from backend via `getStaffByDistributor`, merge into localStorage, push any local-only users to backend
-- `distributorId` is always read fresh via `getSession()` inside every async action (never from component-level variable)
-- Actor readiness guard: all action buttons disabled + show spinner until `actor` is non-null AND `!isActorLoading`
-- Clear loading states for each action (adding, deleting, syncing, changing password)
-- Show each user's role badge, display name, username
+- 5 builtin Staff slots pre-created for each distributor: usernames `staff1`-`staff5`, default password `1234`, role `staff`
+- 5 builtin Delivery slots pre-created for each distributor: usernames `delivery1`-`delivery5`, default password `1234`, role `delivery`
+- These 10 builtin slots are shown in User Management as editable rows (not add-new form)
+- Each slot has Edit button: distributor can change username, display name, password anytime
+- On Save, changes go to backend first, then localStorage -- same backend-first pattern
+- Builtin slots show in two sections: Staff (5) and Delivery (5)
 
 ### Modify
-- Replace existing `UserManagementPanel` function entirely (same component name, same usage at line 15390)
-- Keep all existing types: `AppUser`, `UserRole`, `getCustomUsers()`, `saveCustomUsers()`, `CUSTOM_USERS_KEY`
-- Keep backend APIs used: `addStaffForDistributor`, `deleteStaffRecord`, `updateStaffRecordPassword`, `getStaffByDistributor`
+- Login `handleLogin` function: when `lookupUser` finds a match for `admin` role, DO NOT skip backend -- still call `verifyDistributorLogin` to get `distributorId`, then set full session with `distributorId`
+- For staff/delivery `lookupUser` match: still call backend `verifyStaffLoginForDistributor` to get proper `distributorId` and `staffId`
+- If backend unavailable (actor null), fall back to local login but log warning
+- `AppUser` type: add optional `distributorId` field so distributor-linked users carry their distributorId
+- Builtin slots are stored in backend under the distributor on first initialization (when distributor logs in for first time)
+- UserManagementPanel: show Staff and Delivery sections separately with 5 slots each, each slot editable inline
 
 ### Remove
-- Old `UserManagementPanel` implementation with stale `sess` variable and race conditions
-- `handleSyncUsersToBackend` old logic that checked stale sess
-- Old auto-sync useEffect that ran on mount with stale sess
+- Nothing removed -- existing Add User form stays for adding extra users beyond the 10 builtin slots
 
 ## Implementation Plan
-
-1. In `UserManagementPanel`, remove the component-level `const sess = getSession()` -- always call `getSession()` fresh inside each async handler
-2. Add a `isReady` computed: `!isActorLoading && actor !== null` -- disable all action buttons when not ready, show "Connecting..." text
-3. Rewrite `handleAddUser`:
-   - Read `getSession()` fresh
-   - If `!actor || !freshSess?.distributorId` -- show appropriate error and return
-   - Call `addStaffForDistributor` -- await result
-   - On success: save to localStorage with `backendStaffId` set
-   - On failure: show error, do NOT save to localStorage
-4. Rewrite `handleDeleteUser(username)`:
-   - Find user in customUsers to get `backendStaffId`
-   - If has backendStaffId: call `deleteStaffRecord(BigInt(backendStaffId))`
-   - Remove from localStorage regardless (local cleanup)
-   - Password-protected confirmation
-5. Rewrite `handleChangePassword(username, newPwd)`:
-   - Find user backendStaffId
-   - If has backendStaffId: call `updateStaffRecordPassword`
-   - Update localStorage copy
-6. Rewrite `handleSyncUsers`:
-   - Read fresh session
-   - Call `getStaffByDistributor(BigInt(distId))`
-   - Merge backend list into localStorage (add missing, update backendStaffIds)
-   - Push any localStorage-only users (no backendStaffId) to backend
-   - Show count: "X users synced"
-7. On component mount useEffect: load staff from backend (using actor + fresh session read inside the effect), merge into state -- only runs once when actor is ready
-8. UI: show spinner/disabled state on all buttons when actor not ready; show per-row loading indicators during delete/password change
+1. Fix `handleLogin`: for admin role, always call backend even if lookupUser matches -- get distributorId
+2. Fix `handleLogin`: for staff/delivery, always call backend verifyStaffLoginForDistributor even if lookupUser matches -- get distributorId
+3. Add `BUILTIN_STAFF_SLOTS` and `BUILTIN_DELIVERY_SLOTS` constants (5 each) with default username/password
+4. On distributor first login / UserManagementPanel mount: initialize builtin slots in backend if not already present
+5. UserManagementPanel: render two sections (Staff 5 slots, Delivery 5 slots) loaded from backend, each with inline Edit
+6. Edit slot handler: update backend first, then localStorage -- show success only after backend confirms
+7. Keep existing Add User form below the builtin slots section for adding extra users

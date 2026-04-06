@@ -19,6 +19,8 @@ import {
   CreditCard,
   Download,
   Droplets,
+  Eye,
+  EyeOff,
   FlaskConical,
   History,
   Layers,
@@ -101,6 +103,97 @@ const SESSION_KEY = "medorder_session";
 const CUSTOM_USERS_KEY = "medorder_custom_users";
 const HIDDEN_BUILTIN_USERS_KEY = "medorder_hidden_builtin_users";
 
+const BUILTIN_STAFF_SLOTS: AppUser[] = [
+  {
+    username: "staff1",
+    password: "1234",
+    role: "staff" as UserRole,
+    displayName: "Staff 1",
+  },
+  {
+    username: "staff2",
+    password: "1234",
+    role: "staff" as UserRole,
+    displayName: "Staff 2",
+  },
+  {
+    username: "staff3",
+    password: "1234",
+    role: "staff" as UserRole,
+    displayName: "Staff 3",
+  },
+  {
+    username: "staff4",
+    password: "1234",
+    role: "staff" as UserRole,
+    displayName: "Staff 4",
+  },
+  {
+    username: "staff5",
+    password: "1234",
+    role: "staff" as UserRole,
+    displayName: "Staff 5",
+  },
+];
+const BUILTIN_DELIVERY_SLOTS: AppUser[] = [
+  {
+    username: "delivery1",
+    password: "1234",
+    role: "delivery" as UserRole,
+    displayName: "Delivery 1",
+  },
+  {
+    username: "delivery2",
+    password: "1234",
+    role: "delivery" as UserRole,
+    displayName: "Delivery 2",
+  },
+  {
+    username: "delivery3",
+    password: "1234",
+    role: "delivery" as UserRole,
+    displayName: "Delivery 3",
+  },
+  {
+    username: "delivery4",
+    password: "1234",
+    role: "delivery" as UserRole,
+    displayName: "Delivery 4",
+  },
+  {
+    username: "delivery5",
+    password: "1234",
+    role: "delivery" as UserRole,
+    displayName: "Delivery 5",
+  },
+];
+const _BUILTIN_SLOT_USERNAMES = new Set([
+  "staff1",
+  "staff2",
+  "staff3",
+  "staff4",
+  "staff5",
+  "delivery1",
+  "delivery2",
+  "delivery3",
+  "delivery4",
+  "delivery5",
+]);
+const BUILTIN_SLOTS_STORAGE_KEY = "medflow_builtin_slots";
+
+function getBuiltinSlots(): AppUser[] {
+  try {
+    const stored = localStorage.getItem(BUILTIN_SLOTS_STORAGE_KEY);
+    if (stored) return JSON.parse(stored);
+  } catch {}
+  return [...BUILTIN_STAFF_SLOTS, ...BUILTIN_DELIVERY_SLOTS];
+}
+function saveBuiltinSlots(slots: AppUser[]) {
+  try {
+    localStorage.setItem(BUILTIN_SLOTS_STORAGE_KEY, JSON.stringify(slots));
+  } catch {}
+}
+
 function getCustomUsers(): AppUser[] {
   try {
     const stored = localStorage.getItem(CUSTOM_USERS_KEY);
@@ -111,7 +204,7 @@ function getCustomUsers(): AppUser[] {
 }
 
 function getAllUsers(): AppUser[] {
-  return [...USER_DB, ...getCustomUsers()];
+  return [...USER_DB, ...getBuiltinSlots(), ...getCustomUsers()];
 }
 
 function lookupUser(username: string, password: string): AppUser | null {
@@ -1075,18 +1168,48 @@ function LoginScreen({
     }
     setIsLoggingIn(true);
     try {
-      // First: try local user lookup (hardcoded + custom users)
+      // First: try local user lookup (hardcoded + custom users + builtin slots)
       const user = lookupUser(username.trim(), password.trim());
       if (user) {
+        // Always try to get distributorId from backend even for local users
+        let distId: number | undefined;
+        if (loginActor) {
+          try {
+            if (user.role === "admin") {
+              const backendDistId = await loginActor.verifyDistributorLogin(
+                username.trim(),
+                password.trim(),
+              );
+              if (backendDistId !== null) {
+                distId = Number(backendDistId);
+              }
+            } else {
+              // staff or delivery — get distributorId from backend
+              const staffResult = await (
+                loginActor as any
+              ).verifyStaffLoginForDistributor(
+                username.trim(),
+                password.trim(),
+              );
+              if (staffResult && staffResult.length > 0) {
+                distId = Number(staffResult[0].distributorId);
+              }
+            }
+          } catch {
+            // Backend unavailable — continue without distributorId (local-only fallback)
+          }
+        }
+
         const sessionData: SessionData = {
           username: user.username,
           role: user.role,
           displayName: user.displayName,
+          ...(distId !== undefined ? { distributorId: distId } : {}),
         };
         setSession(sessionData);
 
         if (onRoleLogin) {
-          onRoleLogin(user.role, user.username, user.displayName);
+          onRoleLogin(user.role, user.username, user.displayName, distId);
           return;
         }
 
@@ -9691,6 +9814,17 @@ function UserManagementPanel() {
   const [editDisplayName, setEditDisplayName] = React.useState("");
   const [editUserError, setEditUserError] = React.useState("");
   const [backendLoaded, setBackendLoaded] = React.useState(false);
+  const [builtinSlots, setBuiltinSlots] = React.useState<AppUser[]>(() =>
+    getBuiltinSlots(),
+  );
+  const [editingSlot, setEditingSlot] = React.useState<string | null>(null);
+  const [slotEdit, setSlotEdit] = React.useState<{
+    username: string;
+    displayName: string;
+    password: string;
+  }>({ username: "", displayName: "", password: "" });
+  const [showSlotPassword, setShowSlotPassword] = React.useState(false);
+  const [isSavingSlot, setIsSavingSlot] = React.useState(false);
   const [hiddenBuiltins, setHiddenBuiltins] = React.useState<string[]>(() => {
     try {
       return JSON.parse(localStorage.getItem(HIDDEN_BUILTIN_USERS_KEY) || "[]");
@@ -9789,6 +9923,44 @@ function UserManagementPanel() {
         } catch {
           /* ignore */
         }
+
+        // Sync builtin slots with backend
+        const currentSlots = getBuiltinSlots();
+        const updatedSlots = [...currentSlots];
+        for (let i = 0; i < updatedSlots.length; i++) {
+          const slot = updatedSlots[i];
+          if (!slot.backendStaffId) {
+            // Check if backend already has this slot by username
+            const backendMatch = staffList.find(
+              (s: any) =>
+                String(s.username ?? "").toLowerCase() ===
+                slot.username.toLowerCase(),
+            );
+            if (backendMatch) {
+              updatedSlots[i] = {
+                ...slot,
+                backendStaffId: Number(backendMatch.id),
+              };
+            } else {
+              // Add to backend
+              try {
+                const newId = await (actor as any).addStaffForDistributor(
+                  distId,
+                  slot.username,
+                  slot.password,
+                  slot.role,
+                  slot.displayName ?? slot.username,
+                );
+                updatedSlots[i] = { ...slot, backendStaffId: Number(newId) };
+              } catch {
+                // ignore
+              }
+            }
+          }
+        }
+        setBuiltinSlots(updatedSlots);
+        saveBuiltinSlots(updatedSlots);
+
         setBackendLoaded(true);
       })
       .catch(() => {
@@ -9800,6 +9972,89 @@ function UserManagementPanel() {
   const visibleUsers = allUsers.filter(
     (u) => !hiddenBuiltins.includes(u.username),
   );
+
+  async function handleSaveSlot(originalUsername: string) {
+    if (!slotEdit.username.trim() || !slotEdit.password.trim()) {
+      toast.error("Username aur password zaroori hain");
+      return;
+    }
+    const freshSess = getSession();
+    if (!actor || !freshSess?.distributorId) {
+      toast.error("Backend ready nahi -- thori der baad try karein");
+      return;
+    }
+    const slot = builtinSlots.find((s) => s.username === originalUsername);
+    if (!slot) return;
+
+    setIsSavingSlot(true);
+    try {
+      if (slot.backendStaffId) {
+        // Try update methods first, fallback to delete+re-add
+        try {
+          await (actor as any).deleteStaffRecord(BigInt(slot.backendStaffId));
+          const newId = await (actor as any).addStaffForDistributor(
+            BigInt(freshSess.distributorId),
+            slotEdit.username.trim(),
+            slotEdit.password.trim(),
+            slot.role,
+            slotEdit.displayName.trim() || slotEdit.username.trim(),
+          );
+          const updated = builtinSlots.map((s) =>
+            s.username === originalUsername
+              ? {
+                  ...s,
+                  username: slotEdit.username.trim(),
+                  displayName:
+                    slotEdit.displayName.trim() || slotEdit.username.trim(),
+                  password: slotEdit.password.trim(),
+                  backendStaffId: Number(newId),
+                }
+              : s,
+          );
+          setBuiltinSlots(updated);
+          saveBuiltinSlots(updated);
+        } catch {
+          toast.error("Backend save fail hua -- internet check karein");
+          return;
+        }
+      } else {
+        // Not in backend yet, add it
+        try {
+          const newId = await (actor as any).addStaffForDistributor(
+            BigInt(freshSess.distributorId),
+            slotEdit.username.trim(),
+            slotEdit.password.trim(),
+            slot.role,
+            slotEdit.displayName.trim() || slotEdit.username.trim(),
+          );
+          const updated = builtinSlots.map((s) =>
+            s.username === originalUsername
+              ? {
+                  ...s,
+                  username: slotEdit.username.trim(),
+                  displayName:
+                    slotEdit.displayName.trim() || slotEdit.username.trim(),
+                  password: slotEdit.password.trim(),
+                  backendStaffId: Number(newId),
+                }
+              : s,
+          );
+          setBuiltinSlots(updated);
+          saveBuiltinSlots(updated);
+        } catch {
+          toast.error("Backend save fail hua -- internet check karein");
+          return;
+        }
+      }
+      setEditingSlot(null);
+      setShowSlotPassword(false);
+      toast.success(
+        "Slot update ho gaya -- ab kisi bhi device par login karega",
+      );
+    } finally {
+      setIsSavingSlot(false);
+    }
+  }
 
   async function handleAddUser() {
     if (!newUsername.trim() || !newDisplayName.trim() || !newPassword.trim()) {
@@ -10264,6 +10519,368 @@ function UserManagementPanel() {
           </div>
         </div>
       )}
+
+      {/* ── Builtin Staff Slots ──────────────────────────────────────── */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-blue-500" />
+          <h3 className="text-sm font-bold text-gray-800">
+            Staff / Booker (5 slots)
+          </h3>
+          <span className="text-xs text-gray-400">
+            -- Default password: 1234 | aap edit kar sakte hain
+          </span>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          {builtinSlots
+            .filter((s) => s.role === "staff")
+            .map((slot, idx) => (
+              <div
+                key={slot.username}
+                className="border-b border-gray-100 last:border-0"
+                data-ocid={`user_management.item.${idx + 1}`}
+              >
+                {editingSlot === slot.username ? (
+                  <div className="px-4 py-3 bg-blue-50 space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div>
+                        <label
+                          htmlFor="slot-s-uname"
+                          className="text-xs font-semibold text-gray-600 block mb-1"
+                        >
+                          Username
+                        </label>
+                        <input
+                          id="slot-s-uname"
+                          type="text"
+                          value={slotEdit.username}
+                          onChange={(e) =>
+                            setSlotEdit((p) => ({
+                              ...p,
+                              username: e.target.value,
+                            }))
+                          }
+                          className="w-full h-8 px-2 border border-input rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                          autoComplete="off"
+                          data-ocid={`user_management.input.${idx + 1}`}
+                        />
+                      </div>
+                      <div>
+                        <label
+                          htmlFor="slot-s-dname"
+                          className="text-xs font-semibold text-gray-600 block mb-1"
+                        >
+                          Display Name
+                        </label>
+                        <input
+                          id="slot-s-dname"
+                          type="text"
+                          value={slotEdit.displayName}
+                          onChange={(e) =>
+                            setSlotEdit((p) => ({
+                              ...p,
+                              displayName: e.target.value,
+                            }))
+                          }
+                          className="w-full h-8 px-2 border border-input rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                          autoComplete="off"
+                        />
+                      </div>
+                      <div>
+                        <label
+                          htmlFor="slot-s-pwd"
+                          className="text-xs font-semibold text-gray-600 block mb-1"
+                        >
+                          Password
+                        </label>
+                        <div className="relative">
+                          <input
+                            id="slot-s-pwd"
+                            type={showSlotPassword ? "text" : "password"}
+                            value={slotEdit.password}
+                            onChange={(e) =>
+                              setSlotEdit((p) => ({
+                                ...p,
+                                password: e.target.value,
+                              }))
+                            }
+                            className="w-full h-8 px-2 pr-8 border border-input rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                            autoComplete="new-password"
+                            data-ocid={`user_management.password.input.${idx + 1}`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowSlotPassword((v) => !v)}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                            tabIndex={-1}
+                          >
+                            {showSlotPassword ? (
+                              <EyeOff size={12} />
+                            ) : (
+                              <Eye size={12} />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleSaveSlot(slot.username)}
+                        disabled={isSavingSlot}
+                        className="text-xs text-white font-semibold px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1"
+                        data-ocid={`user_management.save_button.${idx + 1}`}
+                      >
+                        {isSavingSlot && (
+                          <Loader2 size={11} className="animate-spin" />
+                        )}
+                        {isSavingSlot ? "Saving..." : "Save"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingSlot(null);
+                          setShowSlotPassword(false);
+                        }}
+                        className="text-xs text-gray-600 px-3 py-1.5 rounded bg-gray-100 hover:bg-gray-200"
+                        data-ocid={`user_management.cancel_button.${idx + 1}`}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="px-4 py-3 flex items-center justify-between gap-3 hover:bg-gray-50/50">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                        <User size={13} className="text-blue-600" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 truncate">
+                          {slot.displayName}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          @{slot.username} &nbsp;•&nbsp; ****
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {slot.backendStaffId ? (
+                        <span className="text-xs bg-green-100 text-green-700 border border-green-200 px-2 py-0.5 rounded-full font-medium">
+                          Synced ✓
+                        </span>
+                      ) : (
+                        <span className="text-xs bg-amber-100 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full font-medium">
+                          Syncing...
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingSlot(slot.username);
+                          setSlotEdit({
+                            username: slot.username,
+                            displayName: slot.displayName,
+                            password: slot.password,
+                          });
+                          setShowSlotPassword(false);
+                        }}
+                        className="text-xs text-blue-600 font-medium hover:text-blue-700 px-2.5 py-1 rounded bg-blue-50 border border-blue-100 transition-colors"
+                        data-ocid={`user_management.edit_button.${idx + 1}`}
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+        </div>
+      </div>
+
+      {/* ── Builtin Delivery Slots ────────────────────────────────────── */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-emerald-500" />
+          <h3 className="text-sm font-bold text-gray-800">
+            Delivery Boys (5 slots)
+          </h3>
+          <span className="text-xs text-gray-400">
+            -- Default password: 1234 | aap edit kar sakte hain
+          </span>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          {builtinSlots
+            .filter((s) => s.role === "delivery")
+            .map((slot, idx) => (
+              <div
+                key={slot.username}
+                className="border-b border-gray-100 last:border-0"
+                data-ocid={`user_management.item.${idx + 6}`}
+              >
+                {editingSlot === slot.username ? (
+                  <div className="px-4 py-3 bg-emerald-50 space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div>
+                        <label
+                          htmlFor="slot-d-uname"
+                          className="text-xs font-semibold text-gray-600 block mb-1"
+                        >
+                          Username
+                        </label>
+                        <input
+                          type="text"
+                          value={slotEdit.username}
+                          onChange={(e) =>
+                            setSlotEdit((p) => ({
+                              ...p,
+                              username: e.target.value,
+                            }))
+                          }
+                          className="w-full h-8 px-2 border border-input rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                          autoComplete="off"
+                          data-ocid={`user_management.input.${idx + 6}`}
+                        />
+                      </div>
+                      <div>
+                        <label
+                          htmlFor="slot-d-dname"
+                          className="text-xs font-semibold text-gray-600 block mb-1"
+                        >
+                          Display Name
+                        </label>
+                        <input
+                          type="text"
+                          value={slotEdit.displayName}
+                          onChange={(e) =>
+                            setSlotEdit((p) => ({
+                              ...p,
+                              displayName: e.target.value,
+                            }))
+                          }
+                          className="w-full h-8 px-2 border border-input rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                          autoComplete="off"
+                        />
+                      </div>
+                      <div>
+                        <label
+                          htmlFor="slot-d-pwd"
+                          className="text-xs font-semibold text-gray-600 block mb-1"
+                        >
+                          Password
+                        </label>
+                        <div className="relative">
+                          <input
+                            type={showSlotPassword ? "text" : "password"}
+                            value={slotEdit.password}
+                            onChange={(e) =>
+                              setSlotEdit((p) => ({
+                                ...p,
+                                password: e.target.value,
+                              }))
+                            }
+                            className="w-full h-8 px-2 pr-8 border border-input rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                            autoComplete="new-password"
+                            data-ocid={`user_management.password.input.${idx + 6}`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowSlotPassword((v) => !v)}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                            tabIndex={-1}
+                          >
+                            {showSlotPassword ? (
+                              <EyeOff size={12} />
+                            ) : (
+                              <Eye size={12} />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleSaveSlot(slot.username)}
+                        disabled={isSavingSlot}
+                        className="text-xs text-white font-semibold px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1"
+                        data-ocid={`user_management.save_button.${idx + 6}`}
+                      >
+                        {isSavingSlot && (
+                          <Loader2 size={11} className="animate-spin" />
+                        )}
+                        {isSavingSlot ? "Saving..." : "Save"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingSlot(null);
+                          setShowSlotPassword(false);
+                        }}
+                        className="text-xs text-gray-600 px-3 py-1.5 rounded bg-gray-100 hover:bg-gray-200"
+                        data-ocid={`user_management.cancel_button.${idx + 6}`}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="px-4 py-3 flex items-center justify-between gap-3 hover:bg-gray-50/50">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-7 h-7 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0">
+                        <Truck size={13} className="text-emerald-600" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 truncate">
+                          {slot.displayName}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          @{slot.username} &nbsp;•&nbsp; ****
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {slot.backendStaffId ? (
+                        <span className="text-xs bg-green-100 text-green-700 border border-green-200 px-2 py-0.5 rounded-full font-medium">
+                          Synced ✓
+                        </span>
+                      ) : (
+                        <span className="text-xs bg-amber-100 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full font-medium">
+                          Syncing...
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingSlot(slot.username);
+                          setSlotEdit({
+                            username: slot.username,
+                            displayName: slot.displayName,
+                            password: slot.password,
+                          });
+                          setShowSlotPassword(false);
+                        }}
+                        className="text-xs text-emerald-600 font-medium hover:text-emerald-700 px-2.5 py-1 rounded bg-emerald-50 border border-emerald-100 transition-colors"
+                        data-ocid={`user_management.edit_button.${idx + 6}`}
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+        </div>
+      </div>
+
+      {/* ── Divider + Extra Users heading ────────────────────────────── */}
+      <div className="flex items-center gap-3 pt-1">
+        <div className="flex-1 h-px bg-gray-200" />
+        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+          Extra Users (optional)
+        </span>
+        <div className="flex-1 h-px bg-gray-200" />
+      </div>
 
       {/* Users Table */}
       <div
